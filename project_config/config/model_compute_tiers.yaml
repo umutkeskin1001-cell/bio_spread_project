@@ -1,0 +1,14 @@
+tiers:
+  smoke:
+    n_splits: 2
+    n_repeats: 1
+  dev:
+    n_splits: 3
+    n_repeats: 1
+  model-refresh:
+    n_splits: 5
+    n_repeats: 1
+  release-full:
+    n_splits: 5
+    n_repeats: 5
+

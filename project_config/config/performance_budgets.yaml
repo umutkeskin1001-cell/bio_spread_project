@@ -1,0 +1,14 @@
+modes:
+  smoke-local:
+    budget_seconds: 300
+  dev-refresh:
+    budget_seconds: 900
+  model-refresh:
+    budget_seconds: 1500
+  report-refresh:
+    budget_seconds: 300
+  release-full:
+    budget_seconds: 4200
+enforcement:
+  default_exceedance_tolerance: 0.1
+  release_block_on_exceedance: true

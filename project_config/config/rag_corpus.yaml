@@ -1,0 +1,8 @@
+paths:
+  - docs/scientific_protocol.md
+  - docs/model_card.md
+  - docs/data_card.md
+  - docs/benchmark_contract.md
+  - docs/reproducibility_manifest.json
+  - docs/JURY_SUMMARY.md
+  - docs/pre_registration.md

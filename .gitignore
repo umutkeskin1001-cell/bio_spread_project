@@ -1,0 +1,44 @@
+.DS_Store
+__pycache__/
+.pycache/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.hypothesis/
+test_output.txt
+test_bio_spread_output.txt
+test_bio_spread_all_output.txt
+reports/smoke_cli/
+reports/competition_final/
+reports/run/
+reports/cli_run/
+final_report_demo/
+final_report_production/
+audit_demo/
+output/playwright/
+build/
+dist/
+*.egg-info/
+
+# Keep source control lightweight. Large raw/external/generated datasets can
+# live locally under data/ or be provided via BIO_SPREAD_DATA_ROOT.
+data/raw/*
+!data/raw/README.md
+data/project_inputs/raw/
+data/project_inputs/external/
+data/project_inputs/silver/
+data/project_inputs/scores/
+data/project_inputs/geo_spread/
+!data/project_inputs/README.md
+data/**/*.parquet
+data/**/*.tar
+data/**/*.tar.*
+data/**/*.gz
+data/**/*.dat
+
+# Lightweight fixtures intentionally tracked.
+!data/sample_plasmid_records.csv
+!tests/fixtures/
+!tests/fixtures/**

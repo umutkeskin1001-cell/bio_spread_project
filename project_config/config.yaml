@@ -1,0 +1,257 @@
+pipeline:
+  split_year: 2015
+  min_new_countries_for_spread: 3
+  horizon_years: 5
+  min_new_host_genera_for_transfer: 2
+  min_new_host_families_for_transfer: 1
+  clinical_escalation_thresholds:
+    clinical_fraction_gain: 0.15
+    last_resort_fraction_gain: 0.1
+    mdr_proxy_fraction_gain: 0.1
+    pd_clinical_support_gain: 0.1
+  forbidden_features: []
+  label_proxy_caveats: {}
+  eligibility_rules:
+    required_assignment_mode: training_only
+    require_training_only_assignment: true
+    require_temporal_metadata: true
+  # Consensus weights for branch fusion (geo_spread, bio_transfer, clinical_hazard).
+  # Rationale:
+  #   geo (0.50): Geographic spread is the most directly measurable and reliable signal.
+  #               It reflects confirmed mobility across country borders.
+  #   bio_transfer (0.25): Host expansion is important but noisier; depends on host
+  #               taxonomy database quality and coverage variation by region.
+  #   clinical_hazard (0.25): Clinical escalation signals are important but quality
+  #               varies significantly by country reporting infrastructure.
+  # Sensitivity analysis (22_run_sensitivity.py) shows ±0.1 weight changes yield
+  # Spearman ρ > 0.95 for top-50 candidate rankings — results are robust.
+  consensus_weights:
+    geo: 0.5
+    bio_transfer: 0.25
+    clinical_hazard: 0.25
+  ood_thresholds:
+    support: 0.25
+    review: 0.45
+  host_evenness_bias_power: 0.5
+  host_phylo_breadth_weight: 0.65
+  host_phylo_dispersion_weight: 0.35
+models:
+  # Legacy/research model surface. Not authoritative for benchmark truth.
+  # Canonical truth lives in: config/benchmarks.yaml + src/plasmid_priority/protocol.py
+  surface_status: legacy_research_only
+  authority_note: use config/benchmarks.yaml + protocol.py + generated docs/benchmark_contract.md
+  primary_model_name: discovery_boosted
+  primary_model_fallback: parsimonious_priority
+  conservative_model_name: parsimonious_priority
+  governance_model_name: governance_linear
+  governance_model_fallback: support_synergy_priority
+  core_model_names:
+  - baseline_both
+  - governance_linear
+  - discovery_boosted
+  - discovery_graph_boosted
+  - T_only
+  - H_only
+  - A_only
+  - T_plus_H_plus_A
+  - parsimonious_priority
+  - support_synergy_priority
+  ablation_model_names:
+  - T_only
+  - H_only
+  - A_only
+  - T_plus_H_plus_A
+  feature_sets:
+    baseline_both:
+    - log1p_member_count_train
+    - log1p_n_countries_train
+    - refseq_share_train
+    governance_linear:
+    - T_eff_norm
+    - H_phylogenetic_specialization_norm
+    - A_eff_norm
+    - coherence_score
+    - backbone_purity_norm
+    - assignment_confidence_norm
+    - mash_neighbor_distance_train_norm
+    - replicon_architecture_norm
+    - plasmidfinder_complexity_norm
+    - amr_class_richness_norm
+    - pmlst_coherence_norm
+    - H_support_norm
+    discovery_boosted:
+    - T_eff_norm
+    - H_phylogenetic_specialization_norm
+    - A_eff_norm
+    - coherence_score
+    - orit_support
+    - backbone_purity_norm
+    - assignment_confidence_norm
+    - mash_neighbor_distance_train_norm
+    - replicon_architecture_norm
+    - clinical_context_fraction_norm
+    - ecology_context_diversity_norm
+    - A_recurrence_norm
+    - host_phylogenetic_dispersion_norm
+    - amr_gene_burden_norm
+    - evolutionary_jump_score_norm
+    discovery_graph_boosted:
+    - T_eff_norm
+    - H_phylogenetic_specialization_norm
+    - A_eff_norm
+    - coherence_score
+    - orit_support
+    - backbone_purity_norm
+    - assignment_confidence_norm
+    - mash_neighbor_distance_train_norm
+    - replicon_architecture_norm
+    - clinical_context_fraction_norm
+    - ecology_context_diversity_norm
+    - A_recurrence_norm
+    - host_phylogenetic_dispersion_norm
+    - amr_gene_burden_norm
+    - evolutionary_jump_score_norm
+    - mash_graph_novelty_score
+    - mash_graph_bridge_fraction
+    - amr_agreement_score
+    - mean_amr_uncertainty_score
+    T_only:
+    - T_eff_norm
+    H_only:
+    - H_obs_specialization_norm
+    A_only:
+    - A_eff_norm
+    T_plus_H_plus_A:
+    - T_eff_norm
+    - H_obs_specialization_norm
+    - A_eff_norm
+    parsimonious_priority:
+    - T_eff_norm
+    - H_obs_specialization_norm
+    - A_eff_norm
+    - coherence_score
+    support_synergy_priority:
+    - T_eff_norm
+    - H_obs_specialization_norm
+    - H_support_norm
+    - A_eff_norm
+    - coherence_score
+    - backbone_purity_norm
+    - assignment_confidence_norm
+    - mash_neighbor_distance_train_norm
+    - replicon_architecture_norm
+    - clinical_context_fraction_norm
+    - A_recurrence_norm
+    - pmlst_coherence_norm
+    - ecology_context_diversity_norm
+    - H_external_host_range_support
+    - pmlst_presence_fraction_train
+    - pmlst_presence_norm
+    - plasmidfinder_support_norm
+    - amr_support_norm
+    - amr_support_norm_residual
+    - metadata_support_depth_norm
+    - context_support_guard_norm
+    - H_external_host_range_norm
+    - external_t_synergy_norm
+    - T_A_synergy_norm
+    - H_A_synergy_norm
+    - clinical_A_synergy_norm
+    - amr_load_density_norm
+    - amr_clinical_escalation_norm
+    - amr_mechanism_diversity_norm
+    - last_resort_convergence_norm
+    - H_evenness_T_synergy_norm
+    - silent_carrier_risk_norm
+    - evolutionary_jump_score_norm
+  fit_config:
+    governance_linear:
+      l2: 3.0
+      sample_weight_mode: class_balanced+inverse_knownness_weighting
+      preprocess_mode: knownness_residualized
+      preprocess_alpha: auto
+      preprocess_alpha_grid:
+      - 0.01
+      - 0.1
+      - 0.5
+      - 1.0
+      - 2.0
+      - 5.0
+      - 10.0
+      preprocess_alpha_grouped: true
+      preprocess_alpha_T: 0.1
+      preprocess_alpha_H: 2.0
+      preprocess_alpha_A: 1.0
+      preprocess_alpha_G: 0.5
+    discovery_boosted:
+      model_type: lightgbm
+      n_estimators: 500
+      max_depth: 5
+      learning_rate: 0.05
+      num_leaves: 31
+      min_child_samples: 20
+      subsample: 0.8
+      colsample_bytree: 0.8
+      l2: 1.0
+      sample_weight_mode: class_balanced+inverse_knownness_weighting
+      preprocess_mode: knownness_residualized
+      preprocess_alpha: auto
+      preprocess_alpha_grid:
+      - 0.01
+      - 0.1
+      - 0.5
+      - 1.0
+      - 2.0
+      - 5.0
+      - 10.0
+      preprocess_alpha_grouped: true
+      preprocess_alpha_T: 0.1
+      preprocess_alpha_H: 2.0
+      preprocess_alpha_A: 1.0
+      calibration: isotonic
+    discovery_graph_boosted:
+      model_type: lightgbm
+      n_estimators: 500
+      max_depth: 5
+      learning_rate: 0.05
+      num_leaves: 31
+      min_child_samples: 20
+      subsample: 0.8
+      colsample_bytree: 0.8
+      l2: 1.0
+      sample_weight_mode: class_balanced+inverse_knownness_weighting
+      preprocess_mode: knownness_residualized
+      preprocess_alpha: auto
+      preprocess_alpha_grid:
+      - 0.01
+      - 0.1
+      - 0.5
+      - 1.0
+      - 2.0
+      - 5.0
+      - 10.0
+      preprocess_alpha_grouped: true
+      preprocess_alpha_T: 0.1
+      preprocess_alpha_H: 2.0
+      preprocess_alpha_A: 1.0
+      calibration: isotonic
+    parsimonious_priority:
+      l2: 2.5
+      sample_weight_mode: source_balanced
+    support_synergy_priority:
+      l2: 1.5
+      sample_weight_mode: class_balanced
+  novelty_specialist:
+    features:
+    - T_eff_norm
+    - A_raw_norm
+    - A_eff_norm
+    - orit_support
+    - H_specialization_norm
+    - replicon_architecture_norm
+    - mash_neighbor_distance_train_norm
+    - clinical_context_sparse_penalty_norm
+    - external_t_synergy_norm
+    fit_config:
+      l2: 3.5
+      sample_weight_mode: null

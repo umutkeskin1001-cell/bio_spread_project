@@ -1,0 +1,12 @@
+{
+  "project": "BioSpread",
+  "validation_summary": {
+    "roc_auc": 0.8241957228581247,
+    "average_precision": 0.7528614995358853,
+    "group_oof_roc_auc": 0.8146241419722082,
+    "temporal_holdout_roc_auc": 0.805511868355905,
+    "external_holdout_roc_auc": 0.8241957228581247,
+    "max_single_feature_auc": 0.7220276331209742,
+    "suspicious_feature_count": 0
+  }
+}

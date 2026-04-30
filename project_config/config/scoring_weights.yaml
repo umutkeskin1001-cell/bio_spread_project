@@ -1,0 +1,108 @@
+# Scoring weights for monotonic_latent_priority_index
+# Faz 3 optimizasyonu: Scoring weights → YAML + justify
+
+# Bilimsel gerekçe (justify):
+# - T_eff_norm (Transferability): 0.18 - Transfer potansiyeli, coğrafik yayılımın ana sürücüsü
+# - H_specialization_norm (Host Specialization): 0.18 - Host özelleşmesi, klinik risk belirleyici
+# - A_eff_norm (Antimicrobial Resistance): 0.15 - AMR yükü, tedavi zorluğu
+# - amr_burden_saturation_norm: 0.16 - AMR yükünün doygunluklanmış hali, klinik tehdit
+# - replicon_multiplicity_saturation_norm: 0.11 - Replikon çoğulluğu, konjugasyon potansiyeli
+# - host_range_saturation_norm: 0.11 - Host aralığı, yayılım kapasitesi
+# - eco_clinical_context_saturation_norm: 0.11 - Ekolojik/klinik bağlam, çevresel risk
+
+monotonic_latent_priority_index:
+  T_eff_norm:
+    weight: 0.18
+    justify: "Transfer potansiyeli, coğrafik yayılımın ana sürücüsü"
+  H_specialization_norm:
+    weight: 0.18
+    justify: "Host özelleşmesi, klinik risk belirleyici"
+  A_eff_norm:
+    weight: 0.15
+    justify: "Antimicrobial Resistance yükü, tedavi zorluğu"
+  amr_burden_saturation_norm:
+    weight: 0.16
+    justify: "AMR yükünün doygunluklanmış hali, klinik tehdit"
+  replicon_multiplicity_saturation_norm:
+    weight: 0.11
+    justify: "Replikon çoğulluğu, konjugasyon potansiyeli"
+  host_range_saturation_norm:
+    weight: 0.11
+    justify: "Host aralığı, yayılım kapasitesi"
+  eco_clinical_context_saturation_norm:
+    weight: 0.11
+    justify: "Ekolojik/klinik bağlam, çevresel risk"
+
+metadata_support_depth_norm:
+  H_support_norm:
+    weight: 0.26
+    justify: "Host metadata desteği, %26 ağırlık"
+  amr_support_norm:
+    weight: 0.20
+    justify: "AMR metadata desteği, %20 ağırlık"
+  H_external_host_range_support:
+    weight: 0.18
+    justify: "External host-range desteği, %18 ağırlık"
+  pmlst_presence_norm:
+    weight: 0.16
+    justify: "pMLST varlığı, %16 ağırlık"
+  host_support_observed_flag:
+    weight: 0.10
+    justify: "Host support gözlemi, %10 ağırlık"
+  context_support_observed_flag:
+    weight: 0.10
+    justify: "Context support gözlemi, %10 ağırlık"
+
+amr_clinical_escalation_norm:
+  amr_mdr_proxy_norm:
+    weight: 0.30
+    justify: "MDR proxy, %30 ağırlık"
+  amr_xdr_proxy_norm:
+    weight: 0.40
+    justify: "XDR proxy, %40 ağırlık (en kritik)"
+  last_resort_convergence_norm:
+    weight: 0.30
+    justify: "Last-resort convergence, %30 ağırlık"
+
+replicon_architecture_norm:
+  mean_n_replicon_types_norm:
+    weight: 0.45
+    justify: "Ortalama replikon sayısı, %45 ağırlık"
+  multi_replicon_fraction:
+    weight: 0.35
+    justify: "Multi-replikon oranı, %35 ağırlık"
+  primary_replicon_diversity:
+    weight: 0.20
+    justify: "Primer replikon çeşitliliği, %20 ağırlık"
+
+amr_burden_latent_norm:
+  amr_load_density_norm:
+    weight: 0.60
+    justify: "AMR yük yoğunluğu, %60 ağırlık"
+  amr_clinical_threat_norm:
+    weight: 0.40
+    justify: "Klinik tehdit, %40 ağırlık"
+
+replicon_multiplicity_latent_norm:
+  mean_n_replicon_types_norm:
+    weight: 0.55
+    justify: "Ortalama replikon sayısı, %55 ağırlık"
+  replicon_architecture_norm:
+    weight: 0.45
+    justify: "Replikon mimarisi, %45 ağırlık"
+
+host_range_latent_norm:
+  H_external_host_range_norm:
+    weight: 0.70
+    justify: "External host-range, %70 ağırlık"
+  H_external_host_range_support:
+    weight: 0.30
+    justify: "External host-range desteği, %30 ağırlık"
+
+eco_clinical_context_latent_norm:
+  clinical_context_fraction_norm:
+    weight: 0.55
+    justify: "Klinik bağlam, %55 ağırlık"
+  ecology_context_diversity_norm:
+    weight: 0.45
+    justify: "Ekolojik çeşitlilik, %45 ağırlık"

@@ -1,0 +1,761 @@
+models:
+  research_model_names:
+  - H_plus_A
+  - T_plus_A
+  - T_plus_H
+  - balanced_evidence_priority
+  - baseline_country_count
+  - baseline_member_count
+  - bio_clean_priority
+  - bio_residual_synergy_priority
+  - contextual_bio_priority
+  - discovery_12f_class_balanced
+  - discovery_12f_source
+  - discovery_15f_synergy
+  - discovery_4f_hybrid
+  - discovery_5f_phylo
+  - discovery_9f_source
+  - ecology_clinical_priority
+  - enhanced_priority
+  - evidence_aware_priority
+  - firth_parsimonious_priority
+  - full_priority
+  - governance_15f_pruned
+  - graph_evidence_priority
+  - host_transfer_synergy_priority
+  - hybrid_agreement_priority
+  - knownness_calibrated_fusion_priority
+  - knownness_robust_priority
+  - label_noise_aware_priority
+  - monotonic_latent_priority
+  - natural_auc_priority
+  - nonlinear_deconfounded_priority
+  - pairwise_rank_priority
+  - parsimonious_priority
+  - phylo_support_fusion_priority
+  - phylogeny_aware_priority
+  - proxy_light_priority
+  - regime_stability_priority
+  - source_only
+  - sovereign_precision_priority
+  - sovereign_v2_priority
+  - structured_signal_priority
+  - support_calibrated_priority
+  - support_synergy_priority
+  - threat_architecture_priority
+  - visibility_adjusted_priority
+  feature_sets:
+    H_plus_A:
+    - H_eff_norm
+    - A_eff_norm
+    T_plus_A:
+    - T_eff_norm
+    - A_eff_norm
+    T_plus_H:
+    - T_eff_norm
+    - H_eff_norm
+    balanced_evidence_priority:
+    - T_raw_norm
+    - H_breadth_norm
+    - A_raw_norm
+    - coherence_score
+    - orit_support
+    - amr_support_norm
+    - H_support_norm
+    baseline_country_count:
+    - log1p_n_countries_train
+    baseline_member_count:
+    - log1p_member_count_train
+    bio_clean_priority:
+    - T_raw_norm
+    - H_obs_specialization_norm
+    - A_raw_norm
+    - orit_support
+    bio_residual_synergy_priority:
+    - T_eff_norm
+    - H_obs_norm
+    - A_eff_norm
+    - coherence_score
+    - orit_support
+    - T_H_obs_synergy_norm
+    - A_H_obs_synergy_norm
+    - T_coherence_synergy_norm
+    - T_A_synergy_norm
+    contextual_bio_priority:
+    - T_eff_norm
+    - H_specialization_norm
+    - A_eff_norm
+    - coherence_score
+    - H_external_host_range_norm
+    - backbone_purity_norm
+    - assignment_confidence_norm
+    - replicon_architecture_norm
+    - pmlst_coherence_norm
+    - ecology_context_diversity_norm
+    - clinical_context_fraction_norm
+    - pathogenic_context_fraction_norm
+    discovery_12f_class_balanced:
+    - T_eff_norm
+    - H_phylogenetic_specialization_norm
+    - A_eff_norm
+    - coherence_score
+    - orit_support
+    - backbone_purity_norm
+    - assignment_confidence_norm
+    - mash_neighbor_distance_train_norm
+    - replicon_architecture_norm
+    - clinical_context_fraction_norm
+    - ecology_context_diversity_norm
+    - A_recurrence_norm
+    discovery_12f_source:
+    - T_eff_norm
+    - H_phylogenetic_specialization_norm
+    - A_eff_norm
+    - coherence_score
+    - orit_support
+    - backbone_purity_norm
+    - assignment_confidence_norm
+    - mash_neighbor_distance_train_norm
+    - replicon_architecture_norm
+    - clinical_context_fraction_norm
+    - ecology_context_diversity_norm
+    - A_recurrence_norm
+    discovery_15f_synergy:
+    - T_eff_norm
+    - H_phylogenetic_specialization_norm
+    - A_eff_norm
+    - coherence_score
+    - orit_support
+    - backbone_purity_norm
+    - assignment_confidence_norm
+    - mash_neighbor_distance_train_norm
+    - replicon_architecture_norm
+    - clinical_context_fraction_norm
+    - ecology_context_diversity_norm
+    - A_recurrence_norm
+    - T_A_synergy_norm
+    - H_A_synergy_norm
+    - T_H_obs_synergy_norm
+    discovery_4f_hybrid:
+    - T_eff_norm
+    - H_obs_specialization_norm
+    - A_eff_norm
+    - orit_support
+    discovery_5f_phylo:
+    - T_eff_norm
+    - H_phylogenetic_specialization_norm
+    - A_eff_norm
+    - coherence_score
+    - orit_support
+    discovery_9f_source:
+    - T_eff_norm
+    - H_phylogenetic_specialization_norm
+    - A_eff_norm
+    - coherence_score
+    - orit_support
+    - backbone_purity_norm
+    - assignment_confidence_norm
+    - mash_neighbor_distance_train_norm
+    - replicon_architecture_norm
+    ecology_clinical_priority:
+    - T_eff_norm
+    - H_specialization_norm
+    - A_eff_norm
+    - coherence_score
+    - H_external_host_range_norm
+    - backbone_purity_norm
+    - assignment_confidence_norm
+    - mash_neighbor_distance_train_norm
+    - replicon_architecture_norm
+    - clinical_context_fraction_norm
+    - ecology_context_diversity_norm
+    enhanced_priority:
+    - log1p_member_count_train
+    - log1p_n_countries_train
+    - T_eff_norm
+    - H_eff_norm
+    - A_eff_norm
+    - coherence_score
+    - orit_support
+    evidence_aware_priority:
+    - T_raw_norm
+    - support_shrinkage_norm
+    - amr_support_norm
+    - coherence_score
+    - orit_support
+    firth_parsimonious_priority:
+    - T_eff_norm
+    - H_obs_specialization_norm
+    - A_eff_norm
+    - coherence_score
+    full_priority:
+    - log1p_member_count_train
+    - log1p_n_countries_train
+    - priority_index
+    governance_15f_pruned:
+    - T_eff_norm
+    - H_obs_specialization_norm
+    - H_phylogenetic_specialization_norm
+    - host_phylogenetic_dispersion_norm
+    - A_eff_norm
+    - coherence_score
+    - backbone_purity_norm
+    - assignment_confidence_norm
+    - mash_neighbor_distance_train_norm
+    - replicon_architecture_norm
+    - clinical_context_fraction_norm
+    - A_recurrence_norm
+    - plasmidfinder_complexity_norm
+    - H_external_host_range_support
+    - evolutionary_jump_score_norm
+    graph_evidence_priority:
+    - T_eff_norm
+    - H_specialization_norm
+    - A_eff_norm
+    - coherence_score
+    - backbone_purity_norm
+    - assignment_confidence_norm
+    - mash_neighbor_distance_train_norm
+    - replicon_architecture_norm
+    - clinical_context_fraction_norm
+    - A_recurrence_norm
+    - pmlst_coherence_norm
+    - ecology_context_diversity_norm
+    - mash_graph_novelty_score
+    - mash_graph_bridge_fraction
+    - amr_agreement_score
+    - mean_amr_uncertainty_score
+    host_transfer_synergy_priority:
+    - T_eff_norm
+    - H_specialization_norm
+    - A_eff_norm
+    - coherence_score
+    - backbone_purity_norm
+    - assignment_confidence_norm
+    - mash_neighbor_distance_train_norm
+    - replicon_architecture_norm
+    - clinical_context_fraction_norm
+    - A_recurrence_norm
+    - pmlst_coherence_norm
+    - ecology_context_diversity_norm
+    - H_external_host_range_norm
+    - external_t_synergy_norm
+    hybrid_agreement_priority:
+    - T_eff_norm
+    - H_obs_norm
+    - A_eff_norm
+    - coherence_score
+    - orit_support
+    - T_H_obs_synergy_norm
+    - A_H_obs_synergy_norm
+    - T_coherence_synergy_norm
+    - T_A_synergy_norm
+    knownness_calibrated_fusion_priority:
+    - T_eff_norm
+    - H_obs_specialization_norm
+    - H_support_norm
+    - A_eff_norm
+    - coherence_score
+    - backbone_purity_norm
+    - assignment_confidence_norm
+    - mash_neighbor_distance_train_norm
+    - replicon_architecture_norm
+    - clinical_context_fraction_norm
+    - A_recurrence_norm
+    - pmlst_coherence_norm
+    - ecology_context_diversity_norm
+    - H_external_host_range_support
+    - pmlst_presence_fraction_train
+    - pmlst_presence_norm
+    - plasmidfinder_support_norm
+    - amr_support_norm
+    - amr_support_norm_residual
+    - metadata_support_depth_norm
+    - context_support_guard_norm
+    - H_external_host_range_norm
+    - external_t_synergy_norm
+    - T_A_synergy_norm
+    - H_A_synergy_norm
+    - clinical_A_synergy_norm
+    - amr_load_density_norm
+    - amr_clinical_escalation_norm
+    - amr_mechanism_diversity_norm
+    - last_resort_convergence_norm
+    - H_evenness_T_synergy_norm
+    - silent_carrier_risk_norm
+    - evolutionary_jump_score_norm
+    - H_phylogenetic_augmented_specialization_norm
+    - host_phylogenetic_dispersion_norm
+    - mean_n_replicon_types_norm
+    - plasmidfinder_complexity_norm
+    knownness_robust_priority:
+    - T_eff_norm
+    - H_specialization_norm
+    - A_eff_norm
+    - coherence_score
+    - backbone_purity_norm
+    - assignment_confidence_norm
+    - mash_neighbor_distance_train_norm
+    - replicon_architecture_norm
+    - clinical_context_fraction_norm
+    - A_recurrence_norm
+    - pmlst_coherence_norm
+    - ecology_context_diversity_norm
+    label_noise_aware_priority:
+    - T_eff_norm
+    - H_specialization_norm
+    - A_eff_norm
+    - coherence_score
+    - backbone_purity_norm
+    - assignment_confidence_norm
+    - mash_neighbor_distance_train_norm
+    - replicon_architecture_norm
+    - clinical_context_fraction_norm
+    - A_recurrence_norm
+    - pmlst_coherence_norm
+    - ecology_context_diversity_norm
+    monotonic_latent_priority:
+    - T_eff_norm
+    - H_specialization_norm
+    - A_eff_norm
+    - amr_burden_saturation_norm
+    - replicon_multiplicity_saturation_norm
+    - host_range_saturation_norm
+    - eco_clinical_context_saturation_norm
+    - monotonic_latent_priority_index
+    - coherence_score
+    - backbone_purity_norm
+    - assignment_confidence_norm
+    - mash_neighbor_distance_train_norm
+    natural_auc_priority:
+    - T_eff_norm
+    - H_specialization_norm
+    - A_eff_norm
+    - coherence_score
+    - H_external_host_range_norm
+    - backbone_purity_norm
+    - assignment_confidence_norm
+    - mash_neighbor_distance_train_norm
+    - replicon_architecture_norm
+    nonlinear_deconfounded_priority:
+    - T_eff_norm
+    - H_specialization_norm
+    - A_eff_norm
+    - coherence_score
+    - backbone_purity_norm
+    - assignment_confidence_norm
+    - mash_neighbor_distance_train_norm
+    - replicon_architecture_norm
+    - clinical_context_fraction_norm
+    - A_recurrence_norm
+    - pmlst_coherence_norm
+    - ecology_context_diversity_norm
+    pairwise_rank_priority:
+    - T_eff_norm
+    - H_obs_norm
+    - A_eff_norm
+    - coherence_score
+    - orit_support
+    - T_H_obs_synergy_norm
+    - A_H_obs_synergy_norm
+    - T_coherence_synergy_norm
+    - T_A_synergy_norm
+    parsimonious_priority:
+    - T_eff_norm
+    - H_obs_specialization_norm
+    - A_eff_norm
+    - coherence_score
+    phylo_support_fusion_priority:
+    - T_eff_norm
+    - H_obs_specialization_norm
+    - H_support_norm
+    - H_support_norm_residual
+    - A_eff_norm
+    - coherence_score
+    - backbone_purity_norm
+    - assignment_confidence_norm
+    - mash_neighbor_distance_train_norm
+    - replicon_architecture_norm
+    - clinical_context_fraction_norm
+    - A_recurrence_norm
+    - pmlst_coherence_norm
+    - ecology_context_diversity_norm
+    - H_external_host_range_support
+    - pmlst_presence_fraction_train
+    - pmlst_presence_norm
+    - plasmidfinder_support_norm
+    - amr_support_norm
+    - amr_support_norm_residual
+    - metadata_support_depth_norm
+    - context_support_guard_norm
+    - H_external_host_range_norm
+    - external_t_synergy_norm
+    - T_A_synergy_norm
+    - H_A_synergy_norm
+    - clinical_A_synergy_norm
+    - amr_load_density_norm
+    - amr_clinical_escalation_norm
+    - amr_mechanism_diversity_norm
+    - last_resort_convergence_norm
+    - H_evenness_T_synergy_norm
+    - silent_carrier_risk_norm
+    - evolutionary_jump_score_norm
+    - H_phylogenetic_augmented_specialization_norm
+    - host_phylogenetic_dispersion_norm
+    - mean_n_replicon_types_norm
+    - plasmidfinder_complexity_norm
+    phylogeny_aware_priority:
+    - T_eff_norm
+    - H_phylogenetic_specialization_norm
+    - A_eff_norm
+    - coherence_score
+    - H_external_host_range_norm
+    - backbone_purity_norm
+    - assignment_confidence_norm
+    - mash_neighbor_distance_train_norm
+    - replicon_architecture_norm
+    proxy_light_priority:
+    - T_eff_norm
+    - H_eff_norm
+    - A_eff_norm
+    - coherence_score
+    - orit_support
+    regime_stability_priority:
+    - T_eff_norm
+    - H_obs_specialization_norm
+    - H_support_norm
+    - A_eff_norm
+    - coherence_score
+    - backbone_purity_norm
+    - assignment_confidence_norm
+    - mash_neighbor_distance_train_norm
+    - replicon_architecture_norm
+    - clinical_context_fraction_norm
+    - ecology_context_diversity_norm
+    - A_recurrence_norm
+    - pmlst_coherence_norm
+    - H_external_host_range_support
+    - amr_support_norm
+    - amr_support_norm_residual
+    - metadata_support_depth_norm
+    - context_support_guard_norm
+    - H_phylogenetic_augmented_specialization_norm
+    - host_phylogenetic_dispersion_norm
+    source_only:
+    - refseq_share_train
+    sovereign_precision_priority:
+    - T_eff_norm
+    - T_raw_norm
+    - H_phylogenetic_specialization_norm
+    - H_obs_specialization_norm
+    - H_support_norm
+    - H_support_norm_residual
+    - A_eff_norm
+    - A_raw_norm
+    - A_recurrence_norm
+    - coherence_score
+    - backbone_purity_norm
+    - assignment_confidence_norm
+    - mash_neighbor_distance_train_norm
+    - replicon_architecture_norm
+    - clinical_context_fraction_norm
+    - ecology_context_diversity_norm
+    - H_external_host_range_norm
+    - H_external_host_range_support
+    - pmlst_coherence_norm
+    - pmlst_presence_fraction_train
+    - pmlst_presence_norm
+    - plasmidfinder_support_norm
+    - amr_support_norm
+    - amr_support_norm_residual
+    - metadata_support_depth_norm
+    - context_support_guard_norm
+    - external_t_synergy_norm
+    - T_A_synergy_norm
+    - H_A_synergy_norm
+    - clinical_A_synergy_norm
+    - amr_load_density_norm
+    - H_phylogenetic_augmented_specialization_norm
+    - host_phylogenetic_dispersion_norm
+    - mean_n_replicon_types_norm
+    - plasmidfinder_complexity_norm
+    - H_evenness_T_synergy_norm
+    - evolutionary_jump_score_norm
+    sovereign_v2_priority:
+    - T_eff_norm
+    - T_raw_norm
+    - H_phylogenetic_specialization_norm
+    - H_obs_specialization_norm
+    - H_support_norm
+    - H_support_norm_residual
+    - A_eff_norm
+    - A_raw_norm
+    - A_recurrence_norm
+    - coherence_score
+    - backbone_purity_norm
+    - mash_neighbor_distance_train_norm
+    - replicon_architecture_norm
+    - clinical_context_fraction_norm
+    - ecology_context_diversity_norm
+    - H_external_host_range_norm
+    - H_external_host_range_support
+    - pmlst_coherence_norm
+    - pmlst_presence_fraction_train
+    - pmlst_presence_norm
+    - plasmidfinder_support_norm
+    - amr_support_norm
+    - amr_support_norm_residual
+    - metadata_support_depth_norm
+    - external_t_synergy_norm
+    - T_A_synergy_norm
+    - H_A_synergy_norm
+    - clinical_A_synergy_norm
+    - amr_load_density_norm
+    - H_phylogenetic_augmented_specialization_norm
+    - host_phylogenetic_dispersion_norm
+    - mean_n_replicon_types_norm
+    - plasmidfinder_complexity_norm
+    - H_evenness_T_synergy_norm
+    - evolutionary_jump_score_norm
+    structured_signal_priority:
+    - T_eff_norm
+    - H_phylogenetic_specialization_norm
+    - H_phylogenetic_augmented_specialization_norm
+    - host_phylogenetic_dispersion_norm
+    - host_taxon_evenness_norm
+    - A_eff_norm
+    - A_recurrence_norm
+    - coherence_score
+    - H_external_host_range_norm
+    - backbone_purity_norm
+    - assignment_confidence_norm
+    - mash_neighbor_distance_train_norm
+    - replicon_architecture_norm
+    - mean_n_replicon_types_norm
+    - plasmidfinder_complexity_norm
+    support_calibrated_priority:
+    - T_eff_norm
+    - H_obs_specialization_norm
+    - H_support_norm
+    - A_eff_norm
+    - coherence_score
+    - backbone_purity_norm
+    - assignment_confidence_norm
+    - mash_neighbor_distance_train_norm
+    - replicon_architecture_norm
+    - clinical_context_fraction_norm
+    - A_recurrence_norm
+    - pmlst_coherence_norm
+    - ecology_context_diversity_norm
+    - H_external_host_range_support
+    - pmlst_presence_fraction_train
+    - amr_support_norm
+    support_synergy_priority:
+    - T_eff_norm
+    - H_obs_specialization_norm
+    - H_support_norm
+    - A_eff_norm
+    - coherence_score
+    - backbone_purity_norm
+    - assignment_confidence_norm
+    - mash_neighbor_distance_train_norm
+    - replicon_architecture_norm
+    - clinical_context_fraction_norm
+    - A_recurrence_norm
+    - pmlst_coherence_norm
+    - ecology_context_diversity_norm
+    - H_external_host_range_support
+    - pmlst_presence_fraction_train
+    - pmlst_presence_norm
+    - plasmidfinder_support_norm
+    - amr_support_norm
+    - amr_support_norm_residual
+    - metadata_support_depth_norm
+    - context_support_guard_norm
+    - H_external_host_range_norm
+    - external_t_synergy_norm
+    - T_A_synergy_norm
+    - H_A_synergy_norm
+    - clinical_A_synergy_norm
+    - amr_load_density_norm
+    - amr_clinical_escalation_norm
+    - amr_mechanism_diversity_norm
+    - last_resort_convergence_norm
+    - H_evenness_T_synergy_norm
+    - silent_carrier_risk_norm
+    - evolutionary_jump_score_norm
+    threat_architecture_priority:
+    - A_raw_norm
+    - A_eff_norm
+    - amr_class_richness_norm
+    - amr_gene_burden_norm
+    - amr_clinical_threat_norm
+    - amr_mdr_proxy_norm
+    - amr_xdr_proxy_norm
+    - amr_clinical_escalation_norm
+    - last_resort_convergence_norm
+    - amr_mechanism_diversity_norm
+    - H_specialization_norm
+    - replicon_architecture_norm
+    - mean_n_replicon_types_norm
+    - metadata_support_depth_norm
+    - T_A_synergy_norm
+    - clinical_A_synergy_norm
+    - amr_load_density_norm
+    - H_evenness_T_synergy_norm
+    - silent_carrier_risk_norm
+    - evolutionary_jump_score_norm
+    visibility_adjusted_priority:
+    - T_raw_norm
+    - H_obs_specialization_norm
+    - A_raw_norm
+    - orit_support
+    - H_support_norm_residual
+  fit_config:
+    balanced_evidence_priority:
+      l2: 3.0
+      sample_weight_mode: source_balanced
+    bio_clean_priority:
+      l2: 2.5
+      sample_weight_mode: source_balanced
+    bio_residual_synergy_priority:
+      l2: 4.0
+      sample_weight_mode: source_balanced
+    contextual_bio_priority:
+      l2: 3.5
+      sample_weight_mode: source_balanced
+    discovery_12f_class_balanced:
+      l2: 3.0
+      sample_weight_mode: class_balanced
+    discovery_12f_source:
+      l2: 3.0
+      sample_weight_mode: source_balanced
+    discovery_15f_synergy:
+      l2: 3.0
+      sample_weight_mode: source_balanced
+    discovery_4f_hybrid:
+      l2: 2.5
+      sample_weight_mode: source_balanced
+    discovery_5f_phylo:
+      l2: 2.5
+      sample_weight_mode: source_balanced
+    discovery_9f_source:
+      l2: 3.0
+      sample_weight_mode: source_balanced
+    ecology_clinical_priority:
+      l2: 4.0
+      sample_weight_mode: source_balanced
+    firth_parsimonious_priority:
+      l2: 0.0
+      sample_weight_mode: null
+      fit_backend: firthlogist
+      max_iter: 400
+    governance_15f_pruned:
+      l2: 1.5
+      sample_weight_mode: class_balanced
+    graph_evidence_priority:
+      l2: 5.0
+      sample_weight_mode: class_balanced+knownness_balanced
+    host_transfer_synergy_priority:
+      l2: 6.0
+      sample_weight_mode: class_balanced+knownness_balanced
+    hybrid_agreement_priority:
+      l2: 4.0
+      sample_weight_mode: source_balanced
+      model_type: hybrid_stacked
+      nonlinear_backend: ebm
+      nonlinear_learning_rate: 0.01
+      nonlinear_interactions: 6
+      nonlinear_outer_bags: 8
+      nonlinear_max_bins: 64
+      nonlinear_max_rounds: 500
+      nonlinear_early_stopping_rounds: 50
+      nonlinear_min_samples_leaf: 5
+      agreement_review_threshold: 0.8
+    knownness_calibrated_fusion_priority:
+      l2: 1.0
+      sample_weight_mode: knownness_balanced
+    knownness_robust_priority:
+      l2: 5.0
+      sample_weight_mode: class_balanced+knownness_balanced
+    label_noise_aware_priority:
+      l2: 5.0
+      sample_weight_mode: class_balanced+knownness_balanced+pu_negative_downweight
+      pu_negative_min_weight: 0.25
+      pu_negative_power: 1.5
+    monotonic_latent_priority:
+      l2: 2.0
+      sample_weight_mode: source_balanced
+    natural_auc_priority:
+      l2: 3.0
+      sample_weight_mode: source_balanced
+    nonlinear_deconfounded_priority:
+      l2: 4.0
+      sample_weight_mode: class_balanced+knownness_balanced
+      preprocess_mode: knownness_residualized
+      preprocess_alpha: auto
+      preprocess_alpha_grid:
+      - 0.01
+      - 0.1
+      - 0.5
+      - 1.0
+      - 2.0
+      - 5.0
+      - 10.0
+      preprocess_alpha_grouped: true
+      preprocess_alpha_T: 0.1
+      preprocess_alpha_H: 2.0
+      preprocess_alpha_A: 1.0
+    pairwise_rank_priority:
+      l2: 3.0
+      sample_weight_mode: source_balanced
+      model_type: pairwise_rank_logistic
+      pairwise_max_pairs: 6000
+      pairwise_random_state: 42
+    parsimonious_priority:
+      l2: 2.5
+      sample_weight_mode: source_balanced
+    phylo_support_fusion_priority:
+      l2: 0.75
+      sample_weight_mode: class_balanced
+    phylogeny_aware_priority:
+      l2: 3.0
+      sample_weight_mode: source_balanced
+    regime_stability_priority:
+      l2: 5.0
+      sample_weight_mode: class_balanced+knownness_balanced+source_balanced
+      preprocess_mode: knownness_residualized
+      preprocess_alpha: auto
+      preprocess_alpha_grid:
+      - 0.01
+      - 0.1
+      - 0.5
+      - 1.0
+      - 2.0
+      - 5.0
+      - 10.0
+      preprocess_alpha_grouped: true
+      preprocess_alpha_T: 0.1
+      preprocess_alpha_H: 2.0
+      preprocess_alpha_A: 1.0
+    sovereign_precision_priority:
+      l2: 1.5
+      sample_weight_mode: class_balanced
+    sovereign_v2_priority:
+      l2: 1.5
+      sample_weight_mode: class_balanced
+    structured_signal_priority:
+      l2: 2.0
+      sample_weight_mode: source_balanced
+    support_calibrated_priority:
+      l2: 7.0
+      sample_weight_mode: class_balanced+knownness_balanced
+    support_synergy_priority:
+      l2: 1.5
+      sample_weight_mode: class_balanced
+    threat_architecture_priority:
+      l2: 4.0
+      sample_weight_mode: class_balanced+knownness_balanced
+    visibility_adjusted_priority:
+      l2: 3.0
+      sample_weight_mode: source_balanced

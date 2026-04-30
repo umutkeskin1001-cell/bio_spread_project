@@ -1,0 +1,7 @@
+backbone_id	spread_label	n_new_countries	T_eff_norm	H_obs_specialization_norm	A_eff_norm	coherence_score	backbone_purity_norm	assignment_confidence_norm	mash_neighbor_distance_train_norm	orit_support	H_external_host_range_norm	log1p_n_countries_train	n_train_macro_regions	log1p_member_count_train	metadata_support_depth_norm	metadata_missingness_burden
+holdout_1	1	3	0.90	0.20	0.80	0.78	0.92	0.90	0.10	0.85	0.75	1.80	3	2.40	0.85	0.10
+holdout_2	1	2	0.82	0.30	0.72	0.70	0.88	0.86	0.15	0.78	0.70	1.50	2	2.10	0.80	0.15
+holdout_3	1	4	0.88	0.25	0.76	0.75	0.90	0.88	0.12	0.80	0.72	1.70	3	2.30	0.82	0.12
+holdout_4	0	0	0.20	0.80	0.25	0.30	0.70	0.65	0.55	0.15	0.20	0.30	1	0.70	0.40	0.35
+holdout_5	0	1	0.25	0.75	0.30	0.35	0.72	0.66	0.50	0.20	0.25	0.45	1	0.80	0.42	0.32
+holdout_6	0	0	0.18	0.82	0.20	0.28	0.68	0.62	0.58	0.12	0.18	0.25	1	0.60	0.35	0.40

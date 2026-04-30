@@ -1,0 +1,26 @@
+version: 1
+invariants:
+  ranking_drift:
+    min_top100_overlap_ratio: 0.95
+  metric_drift:
+    max_abs_delta: 0.005
+  row_count_drift:
+    max_row_delta: 0
+  schema_drift:
+    allow_additive_columns: false
+rollback_conditions:
+  ranking_drift:
+    rollback_on_fail: true
+    signal: top100 overlap ratio below threshold
+  metric_drift:
+    rollback_on_fail: true
+    signal: headline metric absolute delta above threshold
+  row_count_drift:
+    rollback_on_fail: true
+    signal: canonical table row count changed
+  schema_drift:
+    rollback_on_fail: true
+    signal: canonical table schema changed
+equivalence:
+  metric_abs_tolerance: 0.000001
+  ranking_min_overlap_ratio: 0.99

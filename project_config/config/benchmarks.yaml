@@ -1,0 +1,260 @@
+geo_spread:
+  benchmark:
+    name: geo_spread_v1
+    split_year: 2015
+    min_new_countries_for_spread: 3
+    horizon_years: 5
+    assignment_mode: training_only
+    entity_id_column: backbone_id
+    label_column: spread_label
+    outcome_column: n_new_countries
+    required_columns:
+    - backbone_id
+    - spread_label
+    - n_new_countries
+    - split_year
+    - backbone_assignment_mode
+    - max_resolved_year_train
+    - min_resolved_year_test
+    - training_only_future_unseen_backbone_flag
+    temporal_metadata_columns:
+    - split_year
+    - backbone_assignment_mode
+    - max_resolved_year_train
+    - min_resolved_year_test
+  primary_model_name: geo_reliability_blend
+  conservative_model_name: geo_counts_baseline
+  fallback_model_name: geo_context_hybrid_priority
+  research_model_name: geo_research_upper_bound
+  core_model_names:
+  - geo_counts_baseline
+  - geo_parsimonious_priority
+  - geo_phylo_ecology_priority
+  - geo_support_light_priority
+  - geo_context_hybrid_priority
+  research_model_names:
+  - geo_research_upper_bound
+  ablation_model_names: []
+  feature_sets:
+    geo_counts_baseline:
+    - log1p_member_count_train
+    - log1p_n_countries_train
+    - refseq_share_train
+    geo_parsimonious_priority:
+    - T_eff_norm
+    - H_obs_specialization_norm
+    - A_eff_norm
+    - coherence_score
+    geo_phylo_ecology_priority:
+    - T_eff_norm
+    - H_phylogenetic_specialization_norm
+    - A_eff_norm
+    - coherence_score
+    - host_phylogenetic_dispersion_norm
+    - host_taxon_evenness_norm
+    - ecology_context_diversity_norm
+    geo_support_light_priority:
+    - T_eff_norm
+    - H_obs_specialization_norm
+    - A_eff_norm
+    - coherence_score
+    - backbone_purity_norm
+    - assignment_confidence_norm
+    - mash_neighbor_distance_train_norm
+    - orit_support
+    - H_external_host_range_norm
+    geo_context_hybrid_priority:
+    - T_eff_norm
+    - H_obs_specialization_norm
+    - A_eff_norm
+    - coherence_score
+    - backbone_purity_norm
+    - assignment_confidence_norm
+    - mash_neighbor_distance_train_norm
+    - orit_support
+    - H_external_host_range_norm
+    - geo_country_entropy_train
+    - geo_macro_region_entropy_train
+    - geo_dominant_region_share_train
+    - geo_country_record_count_train
+    geo_research_upper_bound:
+    - T_eff_norm
+    - H_phylogenetic_specialization_norm
+    - A_eff_norm
+    - coherence_score
+    - host_phylogenetic_dispersion_norm
+    - host_taxon_evenness_norm
+    - ecology_context_diversity_norm
+    - mash_neighbor_distance_train_norm
+    - backbone_purity_norm
+    - assignment_confidence_norm
+    - clinical_context_fraction_norm
+    - pathogenic_context_fraction_norm
+    - support_shrinkage_norm
+    - mash_graph_novelty_score
+    - mash_graph_bridge_fraction
+  fit_config:
+    geo_counts_baseline:
+      l2: 1.0
+      sample_weight_mode: null
+      max_iter: 250
+      calibration: none
+    geo_parsimonious_priority:
+      l2: 2.0
+      sample_weight_mode: source_balanced
+      max_iter: 400
+      calibration: isotonic
+    geo_phylo_ecology_priority:
+      l2: 2.5
+      sample_weight_mode: source_balanced
+      max_iter: 400
+      calibration: isotonic
+    geo_support_light_priority:
+      l2: 3.0
+      sample_weight_mode: source_balanced
+      max_iter: 500
+      calibration: isotonic
+    geo_context_hybrid_priority:
+      l2: 2.0
+      sample_weight_mode: source_balanced+knownness_balanced
+      max_iter: 700
+      calibration: isotonic
+      model_type: hybrid_stacked
+      nonlinear_backend: hist_gbm
+      nonlinear_max_iter: 300
+      nonlinear_learning_rate: 0.04
+      nonlinear_max_depth: 3
+      nonlinear_min_samples_leaf: 12
+      agreement_review_threshold: 0.75
+    geo_research_upper_bound:
+      l2: 3.5
+      sample_weight_mode: class_balanced+knownness_balanced
+      max_iter: 500
+      calibration: platt
+bio_transfer:
+  benchmark:
+    name: bio_transfer_v1
+    split_year: 2015
+    horizon_years: 5
+    assignment_mode: training_only
+    entity_id_column: backbone_id
+    label_column: bio_transfer_label
+    outcome_column: future_new_host_genera_count
+    required_columns:
+    - backbone_id
+    - bio_transfer_label
+    - future_new_host_genera_count
+    - future_new_host_families_count
+    - split_year
+    - backbone_assignment_mode
+    - max_resolved_year_train
+    - min_resolved_year_test
+    - training_only_future_unseen_backbone_flag
+    temporal_metadata_columns:
+    - split_year
+    - backbone_assignment_mode
+    - max_resolved_year_train
+    - min_resolved_year_test
+  primary_model_name: bio_transfer_governance
+  conservative_model_name: bio_transfer_baseline
+  fallback_model_name: bio_transfer_governance
+  research_model_name: bio_transfer_research
+  core_model_names:
+  - bio_transfer_baseline
+  - bio_transfer_parsimonious
+  - bio_transfer_enriched
+  - bio_transfer_governance
+  research_model_names:
+  - bio_transfer_research
+  selection:
+    discrimination_weight: 0.4
+    calibration_weight: 0.2
+    stability_weight: 0.15
+    knownness_weight: 0.1
+    source_weight: 0.1
+    explanation_weight: 0.05
+    ood_penalty_weight: 0.1
+    disagreement_penalty_weight: 0.1
+clinical_hazard:
+  benchmark:
+    name: clinical_hazard_v1
+    split_year: 2015
+    horizon_years: 5
+    assignment_mode: training_only
+    entity_id_column: backbone_id
+    label_column: clinical_hazard_label
+    outcome_column: clinical_fraction_future
+    required_columns:
+    - backbone_id
+    - clinical_hazard_label
+    - clinical_fraction_future
+    - last_resort_fraction_future
+    - mdr_proxy_fraction_future
+    - pd_clinical_support_future
+    - split_year
+    - backbone_assignment_mode
+    - max_resolved_year_train
+    - min_resolved_year_test
+    - training_only_future_unseen_backbone_flag
+    temporal_metadata_columns:
+    - split_year
+    - backbone_assignment_mode
+    - max_resolved_year_train
+    - min_resolved_year_test
+  primary_model_name: clinical_hazard_governance
+  conservative_model_name: clinical_hazard_baseline
+  fallback_model_name: clinical_hazard_governance
+  research_model_name: clinical_hazard_research
+  core_model_names:
+  - clinical_hazard_baseline
+  - clinical_hazard_parsimonious
+  - clinical_hazard_enriched
+  - clinical_hazard_governance
+  research_model_names:
+  - clinical_hazard_research
+  selection:
+    discrimination_weight: 0.4
+    calibration_weight: 0.2
+    stability_weight: 0.15
+    knownness_weight: 0.1
+    source_weight: 0.1
+    explanation_weight: 0.05
+    ood_penalty_weight: 0.1
+    disagreement_penalty_weight: 0.1
+consensus:
+  benchmark:
+    name: consensus_v1
+    split_year: 2015
+    horizon_years: 5
+    assignment_mode: training_only
+    entity_id_column: backbone_id
+    label_column: spread_label
+    outcome_column: n_new_countries_future
+    required_columns:
+    - backbone_id
+    - spread_label
+    - split_year
+    - backbone_assignment_mode
+    - max_resolved_year_train
+    - min_resolved_year_test
+    - training_only_future_unseen_backbone_flag
+    temporal_metadata_columns:
+    - split_year
+    - backbone_assignment_mode
+    - max_resolved_year_train
+    - min_resolved_year_test
+  primary_model_name: operational_consensus
+  conservative_model_name: operational_consensus
+  fallback_model_name: research_consensus
+  research_model_name: research_consensus
+  core_model_names:
+  - operational_consensus
+  research_model_names:
+  - research_consensus
+  fusion_weights:
+    geo: 0.5
+    bio_transfer: 0.25
+    clinical_hazard: 0.25
+  guardrails:
+    ood_threshold: 0.2
+    review_threshold: 0.2
