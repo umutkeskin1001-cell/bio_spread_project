@@ -12,9 +12,8 @@ BioSpread is a standalone package with one executable workflow:
 
 The control-plane entry points are:
 
-- `run_project.py`
 - `python -m bio_spread_project.cli run`
-- `python3 verify_project.py`
+- `python -m bio_spread_project.cli verify`
 
 ## Data paths
 

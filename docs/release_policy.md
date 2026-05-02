@@ -19,7 +19,7 @@ Release gates are generated from real artifacts:
 Use these flags when a run is intended to act like a release candidate:
 
 ```bash
-python3 run_project.py \
+PYTHONPATH=src python3 -m bio_spread_project.cli run \
   --fail-on-quality-gates \
   --fail-on-drift-fail \
   --fail-on-trend-fail \

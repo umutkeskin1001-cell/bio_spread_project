@@ -28,7 +28,7 @@
 ## Test Layers
 - Unit tests for feature engineering, model scoring, metrics, and reporting.
 - Integration tests for end-to-end pipeline artifacts.
-- Script-level test for `run_project.py`.
+- CLI-level tests for `python -m bio_spread_project.cli run`.
 
 ## Release-Gate Semantics
 - `go`: quality, drift, and trend evidence all pass.

@@ -4,8 +4,8 @@
 
 ```bash
 python3 -m pip install -r requirements-dev.txt
-python3 run_project.py --mode geo --output-dir reports/release_final
-python3 verify_project.py --release
+PYTHONPATH=src python3 -m bio_spread_project.cli run --mode geo --output-dir reports/release_final
+PYTHONPATH=src python3 -m bio_spread_project.cli verify --release
 ```
 
 For final packaging, run these commands with Python linked against OpenSSL 1.1.1
@@ -44,5 +44,5 @@ Before submission, these commands must pass:
 python3 -m ruff check src tests
 python3 -m mypy src/bio_spread_project
 python3 -m pytest tests
-python3 run_project.py --mode geo --output-dir reports/release_final
+PYTHONPATH=src python3 -m bio_spread_project.cli run --mode geo --output-dir reports/release_final
 ```

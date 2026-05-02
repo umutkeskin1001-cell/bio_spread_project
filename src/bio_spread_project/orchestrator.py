@@ -464,7 +464,11 @@ def run_pipeline(config: PipelineConfig | None = None, **kwargs: Any) -> Pipelin
 
         write_json(
             stage / "data_registry.json",
-            {"project": "BioSpread", "input_count": len(input_paths), "inputs": {k: str(v) for k, v in input_paths.items()}},
+            {
+                "project": "BioSpread",
+                "input_count": len(input_paths),
+                "inputs": {k: portable_path(v, root=paths.project_root) for k, v in input_paths.items()},
+            },
         )
 
         root = paths.project_root

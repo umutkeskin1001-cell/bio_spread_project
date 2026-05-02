@@ -2,7 +2,7 @@
 
 ## Standard Run
 ```bash
-python3 run_project.py \
+PYTHONPATH=src python3 -m bio_spread_project.cli run \
   --fail-on-quality-gates \
   --fail-on-drift-fail \
   --fail-on-trend-fail \
@@ -13,21 +13,21 @@ python3 run_project.py \
 ## Quality Gate Run
 ```bash
 make quality
-python3 verify_project.py
+PYTHONPATH=src python3 -m bio_spread_project.cli verify
 ```
 
 ## Release Python Runtime
 Use a Python build linked against OpenSSL 1.1.1 or newer for final release packaging.
-`verify_project.py --release` records the active SSL backend in `manifest.json` and prints a warning when the runtime is linked against LibreSSL or an older OpenSSL.
+`python3 -m bio_spread_project.cli verify --release` records the active SSL backend in `manifest.json` and prints a warning when the runtime is linked against LibreSSL or an older OpenSSL.
 
 ## Lightweight CI Verification
 ```bash
-python3 verify_project.py --skip-run-if-data-missing
+PYTHONPATH=src python3 -m bio_spread_project.cli verify
 ```
 
 ## External Holdout Evaluation
 ```bash
-python3 run_project.py \
+PYTHONPATH=src python3 -m bio_spread_project.cli run \
   --mode geo \
   --geo-spread-features data/project_inputs/geo_spread/inputs/backbone_scored.tsv \
   --external-holdout data/project_inputs/geo_spread/inputs/backbone_scored.tsv
