@@ -172,8 +172,15 @@ def load_geo_spread_feature_rows(path: str | Path) -> list[GeoSpreadFeatureRow]:
             alias_exprs.append(pl.col("log1p_n_countries_train").cast(pl.Float64).alias("geo_country_entropy_train"))
     if "geo_macro_region_entropy_train" not in df.columns and "n_train_macro_regions" in df.columns:
         alias_exprs.append(pl.col("n_train_macro_regions").cast(pl.Float64).log1p().alias("geo_macro_region_entropy_train"))
-    if "geo_dominant_region_share_train" not in df.columns and {"n_new_macro_regions", "n_train_macro_regions"}.issubset(set(df.columns)):
-        alias_exprs.append((1.0 - pl.col("n_new_macro_regions").cast(pl.Float64) / (pl.col("n_train_macro_regions").cast(pl.Float64) + 1.0)).clip(0.0, 1.0).alias("geo_dominant_region_share_train"))
+    if "geo_dominant_region_share_train" not in df.columns and "n_train_macro_regions" in df.columns:
+        # Leakage firewall: use the uniform train-region lower bound instead of
+        # future macro-region outcomes, preserving the feature contract without
+        # letting post-split geography backpropagate into the training matrix.
+        alias_exprs.append(
+            (1.0 / pl.col("n_train_macro_regions").cast(pl.Float64).clip(lower_bound=1.0))
+            .clip(0.0, 1.0)
+            .alias("geo_dominant_region_share_train")
+        )
     if "geo_country_record_count_train" not in df.columns:
         if "member_count_train" in df.columns:
             alias_exprs.append(pl.col("member_count_train").cast(pl.Float64).alias("geo_country_record_count_train"))

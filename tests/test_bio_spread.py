@@ -204,6 +204,42 @@ def test_geo_surface_derives_optional_geo_features_from_packaged_aliases():
     assert "geo_country_record_count_train" in first.features
 
 
+def test_geo_surface_never_derives_train_features_from_future_macro_regions(tmp_path):
+    surface = tmp_path / "surface.tsv"
+    surface.write_text(
+        "\t".join(
+            [
+                "backbone_id",
+                "spread_label",
+                "n_new_countries",
+                "n_new_macro_regions",
+                "n_train_macro_regions",
+                "log1p_n_countries_train",
+                "log1p_member_count_train",
+                "metadata_support_depth_norm",
+                "metadata_missingness_burden",
+                "T_eff_norm",
+                "H_obs_specialization_norm",
+                "A_eff_norm",
+                "coherence_score",
+                "backbone_purity_norm",
+                "assignment_confidence_norm",
+                "mash_neighbor_distance_train_norm",
+                "orit_support",
+                "H_external_host_range_norm",
+            ]
+        )
+        + "\n"
+        + "\t".join(["bb_a", "1", "3", "2", "4", "1.2", "2.0", "0.8", "0.1", "0.7", "0.3", "0.6", "0.8", "0.9", "0.8", "0.1", "0.7", "0.6"])
+        + "\n",
+        encoding="utf-8",
+    )
+
+    row = load_geo_spread_feature_rows(surface)[0]
+
+    assert row.features["geo_dominant_region_share_train"] == pytest.approx(0.25)
+
+
 def test_geo_predictions_expose_honest_attribution_metadata(tmp_path):
     result = run_pipeline(
         run_mode="geo",
