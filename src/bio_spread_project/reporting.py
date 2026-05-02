@@ -136,6 +136,15 @@ def render_chic_report(
         [i+1, p.backbone_id, p.risk_probability, p.confidence_tier, p.n_new_countries_future, p.explanation]
         for i, p in enumerate(top_preds)
     ]
+    priority = sorted(
+        predictions,
+        key=lambda p: float((p.meta or {}).get("alarm_score", 0.0)),
+        reverse=True,
+    )[:5]
+    priority_lines = [
+        f"{i+1}. {p.backbone_id} (alarm={float((p.meta or {}).get('alarm_score', 0.0)):.3f}, risk={p.risk_probability:.3f})"
+        for i, p in enumerate(priority)
+    ] or ["No alarm scores available."]
 
     # 5. ENVIRONMENT & DATA HASHES
     env_headers = ["Entity", "Value / Hash"]
@@ -162,6 +171,9 @@ def render_chic_report(
         "",
         "### 🚨 High-Risk Backbone Registry (Top 10)",
         _generate_markdown_table(risk_headers, risk_rows),
+        "",
+        "### Priority Surveillance Targets",
+        *priority_lines,
         "",
         "### 🔎 Katsayı özeti (Coefficient Summary)",
         "The model uses a Firth-penalized logistic ensemble. Primary drivers include:",

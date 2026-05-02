@@ -153,6 +153,9 @@ def test_pipeline_writes_predictions_and_report(tmp_path):
     assert "trend" in manifest["threshold_sources"]
     assert manifest["artifacts"]["features_parquet"] == "features.parquet"
     assert manifest["artifacts"]["artifact_index"] == "artifact_index.json"
+    assert "dag_trace" in manifest
+    for step in ["select_input_source", "load_or_build_features", "enrich_features", "train_model", "evaluate_gates"]:
+        assert step in manifest["dag_trace"]
 
 
 def test_geo_pipeline_separates_final_predictions_from_validation_metrics(tmp_path):

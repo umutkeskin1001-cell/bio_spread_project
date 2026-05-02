@@ -18,15 +18,16 @@ from sklearn.model_selection import StratifiedGroupKFold
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
-from bio_spread_project.external_features import EnrichmentFlags
-from bio_spread_project.losses import focal_pairwise_loss, soft_ndcg_loss
 from bio_spread_project.data import read_table
+from bio_spread_project.external_features import EnrichmentFlags
+from bio_spread_project.losses import focal_pairwise_loss, reliability_weighted_propensity, soft_ndcg_loss
 from bio_spread_project.metrics import (
     bootstrap_metric_intervals,
     calibration_summary,
     evaluate_predictions,
 )
 from bio_spread_project.model import ModelRun, Prediction
+from bio_spread_project.shared_model import BioSpreadJointEncoder, MultiHeadRiskPredictor
 
 MODEL_NAME = "geobio_reliability_ensemble"
 MODEL_DESCRIPTION = (
@@ -98,7 +99,67 @@ FEATURE_COLUMNS: tuple[str, ...] = (
     "psge_5",
     "psge_6",
     "psge_7",
+    "grps",
     "oof_rf", "oof_hgb", "oof_ridge",
+)
+
+HISTORICAL_FEATURES: tuple[str, ...] = (
+    "geo_country_entropy_train",
+    "geo_macro_region_entropy_train",
+    "geo_dominant_region_share_train",
+    "geo_country_record_count_train",
+    "log1p_member_count_train",
+    "log1p_n_countries_train",
+    "surv_intensity",
+    "host_sampling_shannon",
+    "reach_potential",
+    "saturation_deficit",
+    "country_slope_train",
+    "host_breadth_slope_train",
+    "mobility_shift_slope_train",
+    "recent_expansion_flag",
+)
+
+INTRINSIC_FEATURES: tuple[str, ...] = (
+    "T_eff_norm",
+    "H_obs_specialization_norm",
+    "A_eff_norm",
+    "coherence_score",
+    "backbone_purity_norm",
+    "assignment_confidence_norm",
+    "mash_neighbor_distance_train_norm",
+    "orit_support",
+    "H_external_host_range_norm",
+    "amr_burden_saturation_norm",
+    "amr_clinical_threat_norm",
+    "host_range_saturation_norm",
+    "eco_clinical_context_saturation_norm",
+    "replicon_architecture_norm",
+    "silent_carrier_risk_norm",
+    "metadata_support_depth_norm",
+    "metadata_missingness_burden",
+    "inc_group_code",
+    "mob_typer_code",
+    "conjugation_score",
+    "toxin_antitoxin_count",
+    "replicon_count",
+    "avg_gc_content",
+    "plasmid_size_kb",
+    "phage_related_genes_count",
+    "frac_pathogenic_hosts",
+    "env_diversity",
+    "gram_stain_entropy",
+    "metabolic_diversity",
+    "mean_antibiotic_pressure",
+    "max_health_exp",
+    "tourist_entropy",
+    "carbapenemase_count",
+    "esbl_count",
+    "colistin_resistance_count",
+    "other_amr_count",
+    "amr_class_shannon",
+    "min_dist_to_top5_traveller",
+    "grps",
 )
 
 CORE_BACKBONE_FEATURES = (
@@ -298,6 +359,9 @@ def fit_geo_reliability_surface(
         meta_clf = TorchMetaEstimator(
             use_rank_focal=use_rank_focal,
             use_country_debias=use_country_debias,
+            use_gated_fusion=bool(modeling_flags.enable_gated_fusion) if modeling_flags is not None else False,
+            use_reliability_propensity=bool(modeling_flags.use_reliability_propensity) if modeling_flags is not None else False,
+            feature_names=tuple([*base_features, "oof_rf", "oof_hgb", "oof_ridge"]),
         )
         meta_clf.fit(X_meta, y, knownness=knownness, country_targets=country_targets)
     else:
@@ -643,9 +707,20 @@ def comprehensive_leakage_alarm(df: pl.DataFrame) -> dict[str, Any]:
 
 
 class TorchMetaEstimator:
-    def __init__(self, *, use_rank_focal: bool, use_country_debias: bool) -> None:
+    def __init__(
+        self,
+        *,
+        use_rank_focal: bool,
+        use_country_debias: bool,
+        use_gated_fusion: bool = False,
+        use_reliability_propensity: bool = False,
+        feature_names: tuple[str, ...] = (),
+    ) -> None:
         self.use_rank_focal = use_rank_focal
         self.use_country_debias = use_country_debias
+        self.use_gated_fusion = use_gated_fusion
+        self.use_reliability_propensity = use_reliability_propensity
+        self.feature_names = feature_names
         self.model: Any | None = None
         self.country_vocab: dict[str, int] = {}
 
@@ -677,7 +752,16 @@ class TorchMetaEstimator:
             n_country = 2
 
         hidden_dim = 64 if self.use_rank_focal else 32
-        model = _MetaMLP(input_dim=X.shape[1], hidden_dim=hidden_dim, num_countries=n_country)
+        model: Any
+        if self.use_gated_fusion:
+            model = _GatedFusionMetaModel(
+                input_dim=X.shape[1],
+                hidden_dim=hidden_dim,
+                num_countries=n_country,
+                feature_names=self.feature_names,
+            )
+        else:
+            model = _MetaMLP(input_dim=X.shape[1], hidden_dim=hidden_dim, num_countries=n_country)
         opt = torch.optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-4)
         bce = torch.nn.BCEWithLogitsLoss()
         model.train()
@@ -691,9 +775,18 @@ class TorchMetaEstimator:
                 yb = y_t[idx]
                 kb = k_t[idx]
                 logits, country_logits = model(xb)
+                weights = None
+                if self.use_reliability_propensity:
+                    batch_entries = {
+                        "n_records_pre": np.full(len(idx), 5.0),
+                        "metadata_support_depth_norm": np.clip(xb[:, 9].detach().cpu().numpy(), 0.0, 1.0) if xb.shape[1] > 9 else np.full(len(idx), 0.5),
+                        "assignment_confidence_norm": np.clip(xb[:, 5].detach().cpu().numpy(), 0.0, 1.0) if xb.shape[1] > 5 else np.full(len(idx), 0.5),
+                        "backbone_purity_norm": np.clip(xb[:, 4].detach().cpu().numpy(), 0.0, 1.0) if xb.shape[1] > 4 else np.full(len(idx), 0.5),
+                    }
+                    weights = reliability_weighted_propensity(batch_entries).to(xb.device)
 
                 if self.use_rank_focal:
-                    loss_main = focal_pairwise_loss(logits.view(-1), yb.view(-1), kb.view(-1), gamma=2.0) + 0.2 * soft_ndcg_loss(
+                    loss_main = focal_pairwise_loss(logits.view(-1), yb.view(-1), kb.view(-1), gamma=2.0, weights=weights) + 0.2 * soft_ndcg_loss(
                         logits.view(-1), yb.view(-1), topk=25
                     )
                 else:
@@ -757,6 +850,52 @@ class _MetaMLP:
     def __call__(self, x: Any) -> tuple[Any, Any]:
         h = self.net(x)
         return self.main_head(h), self.country_head(h)
+
+
+class _GatedFusionMetaModel:
+    def __init__(self, input_dim: int, hidden_dim: int, num_countries: int, feature_names: tuple[str, ...]) -> None:
+        import torch
+
+        super().__init__()
+        name_to_idx = {name: i for i, name in enumerate(feature_names)}
+        hist_idx = [name_to_idx[c] for c in HISTORICAL_FEATURES if c in name_to_idx]
+        intrin_idx = [name_to_idx[c] for c in INTRINSIC_FEATURES if c in name_to_idx]
+        if not hist_idx or not intrin_idx:
+            # Safe fallback.
+            split = max(1, int(input_dim * 0.6))
+            hist_idx = list(range(split))
+            intrin_idx = list(range(split, input_dim))
+        self.hist_idx = hist_idx
+        self.intrin_idx = intrin_idx
+        hist_dim = max(1, len(hist_idx))
+        intrin_dim = max(1, len(intrin_idx))
+        encoder = BioSpreadJointEncoder(hist_dim=hist_dim, intrin_dim=intrin_dim, latent_dim=hidden_dim)
+        self.joint = MultiHeadRiskPredictor(encoder=encoder, latent_dim=hidden_dim, num_countries=max(2, num_countries))
+        self.main_head = torch.nn.Linear(hidden_dim, 1)
+
+    def parameters(self) -> Any:
+        return list(self.joint.parameters()) + list(self.main_head.parameters())
+
+    def train(self) -> "_GatedFusionMetaModel":
+        self.joint.train()
+        self.main_head.train()
+        return self
+
+    def eval(self) -> "_GatedFusionMetaModel":
+        self.joint.eval()
+        self.main_head.eval()
+        return self
+
+    def __call__(self, x: Any) -> tuple[Any, Any]:
+        import torch
+
+        hist = x[:, self.hist_idx]
+        intrin = x[:, self.intrin_idx]
+        knownness = torch.sigmoid(x[:, :1])
+        out = self.joint(hist, intrin, knownness)
+        spread = out["spread"]
+        country = out["country_logits"]
+        return spread if spread is not None else self.main_head(hist), country
 
 
 def _make_calibrated_stack() -> LogisticRegression:

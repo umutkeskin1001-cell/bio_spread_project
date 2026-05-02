@@ -8,6 +8,8 @@ from pathlib import Path
 import polars as pl
 
 from bio_spread_project.data import read_table
+from bio_spread_project.embeddings import EmbeddingStore
+from bio_spread_project.grps import compute_grps
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +25,10 @@ class EnrichmentFlags:
     enable_phylo_spatial_embedding: bool = False
     enable_rank_focal_loss: bool = False
     enable_soft_country_debiasing: bool = False
+    enable_grps: bool = True
+    enable_gated_fusion: bool = True
+    use_reliability_propensity: bool = True
+    enable_conformal: bool = True
 
 
 def _parse_bool(value: str) -> bool:
@@ -49,7 +55,41 @@ def load_enrichment_flags(config_path: Path) -> EnrichmentFlags:
         enable_phylo_spatial_embedding=values.get("enable_phylo_spatial_embedding", False),
         enable_rank_focal_loss=values.get("enable_rank_focal_loss", False),
         enable_soft_country_debiasing=values.get("enable_soft_country_debiasing", False),
+        enable_grps=values.get("enable_grps", True),
+        enable_gated_fusion=values.get("enable_gated_fusion", True),
+        use_reliability_propensity=values.get("use_reliability_propensity", True),
+        enable_conformal=values.get("enable_conformal", True),
     )
+
+
+def add_grps_to_features(
+    features: pl.DataFrame,
+    embedding_store: EmbeddingStore,
+    *,
+    knownness_threshold: float = 0.3,
+) -> pl.DataFrame:
+    if features.is_empty() or "knownness_score" not in features.columns:
+        return features
+    ids = (
+        features.filter(pl.col("knownness_score").fill_null(0.5) < knownness_threshold)["backbone_id"]
+        .cast(pl.Utf8)
+        .to_list()
+    )
+    if not ids:
+        return features.with_columns(pl.lit(0.0).alias("grps")) if "grps" not in features.columns else features
+
+    emb = embedding_store.get(features["backbone_id"].cast(pl.Utf8).to_list(), kind="esm2")
+    if not emb.is_empty():
+        emb_cols_all = [c for c in emb.columns if c != "backbone_id"]
+        emb = emb.group_by("backbone_id").agg([pl.col(c).cast(pl.Float64).mean().alias(c) for c in emb_cols_all])
+    emb_cols = [c for c in emb.columns if c.startswith("esm2_embed_")]
+    if emb.is_empty() or not emb_cols:
+        return features.with_columns(pl.lit(0.0).alias("grps")) if "grps" not in features.columns else features
+
+    labels = features.select(["backbone_id", "label_geo_spread"])
+    grps_df = compute_grps(ids, emb, labels, emb_cols)
+    out = features.join(grps_df, on="backbone_id", how="left", coalesce=True)
+    return out.with_columns(pl.col("grps").fill_null(0.0))
 
 
 def augment_intrinsic_plasmid_features(features: pl.DataFrame, external_dir: Path) -> tuple[pl.DataFrame, bool]:

@@ -27,6 +27,7 @@ class Prediction:
     knownness_score: float
     n_new_countries_future: int
     explanation: str
+    alarm_score: float = 0.0
     meta: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:

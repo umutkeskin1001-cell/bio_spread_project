@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import polars as pl
@@ -87,7 +88,7 @@ class PhyloSpatialGraphEmbedder:
 
         data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
 
-        class GCN(torch.nn.Module):
+        class GCN(torch.nn.Module):  # type: ignore[misc]
             def __init__(self) -> None:
                 super().__init__()
                 self.conv1 = GCNConv(32, 16)
@@ -128,6 +129,6 @@ class PhyloSpatialGraphEmbedder:
     def _to_df(self, backbone_ids: list[str]) -> pl.DataFrame:
         if self.embeddings is None:
             raise ValueError("embeddings are not fitted")
-        cols = {f"psge_{i}": self.embeddings[:, i] for i in range(self.embeddings.shape[1])}
+        cols: dict[str, Any] = {f"psge_{i}": self.embeddings[:, i] for i in range(self.embeddings.shape[1])}
         cols["backbone_id"] = backbone_ids
         return pl.DataFrame(cols)

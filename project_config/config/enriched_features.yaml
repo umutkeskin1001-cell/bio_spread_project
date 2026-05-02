@@ -1,9 +1,13 @@
 enable_intrinsic_plasmid_features: false
 enable_host_traits: false
 enable_country_indicators: false
-enable_temporal_trends: true
+enable_temporal_trends: false
 enable_amr_diversity: false
 enable_phylogenetic_proximity: false
-enable_phylo_spatial_embedding: true
+enable_phylo_spatial_embedding: false
 enable_rank_focal_loss: false
 enable_soft_country_debiasing: false
+enable_grps: false
+enable_gated_fusion: false
+use_reliability_propensity: false
+enable_conformal: false

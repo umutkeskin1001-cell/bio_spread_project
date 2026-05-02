@@ -1,6 +1,19 @@
 from __future__ import annotations
 
+from typing import Any
+
 import torch
+
+
+def reliability_weighted_propensity(batch_entries: dict[str, Any]) -> torch.Tensor:
+    obs = torch.tensor(batch_entries["n_records_pre"], dtype=torch.float32)
+    structural = (
+        torch.tensor(batch_entries["metadata_support_depth_norm"], dtype=torch.float32) * 0.5
+        + torch.tensor(batch_entries["assignment_confidence_norm"], dtype=torch.float32) * 0.3
+        + torch.tensor(batch_entries["backbone_purity_norm"], dtype=torch.float32) * 0.2
+    )
+    quality_bonus = torch.where(structural >= 0.5, 1.0, 0.1)
+    return (1.0 / (obs + 2.0)) * quality_bonus
 
 
 def focal_pairwise_loss(
@@ -9,6 +22,7 @@ def focal_pairwise_loss(
     knownness: torch.Tensor,
     gamma: float = 2.0,
     max_pairs: int = 4096,
+    weights: torch.Tensor | None = None,
 ) -> torch.Tensor:
     pos_idx = torch.where(labels > 0.5)[0]
     neg_idx = torch.where(labels <= 0.5)[0]
@@ -23,7 +37,10 @@ def focal_pairwise_loss(
     s_neg = scores[neg_pick]
     p_neg = torch.sigmoid(s_neg)
 
-    w = knownness[pos_pick] * knownness[neg_pick]
+    if weights is not None:
+        w = weights[pos_pick] * weights[neg_pick]
+    else:
+        w = knownness[pos_pick] * knownness[neg_pick]
     w = w / (w.mean().clamp_min(1e-6))
 
     margin = torch.sigmoid(s_pos - s_neg).clamp(1e-6, 1.0 - 1e-6)

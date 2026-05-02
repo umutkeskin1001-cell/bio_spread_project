@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -7,14 +8,12 @@ import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
 from scipy.stats import linregress
-import json
 
 from bio_spread_project.data import PlasmidRecord, load_records
 from bio_spread_project.external_features import augment_phylogenetic_proximity
 from bio_spread_project.features import build_backbone_features, feature_rows_to_frame
 from bio_spread_project.geo_reliability import (
     FEATURE_COLUMNS,
-    _feature_matrix,
     fit_geo_reliability_surface,
     single_feature_leakage_scan,
     statistical_leakage_alarm,
@@ -159,7 +158,6 @@ def test_gnn_embedder_uses_only_presplit_edges() -> None:
         }
     )
 
-    import torch
 
     emb_full = BackboneGraphEmbedder()
     emb_full.fit(obs.lazy(), split_year=2020)
