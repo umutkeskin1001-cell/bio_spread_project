@@ -368,9 +368,12 @@ def _calculate_permutation_importance(
 ) -> list[dict[str, Any]]:
     baseline_auc = roc_auc_score(y, model.predict_proba(X)[:, 1])
     importances = []
+    rng = np.random.default_rng(7)
     for i, col in enumerate(columns):
         X_shuff = X.copy()
-        np.random.shuffle(X_shuff[:, i])
+        # Local seeded permutation keeps explanation artifacts byte-stable while
+        # avoiding global RNG state pollution across bootstrap/model routines.
+        X_shuff[:, i] = X_shuff[rng.permutation(X_shuff.shape[0]), i]
         shuff_auc = roc_auc_score(y, model.predict_proba(X_shuff)[:, 1])
         importances.append({"feature": col, "score": max(0.0, float(baseline_auc - shuff_auc))})
     return sorted(importances, key=lambda x: x["score"], reverse=True)

@@ -13,7 +13,11 @@ from bio_spread_project.features import build_backbone_features
 from bio_spread_project.geo_reliability import (
     FEATURE_COLUMNS,
     GeoSpreadFeatureRow,
+    _calculate_permutation_importance,
+    _feature_matrix,
+    _make_calibrated_stack,
     fit_geo_reliability_surface,
+    geo_rows_to_frame,
     leakage_audit,
     load_geo_spread_feature_rows,
     single_feature_leakage_scan,
@@ -252,6 +256,20 @@ def test_geo_predictions_expose_honest_attribution_metadata(tmp_path):
     assert isinstance(audit["validation"]["top_features"], list)
     assert audit["validation"]["top_features"][0]["feature"]
     assert audit["validation"]["top_features"][0]["score"] >= 0.0
+
+
+def test_permutation_importance_is_deterministic_for_same_model():
+    rows = load_geo_spread_feature_rows(GEO_SPREAD_FEATURES)
+    frame = geo_rows_to_frame(rows)
+    matrix = _feature_matrix(frame, FEATURE_COLUMNS)
+    labels = frame["label_geo_spread"].to_numpy()
+    model = _make_calibrated_stack()
+    model.fit(matrix, labels)
+
+    first = _calculate_permutation_importance(model, matrix, labels, FEATURE_COLUMNS)
+    second = _calculate_permutation_importance(model, matrix, labels, FEATURE_COLUMNS)
+
+    assert first == second
 
 
 def test_calibration_summary_exports_bins_for_report():
