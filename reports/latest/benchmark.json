@@ -15,13 +15,13 @@
     "temporal_holdout_auc_at_least_target": true
   },
   "validation_summary": {
-    "average_precision": 0.9281688850499228,
-    "bootstrap_roc_auc_ci_high": 0.9562486106904095,
-    "bootstrap_roc_auc_ci_low": 0.9304568523849204,
-    "group_oof_roc_auc": 0.9440068025412602,
-    "max_single_feature_auc": 0.9144593653898685,
-    "roc_auc": 0.9440068025412602,
+    "average_precision": 0.8902586190670988,
+    "bootstrap_roc_auc_ci_high": 0.9403064693175169,
+    "bootstrap_roc_auc_ci_low": 0.9041103781134812,
+    "group_oof_roc_auc": 0.9216936741653228,
+    "max_single_feature_auc": 0.9165146668781446,
+    "roc_auc": 0.9216936741653228,
     "suspicious_feature_count": 0.0,
-    "temporal_holdout_roc_auc": 0.9421618327736649
+    "temporal_holdout_roc_auc": 0.9189474776024582
   }
 }

@@ -90,7 +90,7 @@
     },
     {
       "detail": {
-        "observed": 0.9440068025412602,
+        "observed": 0.9216936741653228,
         "passed": true,
         "reason": "",
         "status": "pass",
@@ -103,7 +103,7 @@
     },
     {
       "detail": {
-        "observed": 0.9281688850499228,
+        "observed": 0.8902586190670988,
         "passed": true,
         "reason": "",
         "status": "pass",
@@ -116,7 +116,7 @@
     },
     {
       "detail": {
-        "observed": 0.020045402005752916,
+        "observed": 0.03373729385571601,
         "passed": true,
         "reason": "",
         "status": "pass",
@@ -129,7 +129,7 @@
     },
     {
       "detail": {
-        "observed": 0.9304568523849204,
+        "observed": 0.9041103781134812,
         "passed": true,
         "reason": "",
         "status": "pass",
@@ -142,7 +142,7 @@
     },
     {
       "detail": {
-        "observed": 0.9033362743239136,
+        "observed": 0.8560463563599243,
         "passed": true,
         "reason": "",
         "status": "pass",
@@ -155,7 +155,7 @@
     },
     {
       "detail": {
-        "observed": 0.9440068025412602,
+        "observed": 0.9216936741653228,
         "passed": true,
         "reason": "",
         "status": "pass",
@@ -168,7 +168,7 @@
     },
     {
       "detail": {
-        "observed": 0.9421618327736649,
+        "observed": 0.9189474776024582,
         "passed": true,
         "reason": "",
         "status": "pass",
@@ -203,7 +203,7 @@
     },
     {
       "detail": {
-        "observed": "count=0, max_auc=0.914",
+        "observed": "count=0, max_auc=0.917",
         "passed": true,
         "reason": "",
         "status": "pass",

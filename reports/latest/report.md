@@ -5,8 +5,8 @@
 ║ BIOSPREAD PREDICTIVE SURVEILLANCE REPORT                 ║
 ╚══════════════════════════════════════════════════════════╝
 STATUS:    🟢 CONDITIONAL GO
-RUN ID:    db874303-0fed-45e8-a028-7b97d8e4f59d
-TIMESTAMP: 2026-05-02T20:41:46.189579
+RUN ID:    a4a3d6e2-fafb-421d-9966-4fbc336af877
+TIMESTAMP: 2026-05-02T23:09:53.256312
 ```
 
 ### 🔬 Problem Definition
@@ -15,33 +15,40 @@ This model prioritizes plasmid backbones based on their predicted risk of geogra
 ### 📊 Validation Performance
 | Metric | Value | Threshold | Status |
 | --- | --- | --- | --- |
-| ROC AUC | 0.9440 | >= 0.820 | PASS |
-| Avg Precision | 0.9282 | > Prev | PASS |
-| Calibration ECE | 0.0200 | <= 0.100 | PASS |
-| Brier Score | 0.0860 | N/A | INFO |
+| ROC AUC | 0.9217 | >= 0.820 | PASS |
+| Avg Precision | 0.8903 | > Prev | PASS |
+| Calibration ECE | 0.0337 | <= 0.100 | PASS |
+| Brier Score | 0.1037 | N/A | INFO |
 
 ### 🎯 Calibration & Reliability
 | Gate Type | Metric | Value | Status |
 | --- | --- | --- | --- |
-| Spatial Group CV | OOF ROC AUC | 0.9440 | PASS |
-| Temporal Holdout | AUC @ N/A | 0.9422 | PASS |
+| Spatial Group CV | OOF ROC AUC | 0.9217 | PASS |
+| Temporal Holdout | AUC @ N/A | 0.9189 | PASS |
 | External Holdout | Independent AUC | N/A | PASS |
-| Bootstrap CI | ROC AUC Low (95%) | 0.9305 | PASS |
-| Leakage Scan | Max Single-Feature AUC | 0.9145 | PASS |
+| Bootstrap CI | ROC AUC Low (95%) | 0.9041 | PASS |
+| Leakage Scan | Max Single-Feature AUC | 0.9165 | PASS |
 
 ### 🚨 High-Risk Backbone Registry (Top 10)
 | Rank | Backbone ID | Risk Prob | Confidence | Future Spread | Explanation |
 | --- | --- | --- | --- | --- | --- |
-| 1 | AA275 | 1.0000 | high | 33 | Ensemble risk: 1.000 |
-| 2 | AA038 | 0.9999 | high | 35 | Ensemble risk: 1.000 |
-| 3 | AB193 | 0.9998 | high | 22 | Ensemble risk: 1.000 |
-| 4 | AC621 | 0.9998 | medium | 13 | Ensemble risk: 1.000 |
-| 5 | AA619 | 0.9996 | high | 39 | Ensemble risk: 1.000 |
-| 6 | AB192 | 0.9996 | high | 17 | Ensemble risk: 1.000 |
-| 7 | AC125 | 0.9996 | high | 26 | Ensemble risk: 1.000 |
-| 8 | AA316 | 0.9996 | high | 17 | Ensemble risk: 1.000 |
-| 9 | AB002 | 0.9995 | high | 21 | Ensemble risk: 0.999 |
-| 10 | AA171 | 0.9995 | high | 34 | Ensemble risk: 0.999 |
+| 1 | AA162 | 0.9104 | high | 17 | Ensemble risk: 0.910 |
+| 2 | AA519 | 0.9103 | high | 13 | Ensemble risk: 0.910 |
+| 3 | AA457 | 0.9103 | high | 12 | Ensemble risk: 0.910 |
+| 4 | AB595 | 0.9102 | high | 24 | Ensemble risk: 0.910 |
+| 5 | AB114 | 0.9102 | high | 12 | Ensemble risk: 0.910 |
+| 6 | AF085 | 0.9102 | high | 8 | Ensemble risk: 0.910 |
+| 7 | AB040 | 0.9102 | high | 19 | Ensemble risk: 0.910 |
+| 8 | AB169 | 0.9102 | high | 8 | Ensemble risk: 0.910 |
+| 9 | AA282 | 0.9102 | high | 23 | Ensemble risk: 0.910 |
+| 10 | AA175 | 0.9102 | high | 19 | Ensemble risk: 0.910 |
+
+### Priority Surveillance Targets
+1. AB111 (alarm=1.499, risk=0.905)
+2. AB152 (alarm=1.481, risk=0.695)
+3. AC344 (alarm=1.475, risk=0.907)
+4. AG189 (alarm=1.444, risk=0.843)
+5. AB410 (alarm=1.425, risk=0.892)
 
 ### 🔎 Katsayı özeti (Coefficient Summary)
 The model uses a Firth-penalized logistic ensemble. Primary drivers include:

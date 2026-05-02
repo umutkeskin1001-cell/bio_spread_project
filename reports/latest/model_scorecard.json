@@ -3,11 +3,11 @@
   "scorecard": [
     {
       "abstain_rate": 0.016177957532861477,
-      "average_precision": 0.9281688850499228,
-      "bootstrap_average_precision_ci_high": 0.9465306719217109,
-      "bootstrap_average_precision_ci_low": 0.9033362743239136,
-      "bootstrap_roc_auc_ci_high": 0.9562486106904095,
-      "bootstrap_roc_auc_ci_low": 0.9304568523849204,
+      "average_precision": 0.8902586190670988,
+      "bootstrap_average_precision_ci_high": 0.9178547215444638,
+      "bootstrap_average_precision_ci_low": 0.8560463563599243,
+      "bootstrap_roc_auc_ci_high": 0.9403064693175169,
+      "bootstrap_roc_auc_ci_low": 0.9041103781134812,
       "canary_self_test": {
         "alarm_count": 0,
         "auc_floor": 0.9,
@@ -15,83 +15,83 @@
         "reason": "",
         "status": "pass"
       },
-      "expected_calibration_error": 0.020045402005752916,
-      "group_oof_average_precision": 0.9281688850499228,
-      "group_oof_roc_auc": 0.9440068025412602,
+      "expected_calibration_error": 0.03373729385571601,
+      "group_oof_average_precision": 0.8902586190670988,
+      "group_oof_roc_auc": 0.9216936741653228,
       "leakage_alarm_count": 0.0,
       "leakage_alarm_features": [],
-      "max_single_feature_auc": 0.9144593653898685,
+      "max_single_feature_auc": 0.9165146668781446,
       "model_name": "geobio_reliability_ensemble",
       "n_backbones": 989.0,
       "n_positive": 362.0,
-      "oof_average_precision": 0.9281688850499228,
-      "oof_roc_auc": 0.9440068025412602,
+      "oof_average_precision": 0.8902586190670988,
+      "oof_roc_auc": 0.9216936741653228,
       "permutation_sanity": {
         "alarm_count": 0,
         "auc_ceiling": 0.6,
         "n_trials": 8,
-        "permutation_auc_max": 0.5252275591036859,
-        "permutation_auc_mean": 0.48952963775586633,
+        "permutation_auc_max": 0.5227404901001876,
+        "permutation_auc_mean": 0.4867707865218042,
         "permutation_auc_values": [
-          0.47217082132755295,
-          0.5070052076449285,
-          0.5252275591036859,
-          0.45481200489923956,
-          0.4704767946989523,
-          0.5112744190964604,
-          0.4600218527232194,
-          0.5152484425528916
+          0.4821080828641166,
+          0.5058993541110436,
+          0.5194141179165895,
+          0.4495426788971424,
+          0.469998766378528,
+          0.4965855119969688,
+          0.44787728990985753,
+          0.5227404901001876
         ],
         "reason": "",
         "status": "pass"
       },
       "prevalence": 0.3660262891809909,
-      "roc_auc": 0.9440068025412602,
+      "roc_auc": 0.9216936741653228,
       "status": "pass",
       "suspicious_feature_count": 0.0,
-      "temporal_holdout_average_precision": 0.9404307778471335,
+      "temporal_holdout_average_precision": 0.9091654215272548,
       "temporal_holdout_n_backbones": 791.0,
-      "temporal_holdout_roc_auc": 0.9421618327736649,
+      "temporal_holdout_roc_auc": 0.9189474776024582,
       "top_features": [
         {
+          "feature": "synergy_coherence_score__country_slope_train",
+          "score": 0.09750254623111107
+        },
+        {
+          "feature": "psge_3",
+          "score": 0.09545413652643248
+        },
+        {
           "feature": "country_slope_train",
-          "score": 2.9845238966799
+          "score": 0.09357908512164674
         },
         {
-          "feature": "psge_2",
-          "score": 0.9677309356622531
+          "feature": "psge_6",
+          "score": 0.09222974669770763
         },
         {
-          "feature": "recent_expansion_flag",
-          "score": 0.7672334512205403
+          "feature": "synergy_H_obs_specialization_norm__A_eff_norm",
+          "score": 0.09152099852637648
         },
         {
-          "feature": "coherence_score",
-          "score": 0.7322870676003019
-        },
-        {
-          "feature": "geo_country_entropy_train",
-          "score": 0.6848864460504678
+          "feature": "geo_dominant_region_share_train",
+          "score": 0.0911057999954184
         },
         {
           "feature": "log1p_n_countries_train",
-          "score": 0.6848864460504678
+          "score": 0.09095743287486034
         },
         {
-          "feature": "host_breadth_slope_train",
-          "score": 0.6840054394564702
+          "feature": "assignment_confidence_norm",
+          "score": 0.09094241662434661
         },
         {
-          "feature": "orit_support",
-          "score": 0.6593450262878984
+          "feature": "gnn_embed_0",
+          "score": 0.09094241662434661
         },
         {
-          "feature": "host_range_saturation_norm",
-          "score": 0.6532102075470188
-        },
-        {
-          "feature": "H_obs_specialization_norm",
-          "score": 0.5060558123277943
+          "feature": "gnn_embed_1",
+          "score": 0.09094241662434661
         }
       ],
       "top_k_precision": 1.0,

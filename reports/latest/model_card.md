@@ -8,18 +8,18 @@
 - Not intended use: clinical diagnosis or direct public-health intervention without expert review.
 
 ## Reliability
-- OOF ROC AUC: `0.944`
+- OOF ROC AUC: `0.922`
 - Minimum AUC target: `0.82`
-- OOF average precision: `0.928`
+- OOF average precision: `0.890`
 - Positive prevalence: `0.366`
-- Expected calibration error: `0.020`
-- Brier score: `0.086`
-- Group OOF ROC AUC: `0.944`
-- Temporal holdout ROC AUC: `0.942`
-- External holdout ROC AUC: `0.944`
-- Bootstrap ROC AUC CI: `[0.930, 0.956]`
-- Bootstrap AP CI: `[0.903, 0.947]`
-- Max single-feature AUC: `0.914`
+- Expected calibration error: `0.034`
+- Brier score: `0.104`
+- Group OOF ROC AUC: `0.922`
+- Temporal holdout ROC AUC: `0.919`
+- External holdout ROC AUC: `0.922`
+- Bootstrap ROC AUC CI: `[0.904, 0.940]`
+- Bootstrap AP CI: `[0.856, 0.918]`
+- Max single-feature AUC: `0.917`
 - Suspicious feature count: `0`
 - Evaluation cohort: `989` backbones, `362` positives
 
@@ -50,4 +50,4 @@
 - Python: `3.9.6`
 - NumPy: `1.26.4`
 - scikit-learn: `1.6.1`
-- Git commit: `2f5b4ee0f6cb851d255ae24e6c2768e1f08f4c58`
+- Git commit: `553263ea1cfa41f65941c5fff43a7689265586fe`
