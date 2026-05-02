@@ -40,6 +40,7 @@ final_report_demo/
 final_report_production/
 audit_demo/
 output/playwright/
+output/
 build/
 dist/
 *.egg-info/
