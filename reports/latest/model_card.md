@@ -8,18 +8,18 @@
 - Not intended use: clinical diagnosis or direct public-health intervention without expert review.
 
 ## Reliability
-- OOF ROC AUC: `0.845`
+- OOF ROC AUC: `0.944`
 - Minimum AUC target: `0.82`
-- OOF average precision: `0.787`
+- OOF average precision: `0.928`
 - Positive prevalence: `0.366`
-- Expected calibration error: `0.025`
-- Brier score: `0.149`
-- Group OOF ROC AUC: `0.845`
-- Temporal holdout ROC AUC: `0.844`
-- External holdout ROC AUC: `0.845`
-- Bootstrap ROC AUC CI: `[0.820, 0.871]`
-- Bootstrap AP CI: `[0.758, 0.832]`
-- Max single-feature AUC: `0.738`
+- Expected calibration error: `0.020`
+- Brier score: `0.086`
+- Group OOF ROC AUC: `0.944`
+- Temporal holdout ROC AUC: `0.942`
+- External holdout ROC AUC: `0.944`
+- Bootstrap ROC AUC CI: `[0.930, 0.956]`
+- Bootstrap AP CI: `[0.903, 0.947]`
+- Max single-feature AUC: `0.914`
 - Suspicious feature count: `0`
 - Evaluation cohort: `989` backbones, `362` positives
 
@@ -45,8 +45,9 @@
 - Top feature signal summary: `Ensemble coefficients`
 
 ## Reproducibility
+- amr: `dea80560f0b6305b425f870437f2e8cd5adda577952500159196b9593a19a841`
 - geo_spread_features: `80015d8336d4183d76574c497120e0f7945f4ad356debabbb29052aa55fa9376`
 - Python: `3.9.6`
 - NumPy: `1.26.4`
 - scikit-learn: `1.6.1`
-- Git commit: `713a6790e94630fd0ee407dabd6ce46ef08bef29`
+- Git commit: `2f5b4ee0f6cb851d255ae24e6c2768e1f08f4c58`

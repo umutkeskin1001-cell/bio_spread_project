@@ -1,6 +1,7 @@
 {
-  "input_count": 1,
+  "input_count": 2,
   "inputs": {
+    "amr": "/Users/umut/Projeler/bio_spread_project/data/raw/amr.tsv",
     "geo_spread_features": "/Users/umut/Projeler/bio_spread_project/data/project_inputs/geo_spread/inputs/backbone_scored.tsv"
   },
   "project": "BioSpread"

@@ -5,8 +5,8 @@
 ║ BIOSPREAD PREDICTIVE SURVEILLANCE REPORT                 ║
 ╚══════════════════════════════════════════════════════════╝
 STATUS:    🟢 CONDITIONAL GO
-RUN ID:    716554e7-a1e3-42f0-875e-c8babd150137
-TIMESTAMP: 2026-05-02T19:02:10.997399
+RUN ID:    db874303-0fed-45e8-a028-7b97d8e4f59d
+TIMESTAMP: 2026-05-02T20:41:46.189579
 ```
 
 ### 🔬 Problem Definition
@@ -15,33 +15,33 @@ This model prioritizes plasmid backbones based on their predicted risk of geogra
 ### 📊 Validation Performance
 | Metric | Value | Threshold | Status |
 | --- | --- | --- | --- |
-| ROC AUC | 0.8446 | >= 0.820 | PASS |
-| Avg Precision | 0.7870 | > Prev | PASS |
-| Calibration ECE | 0.0253 | <= 0.100 | PASS |
-| Brier Score | 0.1491 | N/A | INFO |
+| ROC AUC | 0.9440 | >= 0.820 | PASS |
+| Avg Precision | 0.9282 | > Prev | PASS |
+| Calibration ECE | 0.0200 | <= 0.100 | PASS |
+| Brier Score | 0.0860 | N/A | INFO |
 
 ### 🎯 Calibration & Reliability
 | Gate Type | Metric | Value | Status |
 | --- | --- | --- | --- |
-| Spatial Group CV | OOF ROC AUC | 0.8446 | PASS |
-| Temporal Holdout | AUC @ N/A | 0.8440 | PASS |
+| Spatial Group CV | OOF ROC AUC | 0.9440 | PASS |
+| Temporal Holdout | AUC @ N/A | 0.9422 | PASS |
 | External Holdout | Independent AUC | N/A | PASS |
-| Bootstrap CI | ROC AUC Low (95%) | 0.8204 | PASS |
-| Leakage Scan | Max Single-Feature AUC | 0.7383 | PASS |
+| Bootstrap CI | ROC AUC Low (95%) | 0.9305 | PASS |
+| Leakage Scan | Max Single-Feature AUC | 0.9145 | PASS |
 
 ### 🚨 High-Risk Backbone Registry (Top 10)
 | Rank | Backbone ID | Risk Prob | Confidence | Future Spread | Explanation |
 | --- | --- | --- | --- | --- | --- |
-| 1 | AA919 | 0.9897 | high | 10 | Ensemble risk: 0.990 |
-| 2 | AA840 | 0.9866 | high | 9 | Ensemble risk: 0.987 |
-| 3 | AA739 | 0.9748 | high | 36 | Ensemble risk: 0.975 |
-| 4 | AA921 | 0.9748 | high | 10 | Ensemble risk: 0.975 |
-| 5 | AA279 | 0.9718 | high | 9 | Ensemble risk: 0.972 |
-| 6 | AA598 | 0.9711 | high | 8 | Ensemble risk: 0.971 |
-| 7 | AA018 | 0.9684 | high | 21 | Ensemble risk: 0.968 |
-| 8 | AA410 | 0.9663 | high | 6 | Ensemble risk: 0.966 |
-| 9 | AA336 | 0.9660 | high | 25 | Ensemble risk: 0.966 |
-| 10 | AA176 | 0.9639 | high | 26 | Ensemble risk: 0.964 |
+| 1 | AA275 | 1.0000 | high | 33 | Ensemble risk: 1.000 |
+| 2 | AA038 | 0.9999 | high | 35 | Ensemble risk: 1.000 |
+| 3 | AB193 | 0.9998 | high | 22 | Ensemble risk: 1.000 |
+| 4 | AC621 | 0.9998 | medium | 13 | Ensemble risk: 1.000 |
+| 5 | AA619 | 0.9996 | high | 39 | Ensemble risk: 1.000 |
+| 6 | AB192 | 0.9996 | high | 17 | Ensemble risk: 1.000 |
+| 7 | AC125 | 0.9996 | high | 26 | Ensemble risk: 1.000 |
+| 8 | AA316 | 0.9996 | high | 17 | Ensemble risk: 1.000 |
+| 9 | AB002 | 0.9995 | high | 21 | Ensemble risk: 0.999 |
+| 10 | AA171 | 0.9995 | high | 34 | Ensemble risk: 0.999 |
 
 ### 🔎 Katsayı özeti (Coefficient Summary)
 The model uses a Firth-penalized logistic ensemble. Primary drivers include:
@@ -59,7 +59,7 @@ The model uses a Firth-penalized logistic ensemble. Primary drivers include:
 | --- | --- |
 | Python Version | 3.9.6 |
 | Polars Version | 0.20.31 |
-| Input SHA-256 | 80015d8336d4183d76574c497120e0f7945f4ad356debabbb29052aa55fa9376 |
+| Input SHA-256 | dea80560f0b6305b425f870437f2e8cd5adda577952500159196b9593a19a841 |
 | Training Split | Year <= 2020 |
 | Forecast Horizon | 3 Years |
 
