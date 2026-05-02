@@ -541,11 +541,25 @@ def fit_geo_reliability_surface(
         model.fit(X, y)
 
     # ---------------------------------------------------------
-    # PERFECT CALIBRATION (ISOTONIC REGRESSION)
+    # NESTED ISOTONIC CALIBRATION (Honest OOF ECE)
     # ---------------------------------------------------------
     from sklearn.isotonic import IsotonicRegression
+    from sklearn.model_selection import KFold
+    calibrated_oof = np.zeros_like(oof_meta_probs)
+    cal_cv = KFold(n_splits=5, shuffle=True, random_state=42)
+    for c_train_idx, c_val_idx in cal_cv.split(oof_meta_probs):
+        iso_fold = IsotonicRegression(out_of_bounds='clip')
+        iso_fold.fit(oof_meta_probs[c_train_idx], y[c_train_idx])
+        calibrated_oof[c_val_idx] = iso_fold.transform(oof_meta_probs[c_val_idx])
+    
+    # Final calibrator for predict() on future data
     calibrator = IsotonicRegression(out_of_bounds='clip')
-    oof_meta_probs = calibrator.fit_transform(oof_meta_probs, y)
+    calibrator.fit(oof_meta_probs, y)
+    
+    oof_meta_probs = calibrated_oof
+
+
+
 
     ensemble = GeoBioReliabilityModel(
         base_estimators=fitted_base_estimators,
@@ -666,6 +680,8 @@ class GeoBioReliabilityModel:
 
         if getattr(self, "calibrator", None) is not None:
             probs = self.calibrator.transform(probs)
+
+
 
         print(f"DEBUG: probs range [{np.min(probs):.4f}, {np.max(probs):.4f}]")
         predictions = []
