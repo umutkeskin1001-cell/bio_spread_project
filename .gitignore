@@ -44,6 +44,7 @@ dist/
 # live locally under data/ or be provided via BIO_SPREAD_DATA_ROOT.
 data/raw/*
 !data/raw/README.md
+data/holdouts/*.tsv
 data/project_inputs/raw/
 data/project_inputs/external/
 data/project_inputs/silver/
