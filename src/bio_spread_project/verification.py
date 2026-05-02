@@ -46,7 +46,7 @@ def _release_pytest_command(python: str) -> list[str]:
             "-m",
             "pytest",
             "-q",
-            "tests/test_competition_regression.py",
+            "tests/test_performance_regression.py",
             "tests/test_evaluation_metrics.py",
         ]
     return [python, "-m", "pytest", "-q", "tests", "-k", "not test_release_verification_runs_real_checks"]

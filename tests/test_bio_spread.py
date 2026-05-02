@@ -23,6 +23,7 @@ from bio_spread_project.geo_reliability import (
     leakage_audit,
     load_geo_spread_feature_rows,
     single_feature_leakage_scan,
+    statistical_leakage_alarm,
 )
 from bio_spread_project.governance import (
     DriftThresholds,
@@ -355,7 +356,7 @@ def test_raw_pipeline_stays_inside_polars_cpu_budget(tmp_path):
     assert elapsed < 1.6
 
 
-def test_geo_reliability_surface_reaches_competition_auc_target(tmp_path):
+def test_geo_reliability_surface_reaches_auc_target(tmp_path):
     _require_files(RAW_BACKBONES, RAW_AMR, GEO_SPREAD_FEATURES)
 
     result = run_pipeline(
@@ -679,6 +680,42 @@ def test_adversarial_leakage_scan_flags_near_deterministic_feature():
     assert scan["suspicious_feature_count"] == 1
 
 
+def test_statistical_leakage_alarm_flags_subtle_target_proxy():
+    rows: list[GeoSpreadFeatureRow] = []
+    rng = __import__("numpy").random.default_rng(7)
+    for index in range(80):
+        label = 1 if index % 2 == 0 else 0
+        subtle_proxy = 0.75 * label + 0.25 * float(rng.random())
+        rows.append(
+            GeoSpreadFeatureRow(
+                backbone_id=f"bb_{index}",
+                label_geo_spread=label,
+                n_new_countries_future=2 if label else 0,
+                knownness_score=0.7,
+                region="global",
+                max_resolved_year_train=2010 + (index % 8),
+                features={
+                    "T_eff_norm": 0.3 + float(rng.random()) * 0.1,
+                    "H_obs_specialization_norm": 0.4 + float(rng.random()) * 0.1,
+                    "A_eff_norm": 0.5 + float(rng.random()) * 0.1,
+                    "coherence_score": subtle_proxy,
+                    "backbone_purity_norm": 0.6,
+                    "assignment_confidence_norm": 0.7,
+                    "mash_neighbor_distance_train_norm": 0.2,
+                    "orit_support": 0.4,
+                    "H_external_host_range_norm": 0.3,
+                    "geo_country_entropy_train": 0.1,
+                    "geo_macro_region_entropy_train": 0.1,
+                    "geo_dominant_region_share_train": 0.9,
+                    "geo_country_record_count_train": 0.2,
+                },
+            )
+        )
+    frame = geo_rows_to_frame(rows)
+    alarm = statistical_leakage_alarm(frame, n_permutations=12, top_k=8)
+    assert alarm["alarm_count"] >= 1
+
+
 def test_pipeline_writes_data_registry_artifact(tmp_path):
     _require_files(RAW_BACKBONES, RAW_AMR)
     result = run_pipeline(
@@ -779,7 +816,7 @@ def test_small_fixture_model_surface_uses_safe_cv_without_warnings():
     assert not [warning for warning in captured if "least populated class" in str(warning.message)]
 
 
-def test_competition_report_contains_decision_ready_sections(tmp_path):
+def test_report_contains_decision_ready_sections(tmp_path):
     result = run_pipeline(
         run_mode="geo",
         geo_spread_features_path=GEO_SPREAD_FEATURES,
@@ -794,7 +831,7 @@ def test_competition_report_contains_decision_ready_sections(tmp_path):
     assert "release gate" in report
 
 
-def test_dashboard_is_clear_jury_facing_audit_page(tmp_path):
+def test_dashboard_is_clear_audit_page(tmp_path):
     run_pipeline(
         run_mode="geo",
         geo_spread_features_path=GEO_SPREAD_FEATURES,
@@ -802,7 +839,7 @@ def test_dashboard_is_clear_jury_facing_audit_page(tmp_path):
     )
     dashboard = (tmp_path / "dashboard_quality" / "dashboard.html").read_text(encoding="utf-8").lower()
 
-    assert "biospread competition audit" in dashboard
+    assert "biospread reliability audit" in dashboard
     assert "what this predicts" in dashboard
     assert "quality gate detail" in dashboard
     assert "calibration curve" in dashboard

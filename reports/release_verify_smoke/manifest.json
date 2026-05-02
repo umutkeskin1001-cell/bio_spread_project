@@ -19,17 +19,17 @@
     "trend_report": "trend_report.json"
   },
   "config_fingerprint": "20960113d279194254d7ea4c592e9b96c4d1f299d00c1da55568633b6f389e99",
-  "created_at_utc": "2026-05-02T15:54:12.730835+00:00",
-  "dependency_fingerprint": "5f9d4508c5fcea54a47f1f2826f9e29f6e1989b8b2722de646885d8104d4bb14",
+  "created_at_utc": "2026-05-02T16:23:14.859587+00:00",
+  "dependency_fingerprint": "0080ec632722e48a6c1d82ee6b16e3c89783eceb7fceb28f12650c5b47b9bd15",
   "environment": {
-    "git_commit": "9cfd575b993e3d892e2d0b791ab21375fcdfc710",
+    "git_commit": "713a6790e94630fd0ee407dabd6ce46ef08bef29",
     "numpy": "1.26.4",
     "polars": "0.20.31",
     "python": "3.9.6",
     "scikit_learn": "1.6.1",
     "ssl_backend": "LibreSSL 2.8.3"
   },
-  "git_commit": "9cfd575b993e3d892e2d0b791ab21375fcdfc710",
+  "git_commit": "713a6790e94630fd0ee407dabd6ce46ef08bef29",
   "horizon_years": 3,
   "input_candidates": {
     "amr": "data/raw/amr.tsv",
@@ -73,14 +73,14 @@
     "model_random_state": 42,
     "permutation_importance_seed": 7
   },
-  "run_id": "5301aca73bc94970b1b550df57f2af83",
+  "run_id": "c0625cbd2c8f4b5eb92f9ee14ffd2980",
   "run_mode": "input",
   "selection_reason": "explicit_input_mode",
   "semantic_input_hashes": {
     "amr": "1ec28a2eabc9a73b043f1cec54dd1f13d0fee3a07ef6854b105215024d45463d",
     "input": "81d5fd881766b7ae96bc150f1cf7df2cc8b07868f4ad9691f7c64eed4de1f73c"
   },
-  "source_fingerprint": "ab6eb7383b8689000c7800caa33dab1cd9d4b52c4672bdaa4353fb5cd5f7f478",
+  "source_fingerprint": "3d9f8f91a2a67491700142a6c90703fb4758d51beba5ddeb683b60faf89c5740",
   "split_year": 2020,
   "threshold_sources": {
     "baseline": "project_config/baseline_benchmark.json",

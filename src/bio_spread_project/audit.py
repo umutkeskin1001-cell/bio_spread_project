@@ -106,7 +106,7 @@ def build_run_audit(
 
 
 def render_model_card(*, audit: dict[str, Any], coefficient_summary: str) -> str:
-    """Render a jury-friendly model card."""
+    """Render a concise model card."""
     validation = audit["validation"]
     gates = audit["quality_gates"]
     threshold_auc = float(audit.get("quality_thresholds", {}).get("auc_min", 0.82))

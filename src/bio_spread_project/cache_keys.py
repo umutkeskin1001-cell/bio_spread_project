@@ -60,7 +60,7 @@ def semantic_table_hash(path: str | Path) -> str:
     else:
         lf = pl.scan_csv(path)
 
-    schema = lf.schema
+    schema = lf.collect_schema() if hasattr(lf, "collect_schema") else lf.schema
     numeric_cols = [c for c, t in schema.items() if t.is_numeric()]
 
     aggs = []

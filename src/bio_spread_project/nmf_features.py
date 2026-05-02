@@ -12,8 +12,7 @@ def build_nmf_diffusion_features(records: pl.LazyFrame, split_year: int) -> pl.D
     # Use mobility_score and sum as lengths/weights per backbone-country pair
     pivot_df = pre_obs.group_by(["backbone_id", "country"]).len()
 
-    # Use positional arguments for pivot to ensure compatibility across Polars versions
-    pivot_wide = pivot_df.pivot("len", "backbone_id", "country").fill_null(0)
+    pivot_wide = pivot_df.pivot(values="len", index="backbone_id", columns="country").fill_null(0)
 
     backbones = pivot_wide["backbone_id"].to_numpy()
     countries = [c for c in pivot_wide.columns if c != "backbone_id"]

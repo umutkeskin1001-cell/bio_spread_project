@@ -93,6 +93,17 @@ LEAKAGE_BLOCKLIST: tuple[str, ...] = (
     "macro_region_jump_label",
     "future",
 )
+LEAKAGE_NAME_TOKENS: tuple[str, ...] = (
+    "future",
+    "test_",
+    "label",
+    "target",
+    "outcome",
+    "n_new_",
+    "time_to_",
+    "event_within_",
+    "jump",
+)
 
 @dataclass(frozen=True)
 class GeoSpreadFeatureRow:
@@ -121,6 +132,7 @@ def geo_rows_to_frame(rows: list[GeoSpreadFeatureRow]) -> pl.DataFrame:
 
 def load_geo_spread_feature_rows(path: str | Path) -> list[GeoSpreadFeatureRow]:
     df = load_geo_spread_features(path)
+    df = df.filter(pl.col("label_geo_spread").is_not_null())
     rows = []
     for row_dict in df.to_dicts():
         features = {k: v for k, v in row_dict.items() if k in FEATURE_COLUMNS}
@@ -168,8 +180,8 @@ def load_geo_spread_features(path: str | Path) -> pl.DataFrame:
         raise ValueError(f"Geo feature surface missing required columns: {', '.join(missing)}")
 
     return df.with_columns([
-        pl.col("label_geo_spread").fill_null(0).cast(pl.Int64),
-        pl.col("n_new_countries_future").fill_null(0).cast(pl.Int64),
+        pl.col("label_geo_spread").cast(pl.Int64),
+        pl.col("n_new_countries_future").cast(pl.Int64),
         _derive_knownness_expr().alias("knownness_score"),
         pl.col("new_macro_regions").str.split(",").list.get(0).fill_null("unknown").alias("region") if "new_macro_regions" in df.columns else pl.lit("unknown").alias("region")
     ])
@@ -192,6 +204,7 @@ def fit_geo_reliability_surface(df: pl.DataFrame | list[GeoSpreadFeatureRow]) ->
 
     if isinstance(df, list):
         df = geo_rows_to_frame(df)
+    df = df.filter(pl.col("label_geo_spread").is_not_null())
 
     split_year = 2020
     _ = split_year
@@ -243,7 +256,7 @@ def fit_geo_reliability_surface(df: pl.DataFrame | list[GeoSpreadFeatureRow]) ->
         base_estimators=fitted_base_estimators,
         meta_estimator=meta_clf,
         feature_columns=FEATURE_COLUMNS,
-        importances=[], # Placeholder
+        importances=[],
         meta_scaler=None
     )
     probs = meta_clf.predict_proba(X_meta)[:, 1]
@@ -259,7 +272,7 @@ def fit_geo_reliability_surface(df: pl.DataFrame | list[GeoSpreadFeatureRow]) ->
     auc = float(roc_auc_score(y, probs))
 
     metrics["roc_auc"] = auc
-    metrics["average_precision"] = max(float(average_precision_score(y, probs)), 0.74)
+    metrics["average_precision"] = float(average_precision_score(y, probs))
     metrics["oof_roc_auc"] = auc
     metrics["oof_average_precision"] = metrics["average_precision"]
     metrics["bootstrap_roc_auc_ci_low"] = bootstrap.get("bootstrap_roc_auc_ci_low", 0.0)
@@ -269,6 +282,10 @@ def fit_geo_reliability_surface(df: pl.DataFrame | list[GeoSpreadFeatureRow]) ->
     metrics["expected_calibration_error"] = float(cal_sum.get("expected_calibration_error", 0.0))
     metrics["validation_mode"] = "spatial_group_cv_stacked"
     leakage = single_feature_leakage_scan(df)
+    leakage_alarm = statistical_leakage_alarm(df)
+    leakage["suspicious_feature_count"] = float(leakage["suspicious_feature_count"] + leakage_alarm["alarm_count"])
+    leakage["leakage_alarm_count"] = float(leakage_alarm["alarm_count"])
+    leakage["leakage_alarm_features"] = leakage_alarm["alarm_features"]
     leakage_status = "pass" if leakage["max_single_feature_auc"] < 0.95 and leakage["suspicious_feature_count"] == 0 else "fail"
     metrics["status"] = leakage_status
     metrics["top_features"] = [
@@ -279,17 +296,14 @@ def fit_geo_reliability_surface(df: pl.DataFrame | list[GeoSpreadFeatureRow]) ->
     metrics["group_oof_average_precision"] = metrics["average_precision"]
     if "max_resolved_year_train" in df.columns and len(validation_predictions) >= 3:
         years = df["max_resolved_year_train"].fill_null(0).cast(pl.Int64).to_numpy()
-        year_sorted = np.sort(years)
-        cutoff_index = max(1, int(0.8 * len(year_sorted)) - 1)
-        cutoff = int(year_sorted[cutoff_index])
-        temporal_mask = years <= cutoff
-        temporal_count = int(np.count_nonzero(temporal_mask))
-        if 0 < temporal_count < len(y):
-            temporal_predictions = [validation_predictions[i] for i in range(len(validation_predictions)) if bool(temporal_mask[i])]
-            temporal_metrics = evaluate_predictions(temporal_predictions)
-            metrics["temporal_holdout_roc_auc"] = float(temporal_metrics.get("roc_auc", auc))
-            metrics["temporal_holdout_average_precision"] = float(temporal_metrics.get("average_precision", metrics["average_precision"]))
-            metrics["temporal_holdout_n_backbones"] = float(temporal_metrics.get("n_backbones", temporal_count))
+        n_temporal = max(1, min(len(years) - 1, int(0.8 * len(years))))
+        temporal_indices = np.argsort(years, kind="mergesort")[:n_temporal]
+        temporal_set = set(int(i) for i in temporal_indices.tolist())
+        temporal_predictions = [validation_predictions[i] for i in range(len(validation_predictions)) if i in temporal_set]
+        temporal_metrics = evaluate_predictions(temporal_predictions)
+        metrics["temporal_holdout_roc_auc"] = float(temporal_metrics.get("roc_auc", auc))
+        metrics["temporal_holdout_average_precision"] = float(temporal_metrics.get("average_precision", metrics["average_precision"]))
+        metrics["temporal_holdout_n_backbones"] = float(temporal_metrics.get("n_backbones", n_temporal))
     metrics.update(leakage)
 
     return ModelRun(
@@ -378,7 +392,6 @@ def single_feature_leakage_scan(df: pl.DataFrame | list[GeoSpreadFeatureRow], au
             if len(np.unique(x)) > 1:
                 auc = roc_auc_score(y, x)
                 auc = max(auc, 1 - auc)
-                auc = max(0.0, auc - 0.01)
                 if auc > max_auc:
                     max_auc = auc
                 if auc > auc_threshold:
@@ -389,8 +402,80 @@ def single_feature_leakage_scan(df: pl.DataFrame | list[GeoSpreadFeatureRow], au
 
 def leakage_audit(df: pl.DataFrame) -> dict[str, Any]:
     scan = single_feature_leakage_scan(df)
+    alarm = statistical_leakage_alarm(df)
+    suspicious = int(scan["suspicious_feature_count"] + alarm["alarm_count"])
+    scan["suspicious_feature_count"] = float(suspicious)
+    scan["leakage_alarm_count"] = float(alarm["alarm_count"])
+    scan["leakage_alarm_features"] = alarm["alarm_features"]
     passed = scan["max_single_feature_auc"] < 0.98 and scan["suspicious_feature_count"] == 0
     return {"status": "pass" if passed else "fail", "blocked_columns": [], **scan}
+
+
+def _binary_log_loss(y_true: NDArray[np.float64], y_prob: NDArray[np.float64]) -> float:
+    eps = 1e-12
+    p = np.clip(y_prob, eps, 1.0 - eps)
+    return float(-np.mean(y_true * np.log(p) + (1.0 - y_true) * np.log(1.0 - p)))
+
+
+def _oof_logloss_for_matrix(X: NDArray[np.float64], y: NDArray[np.float64], groups: NDArray[Any]) -> float:
+    class_counts = np.bincount(y.astype(int))
+    positive = int(class_counts[1]) if len(class_counts) > 1 else 0
+    negative = int(class_counts[0]) if len(class_counts) > 0 else 0
+    n_splits = max(2, min(3, positive, negative))
+    cv = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=7)
+    probs: NDArray[np.float64] = np.zeros(len(y), dtype=np.float64)
+    for train_idx, val_idx in cv.split(X, y.astype(int), groups=groups):
+        clf = LogisticRegression(C=1.0, max_iter=1000, random_state=7)
+        clf.fit(X[train_idx], y[train_idx].astype(int))
+        probs[val_idx] = clf.predict_proba(X[val_idx])[:, 1]
+    return _binary_log_loss(y, probs)
+
+
+def statistical_leakage_alarm(df: pl.DataFrame, *, n_permutations: int = 4, top_k: int = 3) -> dict[str, Any]:
+    y = df["label_geo_spread"].fill_null(0).cast(pl.Float64).to_numpy()
+    groups = df["backbone_id"].to_numpy()
+    alarms: list[dict[str, Any]] = []
+    base_names = [c for c in FEATURE_COLUMNS if c in df.columns and not c.startswith("oof_")]
+    if len(np.unique(y)) < 2 or not base_names:
+        return {"alarm_count": 0, "alarm_features": alarms}
+
+    X_base = _feature_matrix(df, tuple(base_names))
+    baseline_ll = _oof_logloss_for_matrix(X_base, y, groups)
+    rng = np.random.default_rng(seed=17)
+
+    candidate_scores: list[tuple[float, str]] = []
+    for feature in base_names:
+        lowered = feature.lower()
+        if any(token in lowered for token in LEAKAGE_NAME_TOKENS):
+            alarms.append({"feature": feature, "reason": "forbidden_name_pattern", "delta_logloss": None, "p_value": 0.0})
+            continue
+        x_vec = df.select(pl.col(feature).fill_null(0.0).fill_nan(0.0).cast(pl.Float64)).to_numpy().reshape(-1)
+        if float(np.std(x_vec)) == 0.0:
+            continue
+        corr = float(abs(np.corrcoef(x_vec, y)[0, 1])) if len(y) > 1 else 0.0
+        if np.isfinite(corr):
+            candidate_scores.append((corr, feature))
+
+    for _, feature in sorted(candidate_scores, reverse=True)[:top_k]:
+        x = df.select(pl.col(feature).fill_null(0.0).fill_nan(0.0).cast(pl.Float64)).to_numpy().reshape(-1, 1)
+        X_plus = np.hstack([X_base, x])
+        ll_plus = _oof_logloss_for_matrix(X_plus, y, groups)
+        delta = baseline_ll - ll_plus
+        if delta <= 0:
+            continue
+
+        perm_deltas: list[float] = []
+        for _ in range(n_permutations):
+            x_perm = x.copy()
+            rng.shuffle(x_perm[:, 0])
+            ll_perm = _oof_logloss_for_matrix(np.hstack([X_base, x_perm]), y, groups)
+            perm_deltas.append(baseline_ll - ll_perm)
+        p_value = float((1 + sum(d >= delta for d in perm_deltas)) / (n_permutations + 1))
+        effect_floor = max(0.0005, 0.003 * baseline_ll)
+        if delta >= effect_floor and p_value <= 0.10:
+            alarms.append({"feature": feature, "reason": "unexpected_predictive_gain", "delta_logloss": float(delta), "p_value": p_value})
+
+    return {"alarm_count": len(alarms), "alarm_features": alarms}
 
 def _make_calibrated_stack() -> LogisticRegression:
     return LogisticRegression(C=1.0, max_iter=8000, random_state=42)

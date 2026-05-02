@@ -37,7 +37,7 @@ class ProjectPaths:
 
     @property
     def default_output_dir(self) -> Path:
-        return self.project_root / "reports" / "run"
+        return self.project_root / "reports" / "latest"
 
 
 @dataclass(frozen=True)

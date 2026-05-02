@@ -7,11 +7,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 GEO_SPREAD_FEATURES = PROJECT_ROOT / "data" / "project_inputs" / "geo_spread" / "inputs" / "backbone_scored.tsv"
 
 
-def test_packaged_competition_run_stays_above_metric_floor(tmp_path):
+def test_packaged_geo_run_stays_above_metric_floor(tmp_path):
     result = run_pipeline(
         run_mode="geo",
         geo_spread_features_path=GEO_SPREAD_FEATURES,
-        output_dir=tmp_path / "competition_regression",
+        output_dir=tmp_path / "performance_regression",
     )
 
     assert result.metrics["roc_auc"] >= 0.82

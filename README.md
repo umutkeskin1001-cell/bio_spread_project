@@ -70,7 +70,7 @@ project:
 
 Those files are large and are intentionally ignored by git by default. Keep them
 locally under `data/` or point `BIO_SPREAD_DATA_ROOT` at an external bundle when
-running the full high-reliability pipeline. The final competition model trains
+running the full high-reliability pipeline. The final release model trains
 from the GeoSpread feature surface because that is the strongest
 leakage-controlled surface available to the standalone project. The simpler
 raw-record path is still kept and tested as a fallback.
@@ -223,7 +223,7 @@ BioSpread writes two audit-focused outputs on every product run:
 
 - `audit.json`: input SHA-256 hashes, environment versions, validation metrics,
   quality gates, and leakage-audit status.
-- `model_card.md`: jury-readable summary of intended use, limitations,
+- `model_card.md`: concise summary of intended use, limitations,
   validation metrics, quality gates, and reproducibility details.
 - `manifest.json`: includes `run_id`, `created_at_utc`, enforcement policy flags,
   selected input mode, selection reason, candidate input paths, and threshold source paths for traceability.
@@ -276,12 +276,12 @@ The included `data/sample_plasmid_records.csv` is only a small test fixture. The
 normal standalone product path uses `data/raw/plasmid_backbones.tsv` plus
 `data/raw/amr.tsv`.
 
-## Competition Reproduction
+## Benchmark Reproduction
 
 ```bash
 python3 -m pip install -r requirements-dev.txt
-python3 -m bio_spread_project.cli run --mode geo --output-dir reports/competition_final
+python3 -m bio_spread_project.cli run --mode geo --output-dir reports/final_release
 python3 -m bio_spread_project.cli verify --release
 ```
 
-See `docs/competition_submission.md` for the final artifact checklist.
+See `docs/release_submission.md` for the final artifact checklist.

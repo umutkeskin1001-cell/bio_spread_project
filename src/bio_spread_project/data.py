@@ -10,6 +10,14 @@ import polars as pl
 logger = logging.getLogger(__name__)
 
 
+def _lazy_schema(df_local: pl.DataFrame | pl.LazyFrame) -> dict[str, pl.DataType]:
+    if isinstance(df_local, pl.LazyFrame):
+        if hasattr(df_local, "collect_schema"):
+            return dict(df_local.collect_schema())
+        return dict(df_local.schema)
+    return dict(df_local.schema)
+
+
 @dataclass(frozen=True)
 class PlasmidRecord:
     backbone_id: str
@@ -45,10 +53,7 @@ def read_table(path: str | Path, *, schema_overrides: dict[str, pl.DataType] | N
 
 
 def _safe_cast_to_string(df_local: pl.DataFrame | pl.LazyFrame, col_name: str) -> pl.Expr:
-    if isinstance(df_local, pl.LazyFrame):
-        dtype = df_local.schema[col_name]
-    else:
-        dtype = df_local.schema[col_name]
+    dtype = _lazy_schema(df_local)[col_name]
     if isinstance(dtype, pl.List) or (hasattr(dtype, "is_nested") and dtype.is_nested()) or str(dtype).lower().startswith("list"):
         return pl.col(col_name).list.join(",")
     else:
@@ -123,7 +128,7 @@ def load_records(path: str | Path) -> list[PlasmidRecord]:
 
 def _derive_mobility(df: pl.DataFrame) -> pl.Expr:
     """Vectorized mobility score derivation."""
-    schema = df.schema
+    schema = _lazy_schema(df)
     if "predicted_mobility" in schema:
         predicted_expr = _safe_cast_to_string(df, "predicted_mobility").fill_null("").str.to_lowercase()
     else:
@@ -153,7 +158,7 @@ def _derive_mobility(df: pl.DataFrame) -> pl.Expr:
 def _derive_clinical_context(df: pl.DataFrame) -> pl.Expr:
     """Vectorized clinical context derivation."""
     cols = ["BIOSAMPLE_pathogenicity", "BIOSAMPLE_package", "ECOSYSTEM_tags", "DISEASE_tags", "record_origin"]
-    present_cols = [c for c in cols if c in df.schema]
+    present_cols = [c for c in cols if c in _lazy_schema(df)]
     combined = pl.concat_str([pl.col(c).fill_null("") for c in present_cols], separator=" ").str.to_lowercase()
 
     return pl.when(combined.str.contains("clinical|hospital|patient|pathogen|disease|human")).then(pl.lit("clinical")) \
@@ -238,11 +243,11 @@ def load_backbone_records_frame(
     if amr_path and Path(amr_path).exists():
         amr_df = read_table(amr_path)
         amr_counts = _calculate_weighted_amr(amr_df)
-        ldf = ldf.join(amr_counts.lazy(), left_on="sequence_accession", right_on="NUCCORE_ACC", how="left")
+        ldf = ldf.join(amr_counts.lazy(), left_on="sequence_accession", right_on="NUCCORE_ACC", how="left", coalesce=True)
         amr_gene_count = pl.col("amr_gene_count").fill_null(0.0).cast(pl.Float64)
 
     # Safely coalesce backbone ID candidates
-    id_cols = [c for c in ["backbone_id", "canonical_id", "sequence_accession"] if c in ldf.schema]
+    id_cols = [c for c in ["backbone_id", "canonical_id", "sequence_accession"] if c in _lazy_schema(ldf)]
     id_exprs = [_safe_cast_to_string(ldf, c) for c in id_cols]
     backbone_id_expr = pl.coalesce(id_exprs)
 

@@ -38,6 +38,12 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 addopts = "--ignore=test_output.txt --ignore=test_bio_spread_output.txt --ignore=test_bio_spread_all_output.txt"
+filterwarnings = [
+  "ignore:.*oneOf.*deprecated.*:DeprecationWarning",
+  "ignore:.*parseString.*deprecated.*:DeprecationWarning",
+  "ignore:.*resetCache.*deprecated.*:DeprecationWarning",
+  "ignore:.*enablePackrat.*deprecated.*:DeprecationWarning",
+]
 
 [tool.ruff]
 line-length = 120
@@ -60,8 +66,4 @@ disable_error_code = ["import-untyped"]
 
 [[tool.mypy.overrides]]
 module = ["sklearn", "sklearn.*", "joblib", "scipy", "scipy.*"]
-ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = ["torch_geometric", "torch_geometric.*", "torch", "torch.*"]
 ignore_missing_imports = true

@@ -30,7 +30,7 @@ class PipelineConfig:
     drift_thresholds_path: Path | None = None
     trend_thresholds_path: Path | None = None
     quality_thresholds_path: Path | None = None
-    output_dir: Path = field(default_factory=lambda: Path("reports/run"))
+    output_dir: Path = field(default_factory=lambda: Path("reports/latest"))
     run_mode: str = "auto"
     split_year: int = 2020
     horizon_years: int = 3

@@ -1,7 +1,7 @@
 {
   "all_quality_gates_passed": false,
   "environment": {
-    "git_commit": "9cfd575b993e3d892e2d0b791ab21375fcdfc710",
+    "git_commit": "713a6790e94630fd0ee407dabd6ce46ef08bef29",
     "numpy": "1.26.4",
     "polars": "0.20.31",
     "python": "3.9.6",
@@ -115,8 +115,8 @@
     "suspicious_feature_count_max": 0,
     "temporal_holdout_auc_min": 0.78
   },
-  "run_id": "2d6dbf2c-4c73-4536-b3b0-f3baef70722a",
-  "timestamp": "2026-05-02T18:54:12.123346",
+  "run_id": "d84a95c2-3ef2-4ea5-83e2-dbeb4e3bd4fe",
+  "timestamp": "2026-05-02T19:23:14.242825",
   "validation": {
     "average_precision": 0.5,
     "bootstrap_average_precision_ci_high": 0.5,

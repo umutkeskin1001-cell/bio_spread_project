@@ -17,7 +17,7 @@ python3 verify_project.py
 ```
 
 ## Release Python Runtime
-Use a Python build linked against OpenSSL 1.1.1 or newer for final competition packaging.
+Use a Python build linked against OpenSSL 1.1.1 or newer for final release packaging.
 `verify_project.py --release` records the active SSL backend in `manifest.json` and prints a warning when the runtime is linked against LibreSSL or an older OpenSSL.
 
 ## Lightweight CI Verification

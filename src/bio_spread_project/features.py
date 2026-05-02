@@ -94,7 +94,7 @@ def build_backbone_features(
         "host_order": list(GENUS_TO_ORDER.values()),
     })
 
-    df = records.join(taxonomy_df, on="host_genus", how="left").with_columns(
+    df = records.join(taxonomy_df, on="host_genus", how="left", coalesce=True).with_columns(
         pl.col("host_order").fill_null(pl.concat_str([pl.lit("Unknown_"), pl.col("host_genus")]))
     )
 
@@ -116,7 +116,7 @@ def build_backbone_features(
     ])
 
     # Join and calculate final features
-    features = pre_df.join(future_df, on="backbone_id", how="left").with_columns([
+    features = pre_df.join(future_df, on="backbone_id", how="left", coalesce=True).with_columns([
         pl.col("future_countries").fill_null([]),
     ]).with_columns([
         pl.col("future_countries").list.set_difference(pl.col("pre_countries")).list.len().alias("n_new_countries_future")
@@ -159,7 +159,7 @@ def build_backbone_features_lazy(
         }
     ).lazy()
 
-    df = records.join(taxonomy_df, on="host_genus", how="left").with_columns(
+    df = records.join(taxonomy_df, on="host_genus", how="left", coalesce=True).with_columns(
         pl.col("host_order").fill_null(pl.concat_str([pl.lit("Unknown_"), pl.col("host_genus")]))
     )
 
@@ -179,7 +179,7 @@ def build_backbone_features_lazy(
         "backbone_id"
     ).agg([pl.col("country").unique().alias("future_countries")])
     return (
-        pre_df.join(future_df, on="backbone_id", how="left")
+        pre_df.join(future_df, on="backbone_id", how="left", coalesce=True)
         .with_columns(
             [
                 pl.col("future_countries").fill_null(pl.lit([], dtype=pl.List(pl.String))),

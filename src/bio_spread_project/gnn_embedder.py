@@ -49,21 +49,21 @@ class BackboneGraphEmbedder:
             (pl.col("mobility_score") * (-0.2 * (split_year - pl.col("year"))).exp()).alias("w")
         ]).group_by(["backbone_id", "country"]).agg(pl.col("w").sum().alias("weight")).drop_nulls()
 
-        bc_u = bc["backbone_id"].map_dict(b_map).to_numpy()
-        bc_v = bc["country"].map_dict(c_map).to_numpy()
+        bc_u = bc["backbone_id"].replace(b_map, default=None).to_numpy()
+        bc_v = bc["country"].replace(c_map, default=None).to_numpy()
         bc_w = bc["weight"].to_numpy()
 
         # 2. Backbone-Host
         bh = pre_obs.group_by(["backbone_id", "host_order"]).agg(pl.len().log1p().alias("weight")).drop_nulls()
-        bh_u = bh["backbone_id"].map_dict(b_map).to_numpy()
-        bh_v = bh["host_order"].map_dict(h_map).to_numpy()
+        bh_u = bh["backbone_id"].replace(b_map, default=None).to_numpy()
+        bh_v = bh["host_order"].replace(h_map, default=None).to_numpy()
         bh_w = bh["weight"].to_numpy()
 
         src = np.concatenate([bc_u, bc_v, bh_u, bh_v])
         dst = np.concatenate([bc_v, bc_u, bh_v, bh_u])
         weights = np.concatenate([bc_w, bc_w, bh_w, bh_w])
 
-        edge_index = torch.tensor([src, dst], dtype=torch.long)
+        edge_index = torch.from_numpy(np.vstack([src, dst]).astype(np.int64))
         edge_weight = torch.tensor(weights, dtype=torch.float)
         x = torch.randn((num_nodes, 16))
 
@@ -111,7 +111,7 @@ class BackboneGraphEmbedder:
         d = self.embeddings.shape[1]
 
         # Vectorized mapping
-        idx_series = backbone_ids.map_dict(self.backbone_mapping).fill_null(-1).to_numpy().astype(int)
+        idx_series = backbone_ids.replace(self.backbone_mapping, default=None).fill_null(-1).to_numpy().astype(int)
 
         embeds = np.zeros((len(b_ids), d))
         mask = idx_series >= 0

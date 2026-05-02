@@ -22,7 +22,7 @@ def generate_dashboard(audit: dict[str, Any], output_path: Path) -> Path:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>BioSpread Competition Audit</title>
+  <title>BioSpread Reliability Audit</title>
   <style>
     :root {{
       --bg: #f7f8fb; --paper: #ffffff; --ink: #18202f; --muted: #617089;
@@ -57,7 +57,7 @@ def generate_dashboard(audit: dict[str, Any], output_path: Path) -> Path:
   <div class="shell">
     <header>
       <div>
-        <h1>BioSpread Competition Audit</h1>
+        <h1>BioSpread Reliability Audit</h1>
         <p>What this predicts: geographic spread risk signals for plasmid backbones.</p>
       </div>
       <div id="main-status" class="status">LOADING...</div>

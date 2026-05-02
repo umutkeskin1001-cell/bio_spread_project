@@ -1,1 +1,1 @@
-{"all_quality_gates_passed": false, "average_precision": 0.5, "input_mode": "observation_records", "model_name": "mobility", "roc_auc": 0.5, "timestamp_utc": "2026-05-02T15:54:12.167466+00:00"}
+{"all_quality_gates_passed": false, "average_precision": 0.5, "input_mode": "observation_records", "model_name": "mobility", "roc_auc": 0.5, "timestamp_utc": "2026-05-02T16:23:14.287110+00:00"}

@@ -14,6 +14,10 @@ reports/smoke_cli/
 reports/competition_final/
 reports/run/
 reports/cli_run/
+reports/latest/
+reports/history/
+reports/.staging_*/
+reports/release_verify_smoke/
 final_report_demo/
 final_report_production/
 audit_demo/
