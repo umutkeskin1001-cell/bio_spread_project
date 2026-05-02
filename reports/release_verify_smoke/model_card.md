@@ -50,4 +50,4 @@
 - Python: `3.9.6`
 - NumPy: `2.0.2`
 - scikit-learn: `1.6.1`
-- Git commit: `986298a2e52d5da8075254f2b4545c2285746855`
+- Git commit: `54926d6c9018ab0d6aac6396aa2a3ef3cd59033f`

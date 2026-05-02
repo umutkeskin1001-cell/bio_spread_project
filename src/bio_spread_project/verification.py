@@ -36,6 +36,22 @@ def _run_check(name: str, command: list[str], *, cwd: Path) -> None:
         raise SystemExit(completed.returncode)
 
 
+def _release_pytest_command(python: str) -> list[str]:
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        # Break release-verify recursion under pytest: exercise the slowest
+        # scientific and metric contracts without spawning the entire suite from
+        # inside itself.
+        return [
+            python,
+            "-m",
+            "pytest",
+            "-q",
+            "tests/test_competition_regression.py",
+            "tests/test_evaluation_metrics.py",
+        ]
+    return [python, "-m", "pytest", "-q", "tests", "-k", "not test_release_verification_runs_real_checks"]
+
+
 def run_verification(*, release: bool, skip_security: bool, project_root: Path | None = None) -> int:
     root = project_root or Path(__file__).resolve().parents[2]
     warning = ssl_backend_warning(ssl.OPENSSL_VERSION)
@@ -50,7 +66,7 @@ def run_verification(*, release: bool, skip_security: bool, project_root: Path |
     _run_check("compile", [python, "-m", "compileall", "-q", "src"], cwd=root)
     _run_check("ruff", [python, "-m", "ruff", "check", "src", "tests"], cwd=root)
     _run_check("mypy", [python, "-m", "mypy", "src"], cwd=root)
-    _run_check("pytest", [python, "-m", "pytest", "-q", "tests", "-k", "not test_release_verification_runs_real_checks"], cwd=root)
+    _run_check("pytest", _release_pytest_command(python), cwd=root)
     _run_check(
         "smoke-cli",
         [

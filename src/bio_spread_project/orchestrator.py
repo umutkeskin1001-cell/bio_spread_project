@@ -20,7 +20,12 @@ from bio_spread_project.cache_keys import (
 from bio_spread_project.config_loader import ProjectPaths, load_project_config
 from bio_spread_project.dashboard import generate_dashboard
 from bio_spread_project.data import load_backbone_records_frame, load_records
-from bio_spread_project.features import FeatureConfig, build_backbone_features, build_backbone_features_lazy, feature_rows_to_frame
+from bio_spread_project.features import (
+    FeatureConfig,
+    build_backbone_features,
+    build_backbone_features_lazy,
+    feature_rows_to_frame,
+)
 from bio_spread_project.geo_reliability import (
     fit_geo_reliability_surface,
     geo_rows_to_frame,
@@ -143,17 +148,17 @@ def run_pipeline(config: PipelineConfig | None = None, **kwargs: Any) -> Pipelin
         features = geo_rows_to_frame(load_geo_spread_feature_rows(selection.source_path))
     else:
         if selection.input_mode == "raw_backbone_records":
-            records = load_backbone_records_frame(selection.source_path, amr_path=selection.resolved_amr_path)
+            record_frame = load_backbone_records_frame(selection.source_path, amr_path=selection.resolved_amr_path)
             # Zero-copy Polars plan: raw production keeps observations columnar
             # through feature aggregation, avoiding dataclass/asdict cache churn.
             features = build_backbone_features_lazy(
-                records.lazy(),
+                record_frame.lazy(),
                 config=FeatureConfig(split_year=config.split_year, horizon_years=config.horizon_years),
             ).collect()
         else:
-            records = load_records(selection.source_path)
+            record_rows = load_records(selection.source_path)
             features = feature_rows_to_frame(
-                build_backbone_features(records, split_year=config.split_year, horizon_years=config.horizon_years)
+                build_backbone_features(record_rows, split_year=config.split_year, horizon_years=config.horizon_years)
             )
     if features.is_empty():
         raise ValueError("No eligible feature rows produced")

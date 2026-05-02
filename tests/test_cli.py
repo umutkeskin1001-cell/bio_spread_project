@@ -93,6 +93,25 @@ def test_release_verification_runs_real_checks():
     assert "release verification passed" in completed.stdout
 
 
+def test_release_verification_bounds_nested_pytest_when_invoked_from_pytest(monkeypatch):
+    from bio_spread_project import verification
+
+    commands = []
+
+    def capture_check(name, command, *, cwd):
+        commands.append((name, command, cwd))
+
+    monkeypatch.setenv("PYTEST_CURRENT_TEST", "tests/test_cli.py::test_release_verification_runs_real_checks")
+    monkeypatch.setattr(verification, "_run_check", capture_check)
+
+    assert verification.run_verification(release=True, skip_security=True, project_root=PROJECT_ROOT) == 0
+
+    pytest_command = next(command for name, command, _ in commands if name == "pytest")
+    assert "tests/test_competition_regression.py" in pytest_command
+    assert "tests/test_evaluation_metrics.py" in pytest_command
+    assert "-k" not in pytest_command
+
+
 def test_verify_project_ssl_warning_detects_non_openssl_backend():
     from bio_spread_project.verification import ssl_backend_warning
 
