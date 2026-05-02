@@ -116,3 +116,12 @@ Run: `PYTHONPATH=src python3 -m bio_spread_project.cli run --mode geo --output-d
 - Keep `enable_temporal_trends: true`.
 - Keep `enable_phylo_spatial_embedding: false` unless explicitly benchmarking for ROC-only gain.
 - Keep `enable_rank_focal_loss: false` and `enable_soft_country_debiasing: false` (quality regressions observed).
+
+## Absolute Optimization Strategy (May 2026)
+
+The current state-of-the-art configuration incorporates:
+1. **Synergy Interactions**: capturing multiplicative effects between biological and contextual features.
+2. **Phylo-Propagation**: leveraging genomic distances to spread risk labels through the phylogenetic graph.
+3. **Evidential Meta-Learner**: replaces standard stacking with an uncertainty-aware neural estimator and LightGBM ranker.
+
+These components are designed to break the 0.84 AUC ceiling while maintaining zero-leakage and sub-5s execution.

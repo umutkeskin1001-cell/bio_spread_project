@@ -100,6 +100,17 @@ FEATURE_COLUMNS: tuple[str, ...] = (
     "psge_6",
     "psge_7",
     "grps",
+    "phylo_prop_risk",
+    "synergy_T_eff_norm__H_obs_specialization_norm",
+    "synergy_T_eff_norm__A_eff_norm",
+    "synergy_H_obs_specialization_norm__A_eff_norm",
+    "synergy_coherence_score__country_slope_train",
+    "synergy_H_external_host_range_norm__replicon_architecture_norm",
+    "synergy_orit_support__amr_burden_saturation_norm",
+    "synergy_backbone_purity_norm__assignment_confidence_norm",
+    "synergy_geo_country_entropy_train__host_breadth_slope_train",
+    "synergy_country_slope_train__mobility_shift_slope_train",
+    "synergy_mean_antibiotic_pressure__frac_pathogenic_hosts",
     "oof_rf", "oof_hgb", "oof_ridge",
 )
 
@@ -346,16 +357,46 @@ def fit_geo_reliability_surface(
                 oof_base[val_idx, i] = 1 / (1 + np.exp(-d))
 
     X_meta = np.hstack([X, oof_base])
+    # NEW: Honest OOF evaluation for the Meta-Learner
+    oof_meta_probs = np.zeros(len(y))
     use_rank_focal = bool(modeling_flags.enable_rank_focal_loss) if modeling_flags is not None else False
     use_country_debias = bool(modeling_flags.enable_soft_country_debiasing) if modeling_flags is not None else False
-    if use_rank_focal or use_country_debias:
+
+    for train_idx, val_idx in cv.split(X_meta, y, groups=groups):
+        if modeling_flags is not None and modeling_flags.enable_evidential_meta:
+            from bio_spread_project.evidential_meta import EvidentialMetaEstimator
+            temp_meta = EvidentialMetaEstimator(input_dim=X_meta.shape[1], hidden=64)
+            temp_meta.fit(X_meta[train_idx], y[train_idx])
+            oof_meta_probs[val_idx] = temp_meta.predict_proba(X_meta[val_idx])[:, 1]
+        elif use_rank_focal or use_country_debias:
+            knownness = df["knownness_score"].fill_null(0.5).cast(pl.Float64).to_numpy()
+            country_targets = None
+            if dominant_country_targets:
+                country_targets = np.array([dominant_country_targets.get(str(bb), "UNK") for bb in df["backbone_id"].to_list()], dtype=object)
+            temp_meta = TorchMetaEstimator(
+                use_rank_focal=use_rank_focal,
+                use_country_debias=use_country_debias,
+                use_gated_fusion=bool(modeling_flags.enable_gated_fusion) if modeling_flags is not None else False,
+                use_reliability_propensity=bool(modeling_flags.use_reliability_propensity) if modeling_flags is not None else False,
+                feature_names=tuple([*base_features, "oof_rf", "oof_hgb", "oof_ridge"]),
+            )
+            temp_meta.fit(X_meta[train_idx], y[train_idx], knownness=knownness[train_idx], country_targets=country_targets[train_idx] if country_targets is not None else None)
+            oof_meta_probs[val_idx] = temp_meta.predict_proba(X_meta[val_idx])[:, 1]
+        else:
+            temp_meta = LogisticRegression(C=1.0, max_iter=8000, random_state=42)
+            temp_meta.fit(X_meta[train_idx], y[train_idx])
+            oof_meta_probs[val_idx] = temp_meta.predict_proba(X_meta[val_idx])[:, 1]
+
+    # Final fit on the whole dataset for production use
+    if modeling_flags is not None and modeling_flags.enable_evidential_meta:
+        from bio_spread_project.evidential_meta import EvidentialMetaEstimator
+        meta_clf = EvidentialMetaEstimator(input_dim=X_meta.shape[1], hidden=64)
+        meta_clf.fit(X_meta, y)
+    elif use_rank_focal or use_country_debias:
         knownness = df["knownness_score"].fill_null(0.5).cast(pl.Float64).to_numpy()
         country_targets = None
         if dominant_country_targets:
-            country_targets = np.array(
-                [dominant_country_targets.get(str(bb), "UNK") for bb in df["backbone_id"].to_list()],
-                dtype=object,
-            )
+            country_targets = np.array([dominant_country_targets.get(str(bb), "UNK") for bb in df["backbone_id"].to_list()], dtype=object)
         meta_clf = TorchMetaEstimator(
             use_rank_focal=use_rank_focal,
             use_country_debias=use_country_debias,
@@ -379,20 +420,22 @@ def fit_geo_reliability_surface(
         importances=[],
         meta_scaler=None
     )
-    probs = meta_clf.predict_proba(X_meta)[:, 1]
+    
+    # Validation predictions must use the OOF probabilities from the CV loop!
     validation_predictions = [
         _prediction_from_row(row, float(prob), MODEL_NAME)
-        for row, prob in zip(df.to_dicts(), probs)
+        for row, prob in zip(df.to_dicts(), oof_meta_probs)
     ]
 
     metrics: dict[str, Any] = dict(evaluate_predictions(validation_predictions))
     bootstrap = bootstrap_metric_intervals(validation_predictions, n_resamples=50)
 
     cal_sum = calibration_summary(validation_predictions)
-    auc = float(roc_auc_score(y, probs))
+    # Honest AUC is calculated from OOF probabilities
+    auc = float(roc_auc_score(y, oof_meta_probs))
 
     metrics["roc_auc"] = auc
-    metrics["average_precision"] = float(average_precision_score(y, probs))
+    metrics["average_precision"] = float(average_precision_score(y, oof_meta_probs))
     metrics["oof_roc_auc"] = auc
     metrics["oof_average_precision"] = metrics["average_precision"]
     metrics["bootstrap_roc_auc_ci_low"] = bootstrap.get("bootstrap_roc_auc_ci_low", 0.0)
@@ -408,7 +451,7 @@ def fit_geo_reliability_surface(
         scores = [float(v) for v in meta_clf.coef_[0][: len(base_features)]]
     else:
         # Fallback attribution for neural meta-learner path.
-        base_probs = np.clip(probs, 1e-6, 1 - 1e-6)
+        base_probs = np.clip(oof_meta_probs, 1e-6, 1 - 1e-6)
         scores = []
         for i in range(len(base_features)):
             x_perturbed = X_meta.copy()

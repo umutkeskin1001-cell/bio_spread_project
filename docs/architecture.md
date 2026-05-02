@@ -58,3 +58,10 @@ The standalone runtime treats these files as active runtime configuration:
 Files under `project_config/config/` are inherited reference assets from the
 parent research codebase. They are not loaded by the standalone runtime unless
 future work wires them in explicitly.
+
+## Advanced Optimizations
+
+The pipeline incorporates several SOTA components for enhanced performance:
+- **Synergy Interaction Tensors**: Multiplicative feature pairs (e.g., T_eff * host_specialization) to capture non-linear biological synergies.
+- **Phylogenetic Label Propagation**: Graph-based genomic neighbor risk estimation using Mash distances and training labels.
+- **Evidential Meta-Learner**: Uncertainty-aware ensemble stacking using an evidential neural head and LightGBM ranker.

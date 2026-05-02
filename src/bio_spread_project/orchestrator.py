@@ -274,6 +274,34 @@ def run_pipeline(config: PipelineConfig | None = None, **kwargs: Any) -> Pipelin
         state.payload["raw_for_enrichment"] = raw_for_enrichment
         return state
 
+    def _step_add_synergy_features(state: PipelineState) -> PipelineState:
+        features = state.payload["features"]
+        enrich_cfg = state.payload["enrich_cfg"]
+        if enrich_cfg.enable_synergy_interactions:
+            from bio_spread_project.synergy_features import build_synergy_features, INTERACTION_PAIRS
+            features = build_synergy_features(features, INTERACTION_PAIRS)
+            active_enrichment_modules.append("synergy_interactions")
+        state.payload["features"] = features
+        return state
+
+    def _step_add_phylo_propagation(state: PipelineState) -> PipelineState:
+        features = state.payload["features"]
+        enrich_cfg = state.payload["enrich_cfg"]
+        external_dir = state.payload["external_dir"]
+        selection = state.payload["selection"]
+        if enrich_cfg.enable_phylo_propagation and selection.use_geo_reliability:
+            mash_path = external_dir / "mash_distances.tsv"
+            if mash_path.exists():
+                from bio_spread_project.phylo_propagation import build_phylo_propagation
+                prop = build_phylo_propagation(features, mash_path, split_year=config.split_year)
+                if not prop.is_empty():
+                    features = features.join(prop, on="backbone_id", how="left", coalesce=True).with_columns(
+                        pl.col("phylo_prop_risk").fill_null(0.5)
+                    )
+                    active_enrichment_modules.append("phylo_prop")
+        state.payload["features"] = features
+        return state
+
     def _step_train_model(state: PipelineState) -> PipelineState:
         features_local = state.payload["features"]
         raw_for_enrichment = state.payload.get("raw_for_enrichment")
@@ -311,6 +339,8 @@ def run_pipeline(config: PipelineConfig | None = None, **kwargs: Any) -> Pipelin
         dag_state,
         [
             PipelineStep(name="enrich_features", fn=_step_enrich_features),
+            PipelineStep(name="add_synergy_features", fn=_step_add_synergy_features),
+            PipelineStep(name="add_phylo_propagation", fn=_step_add_phylo_propagation),
             PipelineStep(name="train_model", fn=_step_train_model),
         ],
     )

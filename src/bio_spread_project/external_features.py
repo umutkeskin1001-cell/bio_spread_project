@@ -29,6 +29,9 @@ class EnrichmentFlags:
     enable_gated_fusion: bool = True
     use_reliability_propensity: bool = True
     enable_conformal: bool = True
+    enable_synergy_interactions: bool = True
+    enable_phylo_propagation: bool = True
+    enable_evidential_meta: bool = True
 
 
 def _parse_bool(value: str) -> bool:
@@ -59,6 +62,9 @@ def load_enrichment_flags(config_path: Path) -> EnrichmentFlags:
         enable_gated_fusion=values.get("enable_gated_fusion", True),
         use_reliability_propensity=values.get("use_reliability_propensity", True),
         enable_conformal=values.get("enable_conformal", True),
+        enable_synergy_interactions=values.get("enable_synergy_interactions", True),
+        enable_phylo_propagation=values.get("enable_phylo_propagation", True),
+        enable_evidential_meta=values.get("enable_evidential_meta", True),
     )
 
 

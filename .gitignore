@@ -61,6 +61,10 @@ output/
 build/
 dist/
 *.egg-info/
+reports/optimized_run/
+reports/honest_run/
+reports/honest_run_v2/
+reports/honest_run_v3/
 
 # Keep source control lightweight. Large raw/external/generated datasets can
 # live locally under data/ or be provided via BIO_SPREAD_DATA_ROOT.
