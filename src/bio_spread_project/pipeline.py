@@ -285,9 +285,6 @@ class BioSpreadPipeline:
                 "manifest": "manifest.json",
                 "artifact_index": "artifact_index.json",
             }
-            if selection.use_geo_reliability:
-                manifest_artifacts["drift_report"] = "benchmark.json"
-                manifest_artifacts["model_registry"] = "benchmark.json"
             manifest_path = write_json(stage / "manifest.json", build_manifest(
                 selection=selection,
                 run_mode=self.config.run_mode,

@@ -39,6 +39,11 @@ cross-validation, not an in-sample score:
 - expected calibration error: `0.041`
 - quality gate: AUC >= `0.82`
 
+Release-grade geo runs require independent external-holdout evidence in addition
+to group OOF and temporal holdout metrics. A geo run without
+`--external-holdout` still writes artifacts, but the quality gate is not fully
+green.
+
 ## Quick Start
 
 ```bash
@@ -47,8 +52,9 @@ python3 run_project.py
 ```
 
 This runs the packaged inputs and prints the selected input mode plus the reason
-for that choice. For release-intended runs, add `--require-explicit-surface` so
-`auto` mode cannot silently promote raw inputs to the packaged Geo surface.
+for that choice. For release-intended runs, use explicit geo mode with
+`--external-holdout` and add `--require-explicit-surface` when using `auto` so
+auto mode cannot silently promote raw inputs to the packaged Geo surface.
 
 ## Project Inputs
 
@@ -115,7 +121,7 @@ Run modes:
 - `--mode input`: force user-provided `--input` CSV.
 - `--require-explicit-surface`: fail `auto` mode instead of silently promoting raw inputs to the packaged Geo surface.
 - `--quality-thresholds path/to/thresholds.json`: optional custom quality-gate thresholds.
-- `--external-holdout path/to/backbone_scored.tsv`: optional independent holdout surface for external metrics.
+- `--external-holdout path/to/backbone_scored.tsv`: independent holdout surface required for geo-mode quality gates.
 - `--baseline-benchmark path/to/baseline_benchmark.json`: baseline benchmark used for drift checks.
 - `--drift-thresholds path/to/drift_thresholds.json`: drift alarm thresholds.
 - `--trend-thresholds path/to/trend_thresholds.json`: rolling-regression trend thresholds.
@@ -166,6 +172,16 @@ Run full verification:
 cd bio_spread_project
 python3 verify_project.py
 ```
+
+Run release verification:
+
+```bash
+python3 verify_project.py --release
+```
+
+Release verification runs bytecode compilation, ruff, mypy, pytest, a CLI smoke
+run, and dependency audit. Use `--skip-security` only when the dependency audit
+tool is unavailable or blocked by local network policy.
 
 For lightweight/CI environments without packaged data files:
 

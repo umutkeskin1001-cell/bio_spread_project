@@ -1,6 +1,7 @@
 from dataclasses import asdict
 
 import polars as pl
+import pytest
 
 from bio_spread_project.data import PlasmidRecord, load_records
 
@@ -23,3 +24,20 @@ def test_load_records_accepts_parquet_input(tmp_path):
     loaded = load_records(path)
 
     assert loaded == rows
+
+
+def test_load_records_rejects_invalid_values_instead_of_rewriting(tmp_path):
+    path = tmp_path / "bad_records.csv"
+    path.write_text(
+        "\n".join(
+            [
+                "backbone_id,year,country,host_genus,clinical_context,amr_gene_count,mobility_score",
+                "bb_bad,1899,TR,Klebsiella,clinical,-1,1.5",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="invalid"):
+        load_records(path)

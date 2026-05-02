@@ -173,6 +173,17 @@ def test_geo_surface_requires_core_model_columns(tmp_path):
         load_geo_spread_feature_rows(broken)
 
 
+def test_geo_surface_rejects_leakage_columns_in_actual_input(tmp_path):
+    clean = GEO_SPREAD_FEATURES.read_text(encoding="utf-8").splitlines()
+    header = clean[0] + "\tfuture_country_count"
+    rows = [line + "\t0" for line in clean[1:4]]
+    leaked = tmp_path / "leaked.tsv"
+    leaked.write_text("\n".join([header, *rows]) + "\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="leakage-prone columns"):
+        load_geo_spread_feature_rows(leaked)
+
+
 def test_geo_surface_derives_optional_geo_features_from_packaged_aliases():
     rows = load_geo_spread_feature_rows(GEO_SPREAD_FEATURES)
     first = rows[0]
@@ -270,6 +281,7 @@ def test_geo_reliability_surface_reaches_competition_auc_target(tmp_path):
         backbone_records_path=RAW_BACKBONES,
         amr_path=RAW_AMR,
         geo_spread_features_path=GEO_SPREAD_FEATURES,
+        external_holdout_path=GEO_HOLDOUT_FIXTURE,
         output_dir=tmp_path / "production",
     )
 
@@ -296,6 +308,7 @@ def test_pipeline_writes_model_card_and_audit_artifacts(tmp_path):
         backbone_records_path=RAW_BACKBONES,
         amr_path=RAW_AMR,
         geo_spread_features_path=GEO_SPREAD_FEATURES,
+        external_holdout_path=GEO_HOLDOUT_FIXTURE,
         output_dir=tmp_path / "production",
     )
 
@@ -313,8 +326,8 @@ def test_pipeline_writes_model_card_and_audit_artifacts(tmp_path):
     assert int(audit["validation"]["suspicious_feature_count"]) == 0
     assert "geo_spread_features" in audit["input_hashes"]
     assert manifest["artifacts"]["data_registry"] == "data_registry.json"
-    assert manifest["artifacts"]["drift_report"] == "benchmark.json"
-    assert manifest["artifacts"]["model_registry"] == "benchmark.json"
+    assert manifest["artifacts"]["drift_report"] == "drift_report.json"
+    assert manifest["artifacts"]["model_registry"] == "model_registry.jsonl"
     assert manifest["artifacts"]["trend_report"] == "trend_report.json"
     assert benchmark["all_quality_gates_passed"] is True
     assert "bootstrap_roc_auc_ci_low" in benchmark["validation_summary"]

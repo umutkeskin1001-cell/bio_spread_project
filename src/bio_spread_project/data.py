@@ -59,24 +59,42 @@ def load_records(path: str | Path) -> list[PlasmidRecord]:
     if df.filter(blank_id & has_other_data).height > 0:
         raise ValueError("backbone_id must be present for every non-empty record")
 
-    df = df.filter(~blank_id).with_columns(
-        [
-            pl.col("year").fill_null(0).cast(pl.Int64),
-            pl.col("amr_gene_count").fill_null(0.0).cast(pl.Float64),
-            pl.col("mobility_score").fill_null(0.0).cast(pl.Float64),
-        ]
-    )
+    df = df.filter(~blank_id)
+    if df.is_empty():
+        return []
 
-    # Filter years
-    df = df.filter((pl.col("year") <= 2100) & ((pl.col("year") >= 1900) | (pl.col("year") == 0)))
+    required_value_columns = sorted(required - {"backbone_id"})
+    null_counts = df.select([pl.col(column).is_null().sum().alias(column) for column in required_value_columns]).to_dicts()[0]
+    missing_values = {column: int(count) for column, count in null_counts.items() if int(count) > 0}
+    if missing_values:
+        details = ", ".join(f"{column}={count}" for column, count in sorted(missing_values.items()))
+        raise ValueError(f"Input records contain invalid missing values: {details}")
+
+    try:
+        df = df.with_columns(
+            [
+                pl.col("year").cast(pl.Int64),
+                pl.col("amr_gene_count").cast(pl.Float64),
+                pl.col("mobility_score").cast(pl.Float64),
+            ]
+        )
+    except Exception as exc:
+        raise ValueError("Input records contain invalid values: numeric fields must be parseable") from exc
+    invalid = {
+        "year": int(df.filter(~((pl.col("year") <= 2100) & ((pl.col("year") >= 1900) | (pl.col("year") == 0)))).height),
+        "amr_gene_count": int(df.filter((pl.col("amr_gene_count") < 0.0) | pl.col("amr_gene_count").is_nan()).height),
+        "mobility_score": int(df.filter((pl.col("mobility_score") < 0.0) | (pl.col("mobility_score") > 1.0) | pl.col("mobility_score").is_nan()).height),
+    }
+    invalid = {column: count for column, count in invalid.items() if count > 0}
+    if invalid:
+        details = ", ".join(f"{column}={count}" for column, count in sorted(invalid.items()))
+        raise ValueError(f"Input records contain invalid values: {details}")
 
     cleaned = df.with_columns([
         pl.col("backbone_id").cast(pl.String),
-        pl.col("country").fill_null("unknown").cast(pl.String),
-        pl.col("host_genus").fill_null("unknown").cast(pl.String),
-        pl.col("clinical_context").fill_null("unknown").cast(pl.String),
-        pl.col("amr_gene_count").clip(lower_bound=0.0),
-        pl.col("mobility_score").clip(lower_bound=0.0, upper_bound=1.0),
+        pl.col("country").cast(pl.String),
+        pl.col("host_genus").cast(pl.String),
+        pl.col("clinical_context").cast(pl.String),
     ])
     return [
         PlasmidRecord(

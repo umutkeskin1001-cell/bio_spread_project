@@ -52,6 +52,33 @@ LEAKAGE_BLOCKLIST: tuple[str, ...] = (
     "event_within", "time_to", "visibility", "outcome", "severity",
 )
 
+ALLOWED_OUTCOME_COLUMNS: frozenset[str] = frozenset(
+    {
+        "n_countries_test",
+        "n_new_countries",
+        "test_year_end",
+        "min_resolved_year_test",
+        "spread_label",
+        "visibility_expansion_label",
+        "n_new_countries_recomputed",
+        "time_to_first_new_country_years",
+        "time_to_third_new_country_years",
+        "event_within_1y_label",
+        "event_within_3y_label",
+        "event_within_5y_label",
+        "three_countries_within_3y_label",
+        "three_countries_within_5y_label",
+        "spread_severity_bin",
+        "n_test_macro_regions",
+        "n_new_macro_regions",
+        "new_macro_regions",
+        "macro_region_jump_label",
+        "n_test_records_seen_in_training",
+        "test_seen_in_training_fraction",
+        "training_only_future_unseen_backbone_flag",
+    }
+)
+
 
 @dataclass(frozen=True)
 class GeoSpreadFeatureRow:
@@ -124,14 +151,13 @@ class GeoBioReliabilityModel(BioSpreadRiskModel):
 
 
 def load_geo_spread_feature_rows(path: str | Path) -> list[GeoSpreadFeatureRow]:
-    audit = leakage_audit(FEATURE_COLUMNS)
-    if audit["status"] != "pass":
-        blocked = ", ".join(str(column) for column in audit["blocked_columns"])
-        raise ValueError(f"GeoSpread feature set contains leakage-prone columns: {blocked}")
-
     df = read_table(path)
     if df.is_empty():
         raise ValueError(f"GeoSpread feature surface is empty: {path}")
+    audit = leakage_audit([column for column in df.columns if column not in ALLOWED_OUTCOME_COLUMNS])
+    if audit["status"] != "pass":
+        blocked = ", ".join(str(column) for column in audit["blocked_columns"])
+        raise ValueError(f"GeoSpread feature surface contains leakage-prone columns: {blocked}")
 
     alias_exprs: list[pl.Expr] = []
     if "geo_country_entropy_train" not in df.columns:

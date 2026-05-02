@@ -71,6 +71,20 @@ def test_verify_project_has_release_mode():
     assert "--release" in completed.stdout
 
 
+def test_release_verification_runs_real_checks():
+    completed = subprocess.run(
+        [sys.executable, "verify_project.py", "--release", "--skip-security"],
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    assert "compile" in completed.stdout
+    assert "pytest" in completed.stdout
+    assert "release verification passed" in completed.stdout
+
+
 def test_verify_project_ssl_warning_detects_non_openssl_backend():
     from verify_project import _ssl_backend_warning
 

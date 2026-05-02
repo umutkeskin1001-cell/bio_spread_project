@@ -20,7 +20,7 @@ class QualityThresholds:
 
     average_precision_above_prevalence: bool = True
     bootstrap_average_precision_ci_low_above_prevalence: bool = True
-    external_holdout_required: bool = False
+    external_holdout_required: bool = True
     suspicious_feature_count_max: int = 0
 
     def __post_init__(self) -> None:
@@ -70,7 +70,7 @@ def load_quality_thresholds(path: str | Path | None = None) -> QualityThresholds
         bootstrap_average_precision_ci_low_above_prevalence=bool(
             payload.get("bootstrap_average_precision_ci_low_above_prevalence", True)
         ),
-        external_holdout_required=bool(payload.get("external_holdout_required", False)),
+        external_holdout_required=bool(payload.get("external_holdout_required", True)),
         suspicious_feature_count_max=to_int(
             "suspicious_feature_count_max", payload.get("suspicious_feature_count_max", 0)
         ),

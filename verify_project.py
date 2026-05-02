@@ -6,8 +6,10 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 SRC_ROOT = PROJECT_ROOT / "src"
-if str(SRC_ROOT) not in sys.path:
-    sys.path.insert(0, str(SRC_ROOT))
+src_root = str(SRC_ROOT)
+if src_root in sys.path:
+    sys.path.remove(src_root)
+sys.path.insert(0, src_root)
 
 from verify_project import main
 
