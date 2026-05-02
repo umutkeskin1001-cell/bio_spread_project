@@ -32,6 +32,10 @@ class EnrichmentFlags:
     enable_synergy_interactions: bool = True
     enable_phylo_propagation: bool = True
     enable_evidential_meta: bool = True
+    enable_graph_contagion: bool = True
+    enable_bio_adapter: bool = True
+    enable_evidential_weighting: bool = True
+    enable_adversarial_phantom_gate: bool = True
 
 
 def _parse_bool(value: str) -> bool:
@@ -65,6 +69,10 @@ def load_enrichment_flags(config_path: Path) -> EnrichmentFlags:
         enable_synergy_interactions=values.get("enable_synergy_interactions", True),
         enable_phylo_propagation=values.get("enable_phylo_propagation", True),
         enable_evidential_meta=values.get("enable_evidential_meta", True),
+        enable_graph_contagion=values.get("enable_graph_contagion", True),
+        enable_bio_adapter=values.get("enable_bio_adapter", True),
+        enable_evidential_weighting=values.get("enable_evidential_weighting", True),
+        enable_adversarial_phantom_gate=values.get("enable_adversarial_phantom_gate", True),
     )
 
 

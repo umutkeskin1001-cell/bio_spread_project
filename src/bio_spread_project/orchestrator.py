@@ -302,6 +302,47 @@ def run_pipeline(config: PipelineConfig | None = None, **kwargs: Any) -> Pipelin
         state.payload["features"] = features
         return state
 
+    def _step_add_graph_contagion(state: PipelineState) -> PipelineState:
+        features = state.payload["features"]
+        enrich_cfg = state.payload["enrich_cfg"]
+        raw_for_enrichment = state.payload.get("raw_for_enrichment")
+        external_dir = state.payload["external_dir"]
+        if enrich_cfg.enable_graph_contagion and raw_for_enrichment is not None:
+            mash_path = external_dir / "mash_distances.tsv"
+            if mash_path.exists():
+                from bio_spread_project.graph_contagion import build_fastrp_embeddings
+                mash_df = pl.read_csv(mash_path, separator="\t")
+                graph_emb = build_fastrp_embeddings(raw_for_enrichment, mash_df, config.split_year)
+                features = features.join(graph_emb, on="backbone_id", how="left", coalesce=True)
+                active_enrichment_modules.append("graph_contagion")
+        state.payload["features"] = features
+        return state
+
+    def _step_add_bio_adapter(state: PipelineState) -> PipelineState:
+        features = state.payload["features"]
+        enrich_cfg = state.payload["enrich_cfg"]
+        external_dir = state.payload["external_dir"]
+        if enrich_cfg.enable_bio_adapter:
+            model_path = external_dir / "embeddings" / "bio_adapter.pth"
+            esm_path = external_dir / "embeddings" / "esm2_presplit.parquet"
+            if model_path.exists() and esm_path.exists():
+                from bio_spread_project.bio_adapter import load_bio_adapter, transform_bio_features
+                adapter = load_bio_adapter(model_path)
+                esm_df = pl.read_parquet(esm_path)
+                features = transform_bio_features(features, esm_df, adapter)
+                active_enrichment_modules.append("bio_adapter")
+        state.payload["features"] = features
+        return state
+
+    def _step_adversarial_audit(state: PipelineState) -> PipelineState:
+        features = state.payload["features"]
+        enrich_cfg = state.payload["enrich_cfg"]
+        if enrich_cfg.enable_adversarial_phantom_gate:
+            from bio_spread_project.adversarial_gate import phantom_leakage_audit
+            phantom_leakage_audit(features)
+            active_enrichment_modules.append("adversarial_phantom_gate")
+        return state
+
     def _step_train_model(state: PipelineState) -> PipelineState:
         features_local = state.payload["features"]
         raw_for_enrichment = state.payload.get("raw_for_enrichment")
@@ -340,7 +381,10 @@ def run_pipeline(config: PipelineConfig | None = None, **kwargs: Any) -> Pipelin
         [
             PipelineStep(name="enrich_features", fn=_step_enrich_features),
             PipelineStep(name="add_synergy_features", fn=_step_add_synergy_features),
+            PipelineStep(name="add_graph_contagion", fn=_step_add_graph_contagion),
+            PipelineStep(name="add_bio_adapter", fn=_step_add_bio_adapter),
             PipelineStep(name="add_phylo_propagation", fn=_step_add_phylo_propagation),
+            PipelineStep(name="adversarial_audit", fn=_step_adversarial_audit),
             PipelineStep(name="train_model", fn=_step_train_model),
         ],
     )
@@ -374,6 +418,18 @@ def run_pipeline(config: PipelineConfig | None = None, **kwargs: Any) -> Pipelin
             x_meta = scores if not oof_base else np.hstack([scores, np.vstack(oof_base).T])
             labels = score_frame["label_geo_spread"].to_numpy()
 
+            def _get_cp_features(xm):
+                if hasattr(run.model.meta_estimator, "evid_clf"):
+                    import torch
+                    evid_clf = run.model.meta_estimator.evid_clf
+                    evid_clf.eval()
+                    with torch.no_grad():
+                        alpha_all, prob_all = evid_clf(torch.FloatTensor(xm))
+                        ep = prob_all[:, 1].numpy()
+                        eu = 2.0 / alpha_all.sum(dim=1).numpy()
+                    return np.hstack([xm, ep.reshape(-1, 1), np.log(eu + 1e-6).reshape(-1, 1)])
+                return xm
+
             if "max_resolved_year_train" in features.columns and score_frame.height >= 20:
                 calib_rows = (
                     features.select(["backbone_id", "max_resolved_year_train"])
@@ -386,13 +442,13 @@ def run_pipeline(config: PipelineConfig | None = None, **kwargs: Any) -> Pipelin
                 bb_list = score_frame["backbone_id"].to_list()
                 calib_idx = np.array([i for i, bb in enumerate(bb_list) if bb in calib_ids], dtype=int)
                 if len(calib_idx) > 5 and len(np.unique(labels[calib_idx])) > 1:
-                    cp = ConformalPredictor(run.model.meta_estimator, x_meta[calib_idx], labels[calib_idx], alpha=0.1)
+                    cp = ConformalPredictor(run.model.meta_estimator, _get_cp_features(x_meta[calib_idx]), labels[calib_idx], alpha=0.1)
                 else:
-                    cp = ConformalPredictor(run.model.meta_estimator, x_meta, labels, alpha=0.1)
+                    cp = ConformalPredictor(run.model.meta_estimator, _get_cp_features(x_meta), labels, alpha=0.1)
             else:
-                cp = ConformalPredictor(run.model.meta_estimator, x_meta, labels, alpha=0.1)
+                cp = ConformalPredictor(run.model.meta_estimator, _get_cp_features(x_meta), labels, alpha=0.1)
 
-            cp_out = cp.predict_with_set(x_meta)
+            cp_out = cp.predict_with_set(_get_cp_features(x_meta))
             cp_df = pl.DataFrame(
                 {
                     "backbone_id": score_frame["backbone_id"],

@@ -14,3 +14,7 @@ enable_conformal: true
 enable_synergy_interactions: true
 enable_phylo_propagation: true
 enable_evidential_meta: true
+enable_graph_contagion: true
+enable_bio_adapter: true
+enable_evidential_weighting: true
+enable_adversarial_phantom_gate: true
