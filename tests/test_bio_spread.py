@@ -18,10 +18,13 @@ from bio_spread_project.geo_reliability import (
     _calculate_permutation_importance,
     _feature_matrix,
     _make_calibrated_stack,
+    comprehensive_leakage_alarm,
     fit_geo_reliability_surface,
     geo_rows_to_frame,
     leakage_audit,
+    leakage_canary_self_test,
     load_geo_spread_feature_rows,
+    permutation_leakage_sanity_check,
     single_feature_leakage_scan,
     statistical_leakage_alarm,
 )
@@ -714,6 +717,88 @@ def test_statistical_leakage_alarm_flags_subtle_target_proxy():
     frame = geo_rows_to_frame(rows)
     alarm = statistical_leakage_alarm(frame, n_permutations=12, top_k=8)
     assert alarm["alarm_count"] >= 1
+
+
+def test_permutation_sanity_check_stays_near_random():
+    rows: list[GeoSpreadFeatureRow] = []
+    rng = __import__("numpy").random.default_rng(13)
+    for index in range(72):
+        label = 1 if index % 2 == 0 else 0
+        rows.append(
+            GeoSpreadFeatureRow(
+                backbone_id=f"bb_{index}",
+                label_geo_spread=label,
+                n_new_countries_future=2 if label else 0,
+                knownness_score=0.7,
+                region="global",
+                max_resolved_year_train=2010 + (index % 7),
+                features={
+                    "T_eff_norm": float(rng.random()),
+                    "H_obs_specialization_norm": float(rng.random()),
+                    "A_eff_norm": float(rng.random()),
+                    "coherence_score": float(rng.random()),
+                    "backbone_purity_norm": float(rng.random()),
+                    "assignment_confidence_norm": float(rng.random()),
+                    "mash_neighbor_distance_train_norm": float(rng.random()),
+                    "orit_support": float(rng.random()),
+                    "H_external_host_range_norm": float(rng.random()),
+                    "geo_country_entropy_train": float(rng.random()),
+                    "geo_macro_region_entropy_train": float(rng.random()),
+                    "geo_dominant_region_share_train": float(rng.random()),
+                    "geo_country_record_count_train": float(rng.random()),
+                },
+            )
+        )
+    frame = geo_rows_to_frame(rows)
+    sanity = permutation_leakage_sanity_check(frame, n_trials=6, auc_ceiling=0.60)
+    assert sanity["status"] == "pass"
+    assert sanity["permutation_auc_max"] <= 0.60
+
+
+def test_canary_self_test_detects_high_risk_proxy():
+    frame = pl.DataFrame(
+        {
+            "backbone_id": [f"bb{i}" for i in range(40)],
+            "label_geo_spread": [1 if i % 2 == 0 else 0 for i in range(40)],
+        }
+    )
+    canary = leakage_canary_self_test(frame, auc_floor=0.90)
+    assert canary["status"] == "pass"
+    assert float(canary["canary_auc"]) >= 0.90
+
+
+def test_comprehensive_leakage_alarm_fails_for_deterministic_feature():
+    rows: list[GeoSpreadFeatureRow] = []
+    for index in range(40):
+        label = 1 if index % 2 == 0 else 0
+        rows.append(
+            GeoSpreadFeatureRow(
+                backbone_id=f"bb_{index}",
+                label_geo_spread=label,
+                n_new_countries_future=2 if label else 0,
+                knownness_score=0.7,
+                region="global",
+                max_resolved_year_train=2010 + (index % 4),
+                features={
+                    "T_eff_norm": 0.2,
+                    "H_obs_specialization_norm": 0.3,
+                    "A_eff_norm": 0.4,
+                    "coherence_score": float(label),
+                    "backbone_purity_norm": 0.5,
+                    "assignment_confidence_norm": 0.6,
+                    "mash_neighbor_distance_train_norm": 0.7,
+                    "orit_support": 0.2,
+                    "H_external_host_range_norm": 0.2,
+                    "geo_country_entropy_train": 0.2,
+                    "geo_macro_region_entropy_train": 0.2,
+                    "geo_dominant_region_share_train": 0.8,
+                    "geo_country_record_count_train": 0.2,
+                },
+            )
+        )
+    alarm = comprehensive_leakage_alarm(geo_rows_to_frame(rows))
+    assert alarm["status"] == "fail"
+    assert int(alarm["suspicious_feature_count"]) >= 1
 
 
 def test_pipeline_writes_data_registry_artifact(tmp_path):

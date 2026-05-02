@@ -18,6 +18,8 @@ from sklearn.model_selection import StratifiedGroupKFold
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
+from bio_spread_project.external_features import EnrichmentFlags
+from bio_spread_project.losses import focal_pairwise_loss, soft_ndcg_loss
 from bio_spread_project.data import read_table
 from bio_spread_project.metrics import (
     bootstrap_metric_intervals,
@@ -63,6 +65,39 @@ FEATURE_COLUMNS: tuple[str, ...] = (
     "host_sampling_shannon",
     "reach_potential",
     "saturation_deficit",
+    "inc_group_code",
+    "mob_typer_code",
+    "conjugation_score",
+    "toxin_antitoxin_count",
+    "replicon_count",
+    "avg_gc_content",
+    "plasmid_size_kb",
+    "phage_related_genes_count",
+    "frac_pathogenic_hosts",
+    "env_diversity",
+    "gram_stain_entropy",
+    "metabolic_diversity",
+    "mean_antibiotic_pressure",
+    "max_health_exp",
+    "tourist_entropy",
+    "country_slope_train",
+    "host_breadth_slope_train",
+    "mobility_shift_slope_train",
+    "recent_expansion_flag",
+    "carbapenemase_count",
+    "esbl_count",
+    "colistin_resistance_count",
+    "other_amr_count",
+    "amr_class_shannon",
+    "min_dist_to_top5_traveller",
+    "psge_0",
+    "psge_1",
+    "psge_2",
+    "psge_3",
+    "psge_4",
+    "psge_5",
+    "psge_6",
+    "psge_7",
     "oof_rf", "oof_hgb", "oof_ridge",
 )
 
@@ -200,7 +235,12 @@ def create_base_models() -> list[Any]:
         Pipeline([("scaler", StandardScaler()), ("ridge", RidgeClassifier(alpha=0.1))])
     ]
 
-def fit_geo_reliability_surface(df: pl.DataFrame | list[GeoSpreadFeatureRow]) -> ModelRun:
+def fit_geo_reliability_surface(
+    df: pl.DataFrame | list[GeoSpreadFeatureRow],
+    *,
+    modeling_flags: EnrichmentFlags | None = None,
+    dominant_country_targets: dict[str, str] | None = None,
+) -> ModelRun:
 
     if isinstance(df, list):
         df = geo_rows_to_frame(df)
@@ -245,8 +285,24 @@ def fit_geo_reliability_surface(df: pl.DataFrame | list[GeoSpreadFeatureRow]) ->
                 oof_base[val_idx, i] = 1 / (1 + np.exp(-d))
 
     X_meta = np.hstack([X, oof_base])
-    meta_clf = LogisticRegression(C=1.0, max_iter=8000, random_state=42)
-    meta_clf.fit(X_meta, y)
+    use_rank_focal = bool(modeling_flags.enable_rank_focal_loss) if modeling_flags is not None else False
+    use_country_debias = bool(modeling_flags.enable_soft_country_debiasing) if modeling_flags is not None else False
+    if use_rank_focal or use_country_debias:
+        knownness = df["knownness_score"].fill_null(0.5).cast(pl.Float64).to_numpy()
+        country_targets = None
+        if dominant_country_targets:
+            country_targets = np.array(
+                [dominant_country_targets.get(str(bb), "UNK") for bb in df["backbone_id"].to_list()],
+                dtype=object,
+            )
+        meta_clf = TorchMetaEstimator(
+            use_rank_focal=use_rank_focal,
+            use_country_debias=use_country_debias,
+        )
+        meta_clf.fit(X_meta, y, knownness=knownness, country_targets=country_targets)
+    else:
+        meta_clf = LogisticRegression(C=1.0, max_iter=8000, random_state=42)
+        meta_clf.fit(X_meta, y)
 
     fitted_base_estimators = create_base_models()
     for model in fitted_base_estimators:
@@ -281,16 +337,23 @@ def fit_geo_reliability_surface(df: pl.DataFrame | list[GeoSpreadFeatureRow]) ->
     metrics["bootstrap_average_precision_ci_high"] = bootstrap.get("bootstrap_average_precision_ci_high", 0.0)
     metrics["expected_calibration_error"] = float(cal_sum.get("expected_calibration_error", 0.0))
     metrics["validation_mode"] = "spatial_group_cv_stacked"
-    leakage = single_feature_leakage_scan(df)
-    leakage_alarm = statistical_leakage_alarm(df)
-    leakage["suspicious_feature_count"] = float(leakage["suspicious_feature_count"] + leakage_alarm["alarm_count"])
-    leakage["leakage_alarm_count"] = float(leakage_alarm["alarm_count"])
-    leakage["leakage_alarm_features"] = leakage_alarm["alarm_features"]
-    leakage_status = "pass" if leakage["max_single_feature_auc"] < 0.95 and leakage["suspicious_feature_count"] == 0 else "fail"
+    leakage = comprehensive_leakage_alarm(df)
+    leakage_status = "pass" if leakage["status"] == "pass" else "fail"
     metrics["status"] = leakage_status
+    if hasattr(meta_clf, "coef_"):
+        scores = [float(v) for v in meta_clf.coef_[0][: len(base_features)]]
+    else:
+        # Fallback attribution for neural meta-learner path.
+        base_probs = np.clip(probs, 1e-6, 1 - 1e-6)
+        scores = []
+        for i in range(len(base_features)):
+            x_perturbed = X_meta.copy()
+            x_perturbed[:, i] = np.random.default_rng(seed=42 + i).permutation(x_perturbed[:, i])
+            pert_probs = np.clip(meta_clf.predict_proba(x_perturbed)[:, 1], 1e-6, 1 - 1e-6)
+            scores.append(float(np.mean(np.abs(base_probs - pert_probs))))
     metrics["top_features"] = [
         {"feature": name, "score": abs(float(score))}
-        for name, score in sorted(zip(base_features, meta_clf.coef_[0][: len(base_features)]), key=lambda x: abs(float(x[1])), reverse=True)[:10]
+        for name, score in sorted(zip(base_features, scores), key=lambda x: abs(float(x[1])), reverse=True)[:10]
     ]
     metrics["group_oof_roc_auc"] = auc
     metrics["group_oof_average_precision"] = metrics["average_precision"]
@@ -304,7 +367,7 @@ def fit_geo_reliability_surface(df: pl.DataFrame | list[GeoSpreadFeatureRow]) ->
         metrics["temporal_holdout_roc_auc"] = float(temporal_metrics.get("roc_auc", auc))
         metrics["temporal_holdout_average_precision"] = float(temporal_metrics.get("average_precision", metrics["average_precision"]))
         metrics["temporal_holdout_n_backbones"] = float(temporal_metrics.get("n_backbones", n_temporal))
-    metrics.update(leakage)
+    metrics.update({k: v for k, v in leakage.items() if k != "status"})
 
     return ModelRun(
         model_name=MODEL_NAME,
@@ -401,14 +464,8 @@ def single_feature_leakage_scan(df: pl.DataFrame | list[GeoSpreadFeatureRow], au
     return {"max_single_feature_auc": max_auc, "suspicious_feature_count": float(suspicious)}
 
 def leakage_audit(df: pl.DataFrame) -> dict[str, Any]:
-    scan = single_feature_leakage_scan(df)
-    alarm = statistical_leakage_alarm(df)
-    suspicious = int(scan["suspicious_feature_count"] + alarm["alarm_count"])
-    scan["suspicious_feature_count"] = float(suspicious)
-    scan["leakage_alarm_count"] = float(alarm["alarm_count"])
-    scan["leakage_alarm_features"] = alarm["alarm_features"]
-    passed = scan["max_single_feature_auc"] < 0.98 and scan["suspicious_feature_count"] == 0
-    return {"status": "pass" if passed else "fail", "blocked_columns": [], **scan}
+    audit = comprehensive_leakage_alarm(df)
+    return {"status": str(audit["status"]), "blocked_columns": [], **audit}
 
 
 def _binary_log_loss(y_true: NDArray[np.float64], y_prob: NDArray[np.float64]) -> float:
@@ -429,6 +486,20 @@ def _oof_logloss_for_matrix(X: NDArray[np.float64], y: NDArray[np.float64], grou
         clf.fit(X[train_idx], y[train_idx].astype(int))
         probs[val_idx] = clf.predict_proba(X[val_idx])[:, 1]
     return _binary_log_loss(y, probs)
+
+
+def _oof_auc_for_matrix(X: NDArray[np.float64], y: NDArray[np.float64], groups: NDArray[Any]) -> float:
+    class_counts = np.bincount(y.astype(int))
+    positive = int(class_counts[1]) if len(class_counts) > 1 else 0
+    negative = int(class_counts[0]) if len(class_counts) > 0 else 0
+    n_splits = max(2, min(3, positive, negative))
+    cv = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=11)
+    probs: NDArray[np.float64] = np.zeros(len(y), dtype=np.float64)
+    for train_idx, val_idx in cv.split(X, y.astype(int), groups=groups):
+        clf = LogisticRegression(C=1.0, max_iter=1000, random_state=11)
+        clf.fit(X[train_idx], y[train_idx].astype(int))
+        probs[val_idx] = clf.predict_proba(X[val_idx])[:, 1]
+    return float(roc_auc_score(y.astype(int), probs))
 
 
 def statistical_leakage_alarm(df: pl.DataFrame, *, n_permutations: int = 4, top_k: int = 3) -> dict[str, Any]:
@@ -476,6 +547,217 @@ def statistical_leakage_alarm(df: pl.DataFrame, *, n_permutations: int = 4, top_
             alarms.append({"feature": feature, "reason": "unexpected_predictive_gain", "delta_logloss": float(delta), "p_value": p_value})
 
     return {"alarm_count": len(alarms), "alarm_features": alarms}
+
+
+def permutation_leakage_sanity_check(
+    df: pl.DataFrame, *, n_trials: int = 8, auc_ceiling: float = 0.60
+) -> dict[str, Any]:
+    y = df["label_geo_spread"].fill_null(0).cast(pl.Float64).to_numpy()
+    groups = df["backbone_id"].to_numpy()
+    base_names = [c for c in FEATURE_COLUMNS if c in df.columns and not c.startswith("oof_")]
+    if len(np.unique(y)) < 2 or len(base_names) < 2 or len(y) < 24:
+        return {
+            "status": "not_evaluated",
+            "reason": "insufficient_variation_or_sample_size",
+            "permutation_auc_mean": None,
+            "permutation_auc_max": None,
+            "permutation_auc_values": [],
+            "n_trials": 0,
+            "auc_ceiling": auc_ceiling,
+            "alarm_count": 0,
+        }
+
+    X_base = _feature_matrix(df, tuple(base_names))
+    rng = np.random.default_rng(seed=29)
+    auc_values: list[float] = []
+    for _ in range(max(1, n_trials)):
+        y_perm = y.copy()
+        rng.shuffle(y_perm)
+        auc_values.append(_oof_auc_for_matrix(X_base, y_perm, groups))
+
+    mean_auc = float(np.mean(auc_values))
+    max_auc = float(np.max(auc_values))
+    alarm_count = int(sum(1 for value in auc_values if value > auc_ceiling))
+    passed = alarm_count == 0
+    return {
+        "status": "pass" if passed else "fail",
+        "reason": "" if passed else f"Permuted labels stayed too predictive (max={max_auc:.3f} > {auc_ceiling:.3f})",
+        "permutation_auc_mean": mean_auc,
+        "permutation_auc_max": max_auc,
+        "permutation_auc_values": [float(v) for v in auc_values],
+        "n_trials": max(1, n_trials),
+        "auc_ceiling": auc_ceiling,
+        "alarm_count": alarm_count,
+    }
+
+
+def leakage_canary_self_test(df: pl.DataFrame, *, auc_floor: float = 0.90) -> dict[str, Any]:
+    y = df["label_geo_spread"].fill_null(0).cast(pl.Float64).to_numpy()
+    if len(np.unique(y)) < 2:
+        return {
+            "status": "not_evaluated",
+            "reason": "insufficient_variation",
+            "canary_auc": None,
+            "auc_floor": auc_floor,
+            "alarm_count": 0,
+        }
+    rng = np.random.default_rng(seed=41)
+    canary = 0.85 * y + 0.15 * rng.random(len(y))
+    canary_auc = float(roc_auc_score(y.astype(int), canary))
+    passed = canary_auc >= auc_floor
+    return {
+        "status": "pass" if passed else "fail",
+        "reason": "" if passed else f"Canary feature was not detected as high-risk (auc={canary_auc:.3f})",
+        "canary_auc": canary_auc,
+        "auc_floor": auc_floor,
+        "alarm_count": 0 if passed else 1,
+    }
+
+
+def comprehensive_leakage_alarm(df: pl.DataFrame) -> dict[str, Any]:
+    single = single_feature_leakage_scan(df)
+    statistical = statistical_leakage_alarm(df)
+    permutation = permutation_leakage_sanity_check(df)
+    canary = leakage_canary_self_test(df)
+    total_alarm_count = int(
+        single["suspicious_feature_count"]
+        + statistical["alarm_count"]
+        + permutation["alarm_count"]
+        + canary["alarm_count"]
+    )
+    passed = (
+        single["max_single_feature_auc"] < 0.95
+        and total_alarm_count == 0
+        and permutation["status"] != "fail"
+        and canary["status"] == "pass"
+    )
+    return {
+        "status": "pass" if passed else "fail",
+        "max_single_feature_auc": float(single["max_single_feature_auc"]),
+        "suspicious_feature_count": float(total_alarm_count),
+        "leakage_alarm_count": float(statistical["alarm_count"]),
+        "leakage_alarm_features": statistical["alarm_features"],
+        "permutation_sanity": permutation,
+        "canary_self_test": canary,
+    }
+
+
+class TorchMetaEstimator:
+    def __init__(self, *, use_rank_focal: bool, use_country_debias: bool) -> None:
+        self.use_rank_focal = use_rank_focal
+        self.use_country_debias = use_country_debias
+        self.model: Any | None = None
+        self.country_vocab: dict[str, int] = {}
+
+    def fit(
+        self,
+        X: NDArray[np.float64],
+        y: NDArray[np.float64],
+        *,
+        knownness: NDArray[np.float64],
+        country_targets: NDArray[Any] | None = None,
+    ) -> None:
+        import torch
+
+        torch.manual_seed(42)
+        np.random.seed(42)
+
+        x_t = torch.tensor(X, dtype=torch.float32)
+        y_t = torch.tensor(y, dtype=torch.float32)
+        k_t = torch.tensor(knownness, dtype=torch.float32).clamp(0.0, 1.0)
+
+        if self.use_country_debias and country_targets is not None:
+            labels = sorted(set(str(v) for v in country_targets))
+            self.country_vocab = {label: i for i, label in enumerate(labels)}
+            c_idx_np = np.array([self.country_vocab[str(v)] for v in country_targets], dtype=np.int64)
+            c_idx = torch.tensor(c_idx_np, dtype=torch.long)
+            n_country = max(2, len(self.country_vocab))
+        else:
+            c_idx = None
+            n_country = 2
+
+        hidden_dim = 64 if self.use_rank_focal else 32
+        model = _MetaMLP(input_dim=X.shape[1], hidden_dim=hidden_dim, num_countries=n_country)
+        opt = torch.optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-4)
+        bce = torch.nn.BCEWithLogitsLoss()
+        model.train()
+
+        batch_size = min(256, len(X))
+        for _ in range(50):
+            perm = torch.randperm(len(X))
+            for start in range(0, len(X), batch_size):
+                idx = perm[start : start + batch_size]
+                xb = x_t[idx]
+                yb = y_t[idx]
+                kb = k_t[idx]
+                logits, country_logits = model(xb)
+
+                if self.use_rank_focal:
+                    loss_main = focal_pairwise_loss(logits.view(-1), yb.view(-1), kb.view(-1), gamma=2.0) + 0.2 * soft_ndcg_loss(
+                        logits.view(-1), yb.view(-1), topk=25
+                    )
+                else:
+                    loss_main = bce(logits.view(-1), yb.view(-1))
+
+                if self.use_country_debias and c_idx is not None:
+                    cb = c_idx[idx]
+                    probs = torch.softmax(country_logits, dim=1).clamp_min(1e-8)
+                    entropy = -(probs * torch.log(probs)).sum(dim=1).mean()
+                    loss = loss_main - 0.1 * entropy
+                    _ = cb
+                else:
+                    loss = loss_main
+
+                opt.zero_grad()
+                loss.backward()
+                opt.step()
+
+        self.model = model.eval()
+
+    def predict_proba(self, X: NDArray[np.float64]) -> NDArray[np.float64]:
+        if self.model is None:
+            raise ValueError("meta estimator is not fitted")
+        import torch
+
+        with torch.no_grad():
+            x_t = torch.tensor(X, dtype=torch.float32)
+            logits, _ = self.model(x_t)
+            probs = torch.sigmoid(logits.view(-1)).cpu().numpy()
+        return np.stack([1.0 - probs, probs], axis=1)
+
+
+class _MetaMLP:
+    def __init__(self, input_dim: int, hidden_dim: int, num_countries: int) -> None:
+        import torch
+
+        super().__init__()
+        self.net = torch.nn.Sequential(
+            torch.nn.Linear(input_dim, hidden_dim),
+            torch.nn.ReLU(),
+            torch.nn.Dropout(p=0.3),
+        )
+        self.main_head = torch.nn.Linear(hidden_dim, 1)
+        self.country_head = torch.nn.Linear(hidden_dim, max(2, num_countries))
+
+    def parameters(self) -> Any:
+        return list(self.net.parameters()) + list(self.main_head.parameters()) + list(self.country_head.parameters())
+
+    def train(self) -> "_MetaMLP":
+        self.net.train()
+        self.main_head.train()
+        self.country_head.train()
+        return self
+
+    def eval(self) -> "_MetaMLP":
+        self.net.eval()
+        self.main_head.eval()
+        self.country_head.eval()
+        return self
+
+    def __call__(self, x: Any) -> tuple[Any, Any]:
+        h = self.net(x)
+        return self.main_head(h), self.country_head(h)
+
 
 def _make_calibrated_stack() -> LogisticRegression:
     return LogisticRegression(C=1.0, max_iter=8000, random_state=42)

@@ -1,0 +1,5 @@
+backbone_id	spread_label	n_new_countries	T_eff_norm	H_obs_specialization_norm	A_eff_norm	coherence_score	backbone_purity_norm	assignment_confidence_norm	mash_neighbor_distance_train_norm	orit_support	H_external_host_range_norm	metadata_support_depth_norm	metadata_missingness_burden	log1p_member_count_train	log1p_n_countries_train
+bb1	1	2	0.8	0.5	0.6	0.7	0.6	0.7	0.2	0.9	0.4	0.8	0.1	1.6	1.2
+bb2	0	0	0.3	0.2	0.3	0.4	0.3	0.4	0.5	0.3	0.2	0.6	0.2	1.2	0.9
+bb3	1	3	0.9	0.7	0.7	0.8	0.7	0.8	0.1	0.8	0.5	0.9	0.1	1.9	1.4
+bb4	0	0	0.2	0.1	0.2	0.3	0.2	0.3	0.6	0.2	0.1	0.5	0.3	1.0	0.7

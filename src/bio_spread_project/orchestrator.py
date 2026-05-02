@@ -9,6 +9,7 @@ from typing import Any
 from uuid import uuid4
 
 import joblib
+import polars as pl
 
 from bio_spread_project.artifact_transaction import ArtifactSet, commit_artifact_set
 from bio_spread_project.audit import build_run_audit, render_model_card
@@ -21,6 +22,16 @@ from bio_spread_project.cache_keys import (
 from bio_spread_project.config_loader import ProjectPaths, load_project_config
 from bio_spread_project.dashboard import generate_dashboard
 from bio_spread_project.data import load_backbone_records_frame, load_records
+from bio_spread_project.external_features import (
+    EnrichmentFlags,
+    augment_amr_diversity_features,
+    augment_country_indicator_features,
+    augment_host_trait_features,
+    augment_intrinsic_plasmid_features,
+    augment_phylogenetic_proximity,
+    drop_all_missing_columns,
+    load_enrichment_flags,
+)
 from bio_spread_project.features import (
     FeatureConfig,
     build_backbone_features,
@@ -28,9 +39,12 @@ from bio_spread_project.features import (
     feature_rows_to_frame,
 )
 from bio_spread_project.geo_reliability import (
+    FEATURE_COLUMNS,
+    _feature_matrix,
     fit_geo_reliability_surface,
     load_geo_spread_features,
 )
+from bio_spread_project.phylo_spatial_embedder import PhyloSpatialGraphEmbedder
 from bio_spread_project.governance import (
     build_governance_report,
     build_release_gate_report,
@@ -57,6 +71,7 @@ from bio_spread_project.model_metrics import validation_summary
 from bio_spread_project.registry import append_model_registry_entry
 from bio_spread_project.reporting import render_chic_report
 from bio_spread_project.runtime_policy import PipelineConfig
+from bio_spread_project.temporal_features import build_temporal_trend_features
 from bio_spread_project.thresholds import load_thresholds
 from bio_spread_project.visualization import plot_performance_summary, save_table_as_png
 
@@ -154,6 +169,9 @@ def run_pipeline(config: PipelineConfig | None = None, **kwargs: Any) -> Pipelin
 
     paths = ProjectPaths.from_env()
     selection = select_input_source(config=config, paths=paths)
+    enrich_cfg = load_enrichment_flags(paths.project_root / "project_config" / "config" / "enriched_features.yaml")
+    external_dir = paths.data_root / "external"
+    active_enrichment_modules: list[str] = []
 
     if selection.use_geo_reliability:
         features = load_geo_spread_features(selection.source_path)
@@ -174,8 +192,134 @@ def run_pipeline(config: PipelineConfig | None = None, **kwargs: Any) -> Pipelin
     if features.is_empty():
         raise ValueError("No eligible feature rows produced")
 
+    def _append_cols_if_present(frame: Any, cols: list[str]) -> None:
+        existing = [c for c in cols if c in frame.columns]
+        active_enrichment_modules.extend(existing)
+
+    raw_for_enrichment: Any | None = None
+    raw_candidate = selection.resolved_records_path or paths.raw_backbones
+    if raw_candidate is not None and Path(raw_candidate).exists():
+        try:
+            raw_for_enrichment = load_backbone_records_frame(raw_candidate, amr_path=selection.resolved_amr_path or paths.raw_amr)
+        except Exception:
+            raw_for_enrichment = None
+
     if selection.use_geo_reliability:
-        run = fit_geo_reliability_surface(features)
+        if enrich_cfg.enable_intrinsic_plasmid_features:
+            features, used = augment_intrinsic_plasmid_features(features, external_dir)
+            if used:
+                _append_cols_if_present(
+                    features,
+                    [
+                        "inc_group_code",
+                        "mob_typer_code",
+                        "conjugation_score",
+                        "toxin_antitoxin_count",
+                        "replicon_count",
+                        "avg_gc_content",
+                        "plasmid_size_kb",
+                        "phage_related_genes_count",
+                    ],
+                )
+
+        if raw_for_enrichment is not None and enrich_cfg.enable_host_traits:
+            features, used = augment_host_trait_features(features, raw_for_enrichment, external_dir, split_year=config.split_year)
+            if used:
+                _append_cols_if_present(features, ["frac_pathogenic_hosts", "env_diversity", "gram_stain_entropy", "metabolic_diversity"])
+
+        if raw_for_enrichment is not None and enrich_cfg.enable_country_indicators:
+            features, used = augment_country_indicator_features(features, raw_for_enrichment, external_dir, split_year=config.split_year)
+            if used:
+                _append_cols_if_present(features, ["mean_antibiotic_pressure", "max_health_exp", "tourist_entropy"])
+
+        if raw_for_enrichment is not None and enrich_cfg.enable_temporal_trends:
+            temporal = build_temporal_trend_features(raw_for_enrichment, split_year=config.split_year)
+            if not temporal.is_empty():
+                features = features.join(temporal, on="backbone_id", how="left", coalesce=True).with_columns(
+                    [
+                        pl.col("country_slope_train").fill_null(0.0),
+                        pl.col("host_breadth_slope_train").fill_null(0.0),
+                        pl.col("mobility_shift_slope_train").fill_null(0.0),
+                        pl.col("recent_expansion_flag").fill_null(0).cast(pl.Float64),
+                    ]
+                )
+                _append_cols_if_present(
+                    features,
+                    [
+                        "country_slope_train",
+                        "host_breadth_slope_train",
+                        "mobility_shift_slope_train",
+                        "recent_expansion_flag",
+                    ],
+                )
+
+        if raw_for_enrichment is not None and enrich_cfg.enable_amr_diversity:
+            features, used = augment_amr_diversity_features(features, raw_for_enrichment, selection.resolved_amr_path or paths.raw_amr)
+            if used:
+                _append_cols_if_present(
+                    features,
+                    [
+                        "carbapenemase_count",
+                        "esbl_count",
+                        "colistin_resistance_count",
+                        "other_amr_count",
+                        "amr_class_shannon",
+                    ],
+                )
+
+        if raw_for_enrichment is not None and enrich_cfg.enable_phylogenetic_proximity:
+            features, used = augment_phylogenetic_proximity(features, raw_for_enrichment, external_dir, split_year=config.split_year)
+            if used:
+                _append_cols_if_present(features, ["min_dist_to_top5_traveller"])
+
+        features, _ = drop_all_missing_columns(features)
+
+    dominant_country_targets: dict[str, str] = {}
+    if raw_for_enrichment is not None and {"backbone_id", "country", "year"}.issubset(set(raw_for_enrichment.columns)):
+        pre_country = (
+            raw_for_enrichment.filter(pl.col("year") <= config.split_year)
+            .drop_nulls(subset=["backbone_id", "country"])
+            .group_by(["backbone_id", "country"])
+            .len()
+            .sort(["backbone_id", "len"], descending=[False, True])
+            .group_by("backbone_id")
+            .agg(pl.first("country").alias("dominant_country"))
+        )
+        dominant_country_targets = {
+            str(row["backbone_id"]): str(row["dominant_country"]) for row in pre_country.to_dicts()
+        }
+
+    if selection.use_geo_reliability and raw_for_enrichment is not None and enrich_cfg.enable_phylo_spatial_embedding:
+        base_names = tuple(c for c in FEATURE_COLUMNS if (not c.startswith("oof_")) and c in features.columns)
+        x_for_psge = _feature_matrix(features, base_names)
+        psge = PhyloSpatialGraphEmbedder()
+        psge_df = psge.fit_transform(
+            raw_for_enrichment,
+            split_year=config.split_year,
+            backbone_ids=features["backbone_id"].to_list(),
+            feature_matrix=x_for_psge,
+            mash_path=(external_dir / "mash_distances.tsv"),
+            save_path=(config.output_dir / "psge_model.pt"),
+        )
+        if not psge_df.is_empty():
+            features = features.join(psge_df, on="backbone_id", how="left", coalesce=True)
+            for i in range(8):
+                col = f"psge_{i}"
+                if col in features.columns:
+                    features = features.with_columns(pl.col(col).fill_null(0.0))
+                    active_enrichment_modules.append(col)
+            active_enrichment_modules.append("enable_phylo_spatial_embedding")
+
+    if selection.use_geo_reliability:
+        if enrich_cfg.enable_rank_focal_loss:
+            active_enrichment_modules.append("enable_rank_focal_loss")
+        if enrich_cfg.enable_soft_country_debiasing:
+            active_enrichment_modules.append("enable_soft_country_debiasing")
+        run = fit_geo_reliability_surface(
+            features,
+            modeling_flags=enrich_cfg,
+            dominant_country_targets=dominant_country_targets,
+        )
     else:
         surface = fit_model_surface(features, load_project_config().models)
         primary_name, _ = select_primary_model(surface)
@@ -345,7 +489,8 @@ def run_pipeline(config: PipelineConfig | None = None, **kwargs: Any) -> Pipelin
         }
         write_json(
             stage / "manifest.json",
-            build_manifest(
+            {
+                **build_manifest(
                 selection=selection,
                 run_mode=config.run_mode,
                 policy=config.policy,
@@ -367,7 +512,9 @@ def run_pipeline(config: PipelineConfig | None = None, **kwargs: Any) -> Pipelin
                 source_fingerprint=source_fingerprint(root),
                 config_fingerprint=config_fingerprint(root),
                 dependency_fingerprint=dependency_fingerprint(root),
-            ),
+                ),
+                "enrichment_modules": sorted(set(active_enrichment_modules)),
+            },
         )
 
         artifact_set = ArtifactSet(

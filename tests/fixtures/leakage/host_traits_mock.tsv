@@ -1,0 +1,5 @@
+genus	family	class	is_pathogen	environment_primary	gram_stain	metabolism
+Escherichia	Enterobacteriaceae	Gammaproteobacteria	1	clinical	negative	facultative
+Pseudomonas	Pseudomonadaceae	Gammaproteobacteria	0	water	negative	aerobe
+Acinetobacter	Moraxellaceae	Gammaproteobacteria	1	clinical	negative	aerobe
+Klebsiella	Enterobacteriaceae	Gammaproteobacteria	1	clinical	negative	facultative
