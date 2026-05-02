@@ -31,6 +31,7 @@ def scan_table(path: str | Path, *, schema_overrides: dict[str, pl.DataType] | N
 
 def load_observations(path: str | Path) -> pl.LazyFrame:
     df = scan_table(path)
+    schema = df.schema
     required = {
         "backbone_id",
         "year",
@@ -40,9 +41,10 @@ def load_observations(path: str | Path) -> pl.LazyFrame:
         "amr_gene_count",
         "mobility_score",
     }
-    missing = sorted(required - set(df.collect_schema().names()))
+    missing = sorted(required - set(schema.names()))
     if missing:
         raise ValueError(f"Input records missing required columns: {', '.join(missing)}")
+        
     return df.select(
         [
             pl.col("backbone_id").cast(pl.String),
@@ -53,16 +55,22 @@ def load_observations(path: str | Path) -> pl.LazyFrame:
             pl.col("amr_gene_count").cast(pl.Float64),
             pl.col("mobility_score").cast(pl.Float64),
         ]
+    ).filter(
+        (pl.col("backbone_id").is_not_null()) &
+        (pl.col("year").is_between(1900, 2100)) &
+        (pl.col("amr_gene_count") >= 0.0) &
+        (pl.col("mobility_score").is_between(0.0, 1.0))
     )
 
 
 def load_amr_weights(path: str | Path) -> pl.LazyFrame:
     amr = scan_table(path)
-    if "NUCCORE_ACC" not in amr.collect_schema().names():
+    schema = amr.schema
+    if "NUCCORE_ACC" not in schema.names():
         raise ValueError("AMR table missing NUCCORE_ACC column")
 
-    gene_col = "gene_symbol" if "gene_symbol" in amr.collect_schema().names() else "gene_name"
-    if gene_col not in amr.collect_schema().names():
+    gene_col = "gene_symbol" if "gene_symbol" in schema.names() else "gene_name"
+    if gene_col not in schema.names():
         return amr.select(pl.col("NUCCORE_ACC")).group_by("NUCCORE_ACC").agg(pl.lit(0.0).alias("amr_gene_count"))
 
     weighted = amr.with_columns(pl.col(gene_col).cast(pl.String).fill_null("").alias("gene_id"))

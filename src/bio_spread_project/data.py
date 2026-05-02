@@ -170,7 +170,7 @@ def _calculate_weighted_amr(amr_df: pl.DataFrame) -> pl.DataFrame:
     for pattern, weight in PRIORITY_AMR_WEIGHTS.items():
         weight_expr = pl.when(pl.col("gene_id").str.contains(pattern)).then(weight).otherwise(weight_expr)
 
-    return amr_df.group_by("NUCCORE_ACC").agg(weight_expr.unique().sum().alias("amr_gene_count"))
+    return amr_df.group_by("NUCCORE_ACC").agg(weight_expr.sum().alias("amr_gene_count"))
 
 
 def load_backbone_records(

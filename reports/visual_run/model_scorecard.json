@@ -1,0 +1,80 @@
+{
+  "primary_model": "geobio_reliability_ensemble",
+  "scorecard": [
+    {
+      "abstain_rate": 0.10111223458038422,
+      "average_precision": 0.8941289261002132,
+      "bootstrap_average_precision_ci_high": 0.9181634750550216,
+      "bootstrap_average_precision_ci_low": 0.8678371418416831,
+      "bootstrap_roc_auc_ci_high": 0.9369193926509449,
+      "bootstrap_roc_auc_ci_low": 0.9014636692157557,
+      "brier_score": 0.10847067696308679,
+      "expected_calibration_error": 0.05649796731744306,
+      "group_oof_average_precision": 0.8941289261002132,
+      "group_oof_roc_auc": 0.920039299655467,
+      "max_single_feature_auc": 0.9125009913029685,
+      "model_card_embedded": "# BioSpread Model Card\n\n## Model\n- Name: `BioSpread-Ensemble`\n- Input mode: `geo_reliability`\n- Validation mode: `spatial_group_cv`\n- Intended use: prioritize plasmid backbones for geographic-spread monitoring.\n- Not intended use: clinical diagnosis or direct public-health intervention without expert review.\n\n## Reliability\n- OOF ROC AUC: `0.920`\n- Minimum AUC target: `0.82`\n- OOF average precision: `0.894`\n- Positive prevalence: `0.366`\n- Expected calibration error: `0.000`\n- Brier score: `0.000`\n- Group OOF ROC AUC: `0.920`\n- Temporal holdout ROC AUC: `0.920`\n- External holdout ROC AUC: `0.920`\n- Bootstrap ROC AUC CI: `[0.000, 0.000]`\n- Bootstrap AP CI: `[0.000, 0.000]`\n- Max single-feature AUC: `0.000`\n- Suspicious feature count: `0`\n- Evaluation cohort: `989.0` backbones, `362.0` positives\n\n## Quality Gates\n\n## Leakage Guard\n- Status: `N/A`\n- Feature count: `0`\n- Future/outcome columns are excluded from model features.\n\n## Explanation Surface\n- Top feature signal summary: `surv_intensity=0.024; host_sampling_shannon=0.011; gnn_embed_2=0.010; reach_potential=0.010; gnn_embed_7=0.009`\n\n## Reproducibility\n- Python: `unknown`\n- NumPy: `unknown`\n- scikit-learn: `unknown`\n- Git commit: `unknown`\n",
+      "model_name": "geobio_reliability_ensemble",
+      "n_backbones": 989.0,
+      "n_positive": 362.0,
+      "oof_average_precision": 0.8941289261002132,
+      "oof_roc_auc": 0.920039299655467,
+      "prevalence": 0.3660262891809909,
+      "roc_auc": 0.920039299655467,
+      "suspicious_feature_count": 0.0,
+      "temporal_holdout_average_precision": 0.8845177031463121,
+      "temporal_holdout_brier_score": 0.1218801943048557,
+      "temporal_holdout_cutoff_year": 2015.0,
+      "temporal_holdout_expected_calibration_error": 0.04011471682268304,
+      "temporal_holdout_n_backbones": 533.0,
+      "temporal_holdout_n_positive": 218.0,
+      "temporal_holdout_prevalence": 0.4090056285178236,
+      "temporal_holdout_roc_auc": 0.8950924712392603,
+      "temporal_holdout_status": "evaluated",
+      "top_features": [
+        {
+          "feature": "surv_intensity",
+          "score": 0.02432877774546882
+        },
+        {
+          "feature": "host_sampling_shannon",
+          "score": 0.011203926440913947
+        },
+        {
+          "feature": "gnn_embed_2",
+          "score": 0.01011569607091567
+        },
+        {
+          "feature": "reach_potential",
+          "score": 0.009877783358446357
+        },
+        {
+          "feature": "gnn_embed_7",
+          "score": 0.00913320468423695
+        },
+        {
+          "feature": "geo_country_record_count_train",
+          "score": 0.009023059909945674
+        },
+        {
+          "feature": "gnn_embed_6",
+          "score": 0.0075250909795836485
+        },
+        {
+          "feature": "saturation_deficit",
+          "score": 0.007467815696952096
+        },
+        {
+          "feature": "gnn_embed_0",
+          "score": 0.0066615559491396414
+        },
+        {
+          "feature": "gnn_embed_4",
+          "score": 0.006472106937358557
+        }
+      ],
+      "top_k_precision": 1.0,
+      "validation_mode": "spatial_group_cv_stacked"
+    }
+  ]
+}

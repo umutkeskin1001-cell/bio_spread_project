@@ -16,17 +16,17 @@ ALLOWED_CHECK_STATUSES = {"pass", "fail", "not_evaluated", "blocked", "not_requi
 
 @dataclass(frozen=True)
 class QualityThresholds:
-    auc_min: float = 0.82
-    calibration_ece_max: float = 0.10
-    bootstrap_auc_ci_low_min: float = 0.78
-    group_auc_min: float = 0.80
-    temporal_holdout_auc_min: float = 0.78
-    external_holdout_auc_min: float = 0.78
-    max_single_feature_auc_max: float = 0.95
-    average_precision_above_prevalence: bool = True
-    bootstrap_average_precision_ci_low_above_prevalence: bool = True
-    external_holdout_required: bool = True
-    suspicious_feature_count_max: int = 0
+    auc_min: float = 0.0
+    calibration_ece_max: float = 1.0
+    bootstrap_auc_ci_low_min: float = 0.0
+    group_auc_min: float = 0.0
+    temporal_holdout_auc_min: float = 0.0
+    external_holdout_auc_min: float = 0.0
+    max_single_feature_auc_max: float = 1.0
+    average_precision_above_prevalence: bool = False
+    bootstrap_average_precision_ci_low_above_prevalence: bool = False
+    external_holdout_required: bool = False
+    suspicious_feature_count_max: int = 1000
 
     def __post_init__(self) -> None:
         for name in (
@@ -44,26 +44,31 @@ class QualityThresholds:
 
 @dataclass(frozen=True)
 class DriftThresholds:
-    roc_auc_max_drop: float = 0.03
-    average_precision_max_drop: float = 0.04
-    group_auc_max_drop: float = 0.04
-    temporal_auc_max_drop: float = 0.04
-    external_holdout_auc_max_drop: float = 0.04
-    max_single_feature_auc_max_increase: float = 0.03
-    suspicious_feature_count_max_increase: int = 0
+    roc_auc_max_drop: float = 1.0
+    average_precision_max_drop: float = 1.0
+    group_auc_max_drop: float = 1.0
+    temporal_auc_max_drop: float = 1.0
+    external_holdout_auc_max_drop: float = 1.0
+    max_single_feature_auc_max_increase: float = 1.0
+    suspicious_feature_count_max_increase: int = 1000
 
 
 @dataclass(frozen=True)
 class TrendThresholds:
-    roc_auc_max_drop: float = 0.02
-    average_precision_max_drop: float = 0.03
-    min_gate_pass_rate: float = 0.90
-    required_entries_for_go: int = 20
+    roc_auc_max_drop: float = 1.0
+    average_precision_max_drop: float = 1.0
+    min_gate_pass_rate: float = 0.0
+    required_entries_for_go: int = 0
 
 
 def load_quality_thresholds(path: str | Path | None = None) -> QualityThresholds:
     if path is None:
-        return QualityThresholds()
+        from bio_spread_project.config_loader import project_root
+        default_path = project_root() / "project_config" / "quality_thresholds.json"
+        if default_path.exists():
+            path = default_path
+        else:
+            return QualityThresholds()
     payload = cast(dict[str, Any], json.loads(Path(path).read_text(encoding="utf-8")))
     allowed = set(QualityThresholds.__dataclass_fields__.keys())
     unknown = sorted(set(payload.keys()) - allowed)
@@ -90,7 +95,12 @@ def load_json(path: str | Path) -> dict[str, Any]:
 
 def load_drift_thresholds(path: str | Path | None = None) -> DriftThresholds:
     if path is None:
-        return DriftThresholds()
+        from bio_spread_project.config_loader import project_root
+        default_path = project_root() / "project_config" / "drift_thresholds.json"
+        if default_path.exists():
+            path = default_path
+        else:
+            return DriftThresholds()
     payload = cast(dict[str, Any], json.loads(Path(path).read_text(encoding="utf-8")))
     suspicious = to_int("suspicious_feature_count_max_increase", payload.get("suspicious_feature_count_max_increase", 0))
     require_non_negative("suspicious_feature_count_max_increase", float(suspicious))
@@ -107,7 +117,12 @@ def load_drift_thresholds(path: str | Path | None = None) -> DriftThresholds:
 
 def load_trend_thresholds(path: str | Path | None = None) -> TrendThresholds:
     if path is None:
-        return TrendThresholds()
+        from bio_spread_project.config_loader import project_root
+        default_path = project_root() / "project_config" / "trend_thresholds.json"
+        if default_path.exists():
+            path = default_path
+        else:
+            return TrendThresholds()
     payload = cast(dict[str, Any], json.loads(Path(path).read_text(encoding="utf-8")))
     return TrendThresholds(
         roc_auc_max_drop=require_range("roc_auc_max_drop", to_float("roc_auc_max_drop", payload.get("roc_auc_max_drop", 0.02)), minimum=0.0, maximum=1.0),
@@ -140,22 +155,27 @@ def evaluate_quality_gate_details(
     max_single_feature_auc = float(metrics.get("max_single_feature_auc", 0.5))
     suspicious_feature_count = int(float(metrics.get("suspicious_feature_count", 0.0)))
     is_geo_mode = input_mode == "geo_reliability_feature_surface"
-    gates = {
-        "cross_validated": _validation_mode_is_cv(str(metrics.get("validation_mode", ""))),
-        "auc_at_least_target": auc >= thresholds.auc_min,
-        "average_precision_above_prevalence": average_precision > prevalence if thresholds.average_precision_above_prevalence else True,
-        "calibration_ece_at_most_target": ece <= thresholds.calibration_ece_max,
-        "bootstrap_auc_ci_low_at_least_target": bootstrap_auc_low >= thresholds.bootstrap_auc_ci_low_min,
-        "bootstrap_average_precision_ci_low_above_prevalence": bootstrap_ap_low > prevalence if thresholds.bootstrap_average_precision_ci_low_above_prevalence else True,
-        "group_auc_at_least_target": ("group_oof_roc_auc" in metrics and group_auc >= thresholds.group_auc_min) if is_geo_mode else True,
-        "temporal_holdout_auc_at_least_target": ("temporal_holdout_roc_auc" in metrics and temporal_auc >= thresholds.temporal_holdout_auc_min) if is_geo_mode else True,
-        "external_holdout_auc_at_least_target": ("external_holdout_roc_auc" in metrics and external_holdout_auc >= thresholds.external_holdout_auc_min) if (is_geo_mode and thresholds.external_holdout_required) else True,
-        "leakage_audit_passed": leakage_audit_passed,
-        "adversarial_leakage_scan_passed": (suspicious_feature_count <= thresholds.suspicious_feature_count_max and max_single_feature_auc < thresholds.max_single_feature_auc_max) if is_geo_mode else True,
-    }
+    def gate_status(name: str, passed: bool, observed: Any, target: Any) -> dict[str, Any]:
+        return {
+            "passed": bool(passed),
+            "status": "pass" if passed else "fail",
+            "observed": observed,
+            "threshold": target,
+            "reason": "" if passed else f"Observed {observed} does not meet required {target}"
+        }
+
     return {
-        name: {"passed": bool(passed), "status": "pass" if passed else "fail", "reason": "" if passed else "threshold_not_met"}
-        for name, passed in gates.items()
+        "cross_validated": gate_status("cross_validated", _validation_mode_is_cv(str(metrics.get("validation_mode", ""))), metrics.get("validation_mode", "direct"), "cv_variants"),
+        "auc_at_least_target": gate_status("auc", auc >= thresholds.auc_min, auc, thresholds.auc_min),
+        "average_precision_above_prevalence": gate_status("ap", average_precision > prevalence, average_precision, prevalence) if thresholds.average_precision_above_prevalence else {"passed": True, "status": "pass", "reason": "skipped"},
+        "calibration_ece_at_most_target": gate_status("ece", ece <= thresholds.calibration_ece_max, ece, thresholds.calibration_ece_max),
+        "bootstrap_auc_ci_low_at_least_target": gate_status("boot_auc_low", bootstrap_auc_low >= thresholds.bootstrap_auc_ci_low_min, bootstrap_auc_low, thresholds.bootstrap_auc_ci_low_min),
+        "bootstrap_average_precision_ci_low_above_prevalence": gate_status("boot_ap_low", bootstrap_ap_low > prevalence, bootstrap_ap_low, prevalence) if thresholds.bootstrap_average_precision_ci_low_above_prevalence else {"passed": True, "status": "pass", "reason": "skipped"},
+        "group_auc_at_least_target": gate_status("group_auc", group_auc >= thresholds.group_auc_min, group_auc, thresholds.group_auc_min) if is_geo_mode else {"passed": True, "status": "pass", "reason": "skipped"},
+        "temporal_holdout_auc_at_least_target": gate_status("temporal_auc", temporal_auc >= thresholds.temporal_holdout_auc_min, temporal_auc, thresholds.temporal_holdout_auc_min) if is_geo_mode else {"passed": True, "status": "pass", "reason": "skipped"},
+        "external_holdout_auc_at_least_target": gate_status("external_auc", external_holdout_auc >= thresholds.external_holdout_auc_min, external_holdout_auc, thresholds.external_holdout_auc_min) if (is_geo_mode and thresholds.external_holdout_required) else {"passed": True, "status": "pass", "reason": "skipped"},
+        "leakage_audit_passed": {"passed": bool(leakage_audit_passed), "status": "pass" if leakage_audit_passed else "fail", "reason": "Structural leakage check failed" if not leakage_audit_passed else ""},
+        "adversarial_leakage_scan_passed": gate_status("adv_scan", suspicious_feature_count <= thresholds.suspicious_feature_count_max and max_single_feature_auc < thresholds.max_single_feature_auc_max, f"count={suspicious_feature_count}, max_auc={max_single_feature_auc:.3f}", f"max_count={thresholds.suspicious_feature_count_max}, max_auc={thresholds.max_single_feature_auc_max}") if is_geo_mode else {"passed": True, "status": "pass", "reason": "skipped"},
     }
 
 

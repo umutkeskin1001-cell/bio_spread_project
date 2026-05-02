@@ -20,6 +20,9 @@ from bio_spread_project.governance import (
 )
 from bio_spread_project.io_utils import sha256_file
 from bio_spread_project.model_metrics import validation_tracks
+import polars as pl
+import datetime
+import uuid
 
 
 def build_run_audit(
@@ -58,6 +61,8 @@ def build_run_audit(
     suspicious_feature_count = int(float(metrics.get("suspicious_feature_count", 0.0)))
     return {
         "project": "BioSpread",
+        "run_id": str(uuid.uuid4()),
+        "timestamp": datetime.datetime.now().isoformat(),
         "primary_model": primary_model,
         "input_mode": input_mode,
         "input_hashes": _hash_inputs(input_paths),
@@ -87,6 +92,7 @@ def build_run_audit(
         "leakage_audit": audit,
         "environment": {
             "python": platform.python_version(),
+            "polars": pl.__version__,
             "ssl_backend": ssl.OPENSSL_VERSION,
             "numpy": numpy.__version__,
             "scikit_learn": sklearn.__version__,

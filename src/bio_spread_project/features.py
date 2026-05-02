@@ -47,6 +47,36 @@ def feature_rows_to_frame(rows: list[BackboneFeatureRow]) -> pl.DataFrame:
     return pl.DataFrame([asdict(row) for row in rows]) if rows else pl.DataFrame()
 
 
+def build_surveillance_intensity(pre_df_records: pl.DataFrame, all_records: pl.LazyFrame, split_year: int) -> pl.DataFrame:
+    country_agg = all_records.filter(pl.col("year") <= split_year).group_by("country").len().collect()
+    
+    unique_b_c = pre_df_records.select(["backbone_id", "country"]).drop_nulls().unique()
+    return (
+        unique_b_c
+        .join(country_agg, on="country", how="left")
+        .group_by("backbone_id")
+        .agg(pl.col("len").mean().fill_null(0.0).alias("surv_intensity"))
+    )
+
+def build_host_sampling_entropy(pre_df_records: pl.DataFrame) -> pl.DataFrame:
+    if "host_genus" not in pre_df_records.columns or pre_df_records.is_empty():
+        unique_backbones = pre_df_records["backbone_id"].unique() if "backbone_id" in pre_df_records.columns else []
+        return pl.DataFrame({"backbone_id": unique_backbones, "host_sampling_shannon": [0.0] * len(unique_backbones)})
+
+    host_counts = (
+        pre_df_records
+        .group_by(["backbone_id", "host_genus"])
+        .len()
+        .with_columns(
+            (pl.col("len") / pl.col("len").sum().over("backbone_id")).alias("p")
+        )
+        .with_columns((-pl.col("p") * pl.col("p").log()).alias("entropy_term"))
+        .group_by("backbone_id")
+        .agg(pl.sum("entropy_term").fill_null(0.0).alias("host_sampling_shannon"))
+    )
+    return host_counts
+
+
 def build_backbone_features(
     records: pl.DataFrame | Sequence[object],
     *,

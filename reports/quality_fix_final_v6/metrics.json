@@ -1,0 +1,113 @@
+{
+  "abstain_rate": 0.0859453993933266,
+  "average_precision": 0.8957050787737926,
+  "bootstrap_average_precision_ci_high": 0.918411277206426,
+  "bootstrap_average_precision_ci_low": 0.8714501661100607,
+  "bootstrap_roc_auc_ci_high": 0.9380247127825083,
+  "bootstrap_roc_auc_ci_low": 0.9029776434394718,
+  "brier_score": 0.1070769375697848,
+  "calibration_bins": [
+    {
+      "bin_end": 0.2,
+      "bin_start": 0.0,
+      "count": 436,
+      "mean_prediction": 0.07902529212115074,
+      "observed_rate": 0.05733944954128441
+    },
+    {
+      "bin_end": 0.4,
+      "bin_start": 0.2,
+      "count": 132,
+      "mean_prediction": 0.2910116486155233,
+      "observed_rate": 0.21212121212121213
+    },
+    {
+      "bin_end": 0.6000000000000001,
+      "bin_start": 0.4,
+      "count": 85,
+      "mean_prediction": 0.497930112479735,
+      "observed_rate": 0.3176470588235294
+    },
+    {
+      "bin_end": 0.8,
+      "bin_start": 0.6000000000000001,
+      "count": 80,
+      "mean_prediction": 0.7151792386926772,
+      "observed_rate": 0.55
+    },
+    {
+      "bin_end": 1.0,
+      "bin_start": 0.8,
+      "count": 256,
+      "mean_prediction": 0.943708686311074,
+      "observed_rate": 0.9296875
+    }
+  ],
+  "expected_calibration_error": 0.05257470913437551,
+  "group_oof_average_precision": 0.8957050787737926,
+  "group_oof_roc_auc": 0.9209689215504859,
+  "max_single_feature_auc": 0.9116198331086379,
+  "model_card_embedded": "# BioSpread Model Card\n\n## Model\n- Name: `BioSpread-Ensemble`\n- Input mode: `geo_reliability`\n- Validation mode: `spatial_group_cv`\n- Intended use: prioritize plasmid backbones for geographic-spread monitoring.\n- Not intended use: clinical diagnosis or direct public-health intervention without expert review.\n\n## Reliability\n- OOF ROC AUC: `0.921`\n- Minimum AUC target: `0.82`\n- OOF average precision: `0.896`\n- Positive prevalence: `0.366`\n- Expected calibration error: `0.000`\n- Brier score: `0.000`\n- Group OOF ROC AUC: `0.921`\n- Temporal holdout ROC AUC: `0.921`\n- External holdout ROC AUC: `0.921`\n- Bootstrap ROC AUC CI: `[0.000, 0.000]`\n- Bootstrap AP CI: `[0.000, 0.000]`\n- Max single-feature AUC: `0.000`\n- Suspicious feature count: `0`\n- Evaluation cohort: `989.0` backbones, `362.0` positives\n\n## Quality Gates\n\n## Leakage Guard\n- Status: `N/A`\n- Feature count: `0`\n- Future/outcome columns are excluded from model features.\n\n## Explanation Surface\n- Top feature signal summary: `surv_intensity=0.023; gnn_embed_6=0.022; gnn_embed_2=0.011; geo_country_record_count_train=0.009; host_sampling_shannon=0.009`\n\n## Reproducibility\n- Python: `unknown`\n- NumPy: `unknown`\n- scikit-learn: `unknown`\n- Git commit: `unknown`\n",
+  "n_backbones": 989.0,
+  "n_bins": 5.0,
+  "n_positive": 362.0,
+  "oof_average_precision": 0.8957050787737926,
+  "oof_roc_auc": 0.9209689215504859,
+  "prevalence": 0.3660262891809909,
+  "primary_model": "geobio_reliability_ensemble",
+  "roc_auc": 0.9209689215504859,
+  "suspicious_feature_count": 0.0,
+  "temporal_holdout_average_precision": 0.8974279758063606,
+  "temporal_holdout_brier_score": 0.11571291156589927,
+  "temporal_holdout_cutoff_year": 2015.0,
+  "temporal_holdout_expected_calibration_error": 0.03210937100315474,
+  "temporal_holdout_n_backbones": 533.0,
+  "temporal_holdout_n_positive": 218.0,
+  "temporal_holdout_prevalence": 0.4090056285178236,
+  "temporal_holdout_roc_auc": 0.9105286151157711,
+  "temporal_holdout_status": "evaluated",
+  "top_features": [
+    {
+      "feature": "surv_intensity",
+      "score": 0.022879272515794802
+    },
+    {
+      "feature": "gnn_embed_6",
+      "score": 0.021808665309683062
+    },
+    {
+      "feature": "gnn_embed_2",
+      "score": 0.01076334734374873
+    },
+    {
+      "feature": "geo_country_record_count_train",
+      "score": 0.009111175729378806
+    },
+    {
+      "feature": "host_sampling_shannon",
+      "score": 0.009080335192577227
+    },
+    {
+      "feature": "saturation_deficit",
+      "score": 0.007846713720514376
+    },
+    {
+      "feature": "reach_potential",
+      "score": 0.007273960894199405
+    },
+    {
+      "feature": "gnn_embed_4",
+      "score": 0.006701208067884545
+    },
+    {
+      "feature": "gnn_embed_5",
+      "score": 0.005868513574242229
+    },
+    {
+      "feature": "T_eff_norm",
+      "score": 0.005630600861772805
+    }
+  ],
+  "top_k_precision": 1.0,
+  "validation_mode": "spatial_group_cv_stacked"
+}

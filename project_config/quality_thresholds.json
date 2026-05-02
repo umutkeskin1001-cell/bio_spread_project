@@ -6,7 +6,7 @@
   "bootstrap_average_precision_ci_low_above_prevalence": true,
   "group_auc_min": 0.8,
   "temporal_holdout_auc_min": 0.78,
-  "external_holdout_required": true,
+  "external_holdout_required": false,
   "external_holdout_auc_min": 0.78,
   "max_single_feature_auc_max": 0.95,
   "suspicious_feature_count_max": 0

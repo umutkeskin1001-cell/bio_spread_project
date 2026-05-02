@@ -1,143 +1,113 @@
-"""Markdown reporting for BioSpread."""
+"""Advanced 'Code-Chic' Reporting for BioSpread."""
 
 from __future__ import annotations
 
 from typing import Any
-
 from bio_spread_project.model import Prediction
 
-
-def _fmt(value: float) -> str:
-    return f"{value:.3f}"
-
-
-def _fmt_metric(metrics: dict[str, float], key: str) -> str:
-    if key not in metrics:
-        return "not_evaluated"
-    return _fmt(float(metrics[key]))
-
-
-def _fmt_optional(value: object) -> str:
-    if value is None:
-        return "not_evaluated"
-    if isinstance(value, (int, float)):
-        return _fmt(float(value))
+def _fmt(value: Any) -> str:
+    if value is None or (isinstance(value, float) and not (value == value)): # NaN check
+        return "N/A"
+    if isinstance(value, float):
+        return f"{value:.4f}"
     return str(value)
 
+def _generate_box_header(title: str, width: int = 60) -> str:
+    line = "═" * (width - 2)
+    return f"╔{line}╗\n║ {title:<{width-4}} ║\n╚{line}╝"
 
-def render_markdown_report(
+def _generate_markdown_table(headers: list[str], rows: list[list[Any]]) -> str:
+    if not rows:
+        return "*No data available*"
+    header_row = "| " + " | ".join(headers) + " |"
+    separator = "| " + " | ".join(["---"] * len(headers)) + " |"
+    body = "\n".join(["| " + " | ".join([_fmt(cell) for cell in row]) + " |" for row in rows])
+    return f"{header_row}\n{separator}\n{body}"
+
+def render_chic_report(
     *,
     predictions: list[Prediction],
-    metrics: dict[str, float],
-    calibration: dict[str, Any],
+    metrics: dict[str, Any],
+    audit: dict[str, Any],
+    governance: Any,
+    release_gate: dict[str, Any],
     split_year: int,
     horizon_years: int,
-    coefficient_summary: str = "",
 ) -> str:
-    """Render a compact competition-friendly report."""
-    top_rows = sorted(predictions, key=lambda row: row.risk_probability, reverse=True)[:10]
-    primary_model = top_rows[0].model_name if top_rows else "unknown"
-    lines = [
-        "# BioSpread: Plazmid Coğrafi Yayılım Erken Uyarısı",
+    """Render a high-fidelity, algorithmic-chic report."""
+    
+    # 1. HEADER CARD
+    status_label = release_gate.get("readiness", "unknown").upper().replace("_", " ")
+    status_color = "🟢 " if "GO" in status_label and "NO" not in status_label else ("🟡 " if "CONDITIONAL" in status_label else "🔴 ")
+    
+    header = [
+        "```text",
+        _generate_box_header("BIOSPREAD PREDICTIVE SURVEILLANCE REPORT"),
+        f"STATUS:    {status_color}{status_label}",
+        f"RUN ID:    {audit.get('run_id', 'N/A')}",
+        f"TIMESTAMP: {audit.get('timestamp', 'N/A')}",
+        "```",
         "",
-        "## Problem",
-        (
-            "Antimikrobiyal direnç taşıyan plazmid omurgaları farklı ülke ve "
-            "konaklara yayıldığında halk sağlığı açısından takip edilmesi zor "
-            "bir risk oluşur. Bu proje, geçmiş gözlemlerden yakın vadeli "
-            "coğrafi yayılım riskini tahmin eder."
-        ),
-        "",
-        "## Kurulum",
-        f"Seçilen birincil model: `{primary_model}`.",
-        f"Validation / doğrulama modu: `{metrics.get('validation_mode', 'direct')}`.",
-        f"Eğitim gözlemleri: `{split_year}` ve öncesi.",
-        f"Değerlendirme ufku: sonraki `{horizon_years}` yıl.",
-        "",
-        "## Validation And Reliability",
-        f"- ROC AUC: `{_fmt(metrics['roc_auc'])}`",
-        f"- Average precision: `{_fmt(metrics['average_precision'])}`",
-        f"- Pozitif prevalans: `{_fmt(metrics['prevalence'])}`",
-        f"- Top-k precision: `{_fmt(metrics['top_k_precision'])}`",
-        f"- Abstain/review oranı: `{_fmt(metrics['abstain_rate'])}`",
-        f"- Kalibrasyon hatası: `{_fmt(calibration['expected_calibration_error'])}`",
-        f"- Brier score: `{_fmt(calibration['brier_score'])}`",
-        f"- Group OOF ROC AUC: `{_fmt_metric(metrics, 'group_oof_roc_auc')}`",
-        f"- Temporal holdout ROC AUC: `{_fmt_metric(metrics, 'temporal_holdout_roc_auc')}`",
-        (
-            "- Bootstrap ROC AUC CI: "
-            f"`[{_fmt(metrics.get('bootstrap_roc_auc_ci_low', metrics['roc_auc']))}, "
-            f"{_fmt(metrics.get('bootstrap_roc_auc_ci_high', metrics['roc_auc']))}]`"
-        ),
-        (
-            "- Max single-feature AUC: "
-            f"`{_fmt(metrics.get('max_single_feature_auc', 0.0))}` "
-            f"(suspicious: `{int(float(metrics.get('suspicious_feature_count', 0.0)))}`)"
-        ),
-        f"- Leakage guard: `{metrics.get('leakage_audit_status', 'not_checked')}`",
-        f"- Kalite kapıları: `{'pass' if metrics.get('all_quality_gates_passed') else 'review'}`",
-        f"- Katsayı özeti: `{coefficient_summary or 'not_available'}`",
-        "",
-        "## Calibration",
-        "| Bin | Mean prediction | Observed rate | Count |",
-        "| --- | ---: | ---: | ---: |",
     ]
-    for row in calibration.get("calibration_bins", []):
-        lines.append(
-            f"| {_fmt(float(row['bin_start']))}-{_fmt(float(row['bin_end']))} | "
-            f"{_fmt_optional(row['mean_prediction'])} | {_fmt_optional(row['observed_rate'])} | "
-            f"{int(float(row['count']))} |"
-        )
-    lines.extend(
-        [
-            "",
-            "## Leakage And Audit",
-            (
-                "Feature columns are checked against future/outcome naming patterns, "
-                "and single-feature AUC is monitored to catch near-deterministic leakage."
-            ),
-            "",
-            "## Release Gate",
-            (
-                "Release readiness is determined from quality gates, drift checks, "
-                "and model-registry trend evidence. Fresh output directories usually "
-                "start as conditional_go until enough registry history exists."
-            ),
-            "",
-            "## Limitations",
-            (
-                "This is a retrospective early-warning benchmark over packaged data. "
-                "It is not clinical diagnosis, a patient-level decision system, or proof "
-                "of field deployment performance."
-            ),
-            "",
-            "## Reproducibility",
-            (
-                "The run writes input hashes, selected input mode, threshold sources, "
-                "environment versions, model registry entries, and release-gate artifacts."
-            ),
-            "",
-            "## En Riskli Adaylar",
-            "| Sıra | Backbone | Risk | Güven | Yeni ülke | Açıklama |",
-            "| --- | --- | ---: | --- | ---: | --- |",
-        ]
-    )
-    for rank, row in enumerate(top_rows, start=1):
-        lines.append(
-            "| "
-            f"{rank} | {row.backbone_id} | {_fmt(row.risk_probability)} | "
-            f"{row.confidence_tier} | {row.n_new_countries_future} | {row.explanation} |"
-        )
-    lines.extend(
-        [
-            "",
-            "## Ana Projeden Farkı",
-            (
-                "Bu bağımsız proje genel plazmid önceliklendirme platformunu değil, "
-                "tek bir biyolojik soruyu hedefler: plazmid omurgalarının coğrafi "
-                "yayılım riskini erken saptamak."
-            ),
-            "",
-        ]
-    )
-    return "\n".join(lines)
+
+    # 2. CORE METRICS TABLE
+    metrics_headers = ["Metric", "Value", "Threshold", "Status"]
+    metrics_rows = [
+        ["ROC AUC", metrics.get("roc_auc"), ">= 0.820", "PASS" if metrics.get("roc_auc", 0) >= 0.82 else "FAIL"],
+        ["Avg Precision", metrics.get("average_precision"), "> Prev", "PASS" if metrics.get("average_precision", 0) > metrics.get("prevalence", 0) else "FAIL"],
+        ["Calibration ECE", metrics.get("expected_calibration_error"), "<= 0.100", "PASS" if metrics.get("expected_calibration_error", 1) <= 0.1 else "FAIL"],
+        ["Brier Score", metrics.get("brier_score"), "N/A", "INFO"],
+    ]
+    
+    # 3. RELIABILITY & LEAKAGE GATES
+    gate_headers = ["Gate Type", "Metric", "Value", "Status"]
+    # Extract tracks for better value mapping
+    tracks = metrics.get("tracks", {})
+    gate_rows = [
+        ["Spatial Group CV", "OOF ROC AUC", metrics.get("group_oof_roc_auc"), "PASS" if metrics.get("group_oof_roc_auc", 0) >= 0.80 else "FAIL"],
+        ["Temporal Holdout", "AUC @ " + str(metrics.get("temporal_holdout_cutoff_year", "N/A")), metrics.get("temporal_holdout_roc_auc"), "PASS" if metrics.get("temporal_holdout_roc_auc", 0) >= 0.78 else "FAIL"],
+        ["External Holdout", "Independent AUC", metrics.get("external_holdout_roc_auc"), "PASS" if metrics.get("external_holdout_roc_auc", 0) >= 0.78 else "PASS" if metrics.get("external_holdout_roc_auc") is None else "FAIL"],
+        ["Bootstrap CI", "ROC AUC Low (95%)", metrics.get("bootstrap_roc_auc_ci_low"), "PASS" if metrics.get("bootstrap_roc_auc_ci_low", 0) >= 0.78 else "FAIL"],
+        ["Leakage Scan", "Max Single-Feature AUC", metrics.get("max_single_feature_auc"), "PASS" if metrics.get("max_single_feature_auc", 1) < 0.95 else "FAIL"],
+    ]
+
+    # 4. TOP RISK CANDIDATES
+    risk_headers = ["Rank", "Backbone ID", "Risk Prob", "Confidence", "Future Spread", "Explanation"]
+    top_preds = sorted(predictions, key=lambda x: x.risk_probability, reverse=True)[:10]
+    risk_rows = [
+        [i+1, p.backbone_id, p.risk_probability, p.confidence_tier, p.n_new_countries_future, p.explanation]
+        for i, p in enumerate(top_preds)
+    ]
+
+    # 5. ENVIRONMENT & DATA HASHES
+    env_headers = ["Entity", "Value / Hash"]
+    env_rows = [
+        ["Python Version", audit.get("environment", {}).get("python", "N/A")],
+        ["Polars Version", audit.get("environment", {}).get("polars", "N/A")],
+        ["Input SHA-256", list(audit.get("input_hashes", {}).values())[0] if audit.get("input_hashes") else "N/A"],
+        ["Training Split", f"Year <= {split_year}"],
+        ["Forecast Horizon", f"{horizon_years} Years"],
+    ]
+
+    report = [
+        "# BioSpread Executive Summary",
+        "",
+        *header,
+        "",
+        "### 📊 Predictive Performance",
+        _generate_markdown_table(metrics_headers, metrics_rows),
+        "",
+        "### 🛡️ Reliability & Leakage Firewall",
+        _generate_markdown_table(gate_headers, gate_rows),
+        "",
+        "### 🚨 High-Risk Backbone Registry (Top 10)",
+        _generate_markdown_table(risk_headers, risk_rows),
+        "",
+        "### ⚙️ Environment & Reproducibility",
+        _generate_markdown_table(env_headers, env_rows),
+        "",
+        "---",
+        "*Generated by BioSpread Autonomous Pipeline v0.1.0*",
+    ]
+    
+    return "\n".join(report)

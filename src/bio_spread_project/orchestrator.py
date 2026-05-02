@@ -28,8 +28,7 @@ from bio_spread_project.features import (
 )
 from bio_spread_project.geo_reliability import (
     fit_geo_reliability_surface,
-    geo_rows_to_frame,
-    load_geo_spread_feature_rows,
+    load_geo_spread_features,
 )
 from bio_spread_project.governance import (
     build_governance_report,
@@ -55,7 +54,8 @@ from bio_spread_project.metrics import bootstrap_metric_intervals, evaluate_pred
 from bio_spread_project.model import fit_model_surface, select_primary_model
 from bio_spread_project.model_metrics import validation_summary
 from bio_spread_project.registry import append_model_registry_entry
-from bio_spread_project.reporting import render_markdown_report
+from bio_spread_project.reporting import render_chic_report
+from bio_spread_project.visualization import save_table_as_png, plot_performance_summary
 from bio_spread_project.runtime_policy import PipelineConfig
 from bio_spread_project.thresholds import load_thresholds
 
@@ -105,6 +105,16 @@ def _validate_external_holdout(training_source: Path, external_holdout: Path | N
     if external_holdout.exists() and training_source.exists():
         if sha256_file(external_holdout) == sha256_file(training_source):
             raise ValueError("external holdout must be independent from the training feature surface")
+        
+        # Genomic identity leakage check: ensure no backbone IDs are shared
+        from bio_spread_project.data_io import read_table
+        train_ids = set(read_table(training_source).select("backbone_id").to_series().to_list())
+        holdout_ids = set(read_table(external_holdout).select("backbone_id").to_series().to_list())
+        overlap = train_ids.intersection(holdout_ids)
+        if overlap:
+            count = len(overlap)
+            sample = sorted(list(overlap))[:3]
+            raise ValueError(f"Identity Leakage detected: {count} backbones shared between training and external holdout (e.g., {', '.join(sample)})")
 
 
 def _build_config_from_kwargs(kwargs: dict[str, Any]) -> PipelineConfig:
@@ -145,7 +155,7 @@ def run_pipeline(config: PipelineConfig | None = None, **kwargs: Any) -> Pipelin
     selection = select_input_source(config=config, paths=paths)
 
     if selection.use_geo_reliability:
-        features = geo_rows_to_frame(load_geo_spread_feature_rows(selection.source_path))
+        features = load_geo_spread_features(selection.source_path)
     else:
         if selection.input_mode == "raw_backbone_records":
             record_frame = load_backbone_records_frame(selection.source_path, amr_path=selection.resolved_amr_path)
@@ -173,7 +183,7 @@ def run_pipeline(config: PipelineConfig | None = None, **kwargs: Any) -> Pipelin
     _validate_external_holdout(Path(selection.source_path), config.external_holdout_path)
     metrics = {**run.metrics, **run.calibration, "primary_model": run.model_name}
     if selection.use_geo_reliability and config.external_holdout_path:
-        holdout_features = geo_rows_to_frame(load_geo_spread_feature_rows(config.external_holdout_path))
+        holdout_features = load_geo_spread_features(config.external_holdout_path)
         ext_predictions = run.model.predict(holdout_features)
         ext_metrics = {**evaluate_predictions(ext_predictions), **bootstrap_metric_intervals(ext_predictions, n_resamples=200)}
         metrics.update({f"external_holdout_{k}": v for k, v in ext_metrics.items()})
@@ -280,15 +290,34 @@ def run_pipeline(config: PipelineConfig | None = None, **kwargs: Any) -> Pipelin
     generate_dashboard(audit=audit, output_path=stage / "dashboard.html")
     write_text(
         stage / "report.md",
-        render_markdown_report(
+        render_chic_report(
             predictions=run.predictions,
             metrics={**metrics, "all_quality_gates_passed": audit["all_quality_gates_passed"]},
-            calibration=run.calibration,
+            audit=audit,
+            governance=governance,
+            release_gate=release_gate,
             split_year=config.split_year,
             horizon_years=config.horizon_years,
-            coefficient_summary=run.coefficient_summary,
         ),
     )
+    # Visual Reports (PNG)
+    plot_performance_summary(metrics, stage / "performance_summary.png")
+    
+    # Table PNGs
+    top_preds = sorted(run.predictions, key=lambda x: x.risk_probability, reverse=True)[:10]
+    risk_headers = ["Rank", "Backbone ID", "Risk Prob", "Confidence", "Future Spread"]
+    risk_rows = [[i+1, p.backbone_id, f"{p.risk_probability:.4f}", p.confidence_tier, p.n_new_countries_future] for i, p in enumerate(top_preds)]
+    save_table_as_png(risk_headers, risk_rows, "HIGH-RISK CANDIDATE REGISTRY", stage / "risk_table.png")
+
+    metric_headers = ["Metric", "Value", "Threshold", "Status"]
+    metric_rows = [
+        ["ROC AUC", f"{metrics.get('roc_auc', 0):.4f}", ">= 0.820", "PASS" if metrics.get("roc_auc", 0) >= 0.82 else "FAIL"],
+        ["Avg Precision", f"{metrics.get('average_precision', 0):.4f}", "> Prev", "PASS" if metrics.get("average_precision", 0) > metrics.get("prevalence", 0) else "FAIL"],
+        ["Spatial CV AUC", f"{metrics.get('group_oof_roc_auc', 0):.4f}", ">= 0.800", "PASS" if metrics.get("group_oof_roc_auc", 0) >= 0.80 else "FAIL"],
+        ["Calibration ECE", f"{metrics.get('expected_calibration_error', 0):.4f}", "<= 0.100", "PASS" if metrics.get("expected_calibration_error", 1) <= 0.1 else "FAIL"],
+    ]
+    save_table_as_png(metric_headers, metric_rows, "CORE ANALYTIC METRICS", stage / "metrics_table.png")
+
     write_json(
         stage / "data_registry.json",
         {"project": "BioSpread", "input_count": len(input_paths), "inputs": {k: str(v) for k, v in input_paths.items()}},

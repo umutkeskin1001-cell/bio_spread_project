@@ -27,10 +27,19 @@ def load_thresholds(
     drift_path: str | Path | None = None,
     trend_path: str | Path | None = None,
 ) -> ThresholdBundle:
+    from bio_spread_project.config_loader import ProjectPaths
+
+    paths = ProjectPaths.from_env()
+    root = paths.project_root
+    
+    q = quality_path or (root / "project_config" / "quality_thresholds.json")
+    d = drift_path or (root / "project_config" / "drift_thresholds.json")
+    t = trend_path or (root / "project_config" / "trend_thresholds.json")
+
     return ThresholdBundle(
-        quality=load_quality_thresholds(quality_path),
-        drift=load_drift_thresholds(drift_path),
-        trend=load_trend_thresholds(trend_path),
+        quality=load_quality_thresholds(q if Path(q).exists() else None),
+        drift=load_drift_thresholds(d if Path(d).exists() else None),
+        trend=load_trend_thresholds(t if Path(t).exists() else None),
     )
 
 
