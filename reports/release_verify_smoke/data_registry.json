@@ -1,8 +1,0 @@
-{
-  "input_count": 2,
-  "inputs": {
-    "amr": "/Users/umut/Projeler/bio_spread_project/data/raw/amr.tsv",
-    "input": "/Users/umut/Projeler/bio_spread_project/data/sample_plasmid_records.csv"
-  },
-  "project": "BioSpread"
-}

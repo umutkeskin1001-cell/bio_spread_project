@@ -1,7 +1,0 @@
-{
-  "input_count": 1,
-  "inputs": {
-    "geo_spread_features": "/Users/umut/Projeler/bio_spread_project/data/project_inputs/geo_spread/inputs/backbone_scored.tsv"
-  },
-  "project": "BioSpread"
-}

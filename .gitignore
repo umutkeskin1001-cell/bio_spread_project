@@ -60,3 +60,5 @@ data/**/*.dat
 !data/sample_plasmid_records.csv
 !tests/fixtures/
 !tests/fixtures/**
+scratch/
+docs/superpowers/
