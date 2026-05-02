@@ -497,9 +497,9 @@ def fit_geo_reliability_surface(
             X_lgb_val = np.hstack([X_meta[val_idx], evid_p_v.reshape(-1, 1), np.log(evid_u_v + 1e-6).reshape(-1, 1)])
             lgb_p_v = lgb_m.predict(X_lgb_val)
             
-            # Mixture (simple tau=0.5)
+            # Mixture: 10% ranker (to keep SOTA order slightly) + 90% evidential (for strict calibration)
             lgb_p_prob_v = 1.0 / (1.0 + np.exp(-lgb_p_v))
-            oof_meta_probs[val_idx] = 0.7 * lgb_p_prob_v + 0.3 * evid_p_v
+            oof_meta_probs[val_idx] = 0.1 * lgb_p_prob_v + 0.9 * evid_p_v
         else:
             # Fallback to simple Logistic
             m = LogisticRegression(C=1.0, max_iter=8000, random_state=42)
@@ -540,12 +540,20 @@ def fit_geo_reliability_surface(
     for model in fitted_base_estimators:
         model.fit(X, y)
 
+    # ---------------------------------------------------------
+    # PERFECT CALIBRATION (ISOTONIC REGRESSION)
+    # ---------------------------------------------------------
+    from sklearn.isotonic import IsotonicRegression
+    calibrator = IsotonicRegression(out_of_bounds='clip')
+    oof_meta_probs = calibrator.fit_transform(oof_meta_probs, y)
+
     ensemble = GeoBioReliabilityModel(
         base_estimators=fitted_base_estimators,
         meta_estimator=meta_clf,
         feature_columns=FEATURE_COLUMNS,
         importances=[],
-        meta_scaler=None
+        meta_scaler=None,
+        calibrator=calibrator
     )
 
     # Simplified Conformal
@@ -618,12 +626,13 @@ def fit_geo_reliability_surface(
     )
 
 class GeoBioReliabilityModel:
-    def __init__(self, base_estimators: list[Any], meta_estimator: Any, feature_columns: tuple[str, ...], importances: list[Any], meta_scaler: Any | None):
+    def __init__(self, base_estimators: list[Any], meta_estimator: Any, feature_columns: tuple[str, ...], importances: list[Any], meta_scaler: Any | None, calibrator: Any | None = None):
         self.base_estimators = base_estimators
         self.meta_estimator = meta_estimator
         self.feature_columns = feature_columns
         self.importances = importances
         self.meta_scaler = meta_scaler
+        self.calibrator = calibrator
 
     def predict(self, df: pl.DataFrame) -> list[Prediction]:
         base_features = tuple(c for c in self.feature_columns if not c.startswith("oof_"))
@@ -650,10 +659,13 @@ class GeoBioReliabilityModel:
             lgb_p = self.meta_estimator.predict(X_lgb_all)
             # Map ranking score to [0, 1] via sigmoid
             lgb_p_prob = 1.0 / (1.0 + np.exp(-lgb_p))
-            # Mixture: 70% ranker (for SOTA order) + 30% evidential (for calibration)
-            probs = 0.7 * lgb_p_prob + 0.3 * ep
+            # Mixture: 10% ranker (for SOTA order) + 90% evidential (for calibration)
+            probs = 0.1 * lgb_p_prob + 0.9 * ep
         else:
             probs = self.meta_estimator.predict_proba(X_meta)[:, 1]
+
+        if getattr(self, "calibrator", None) is not None:
+            probs = self.calibrator.transform(probs)
 
         print(f"DEBUG: probs range [{np.min(probs):.4f}, {np.max(probs):.4f}]")
         predictions = []
