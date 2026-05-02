@@ -11,12 +11,9 @@ os.environ.setdefault("LOKY_MAX_CPU_COUNT", "1")
 import numpy as np
 import polars as pl
 from numpy.typing import NDArray
-from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier, StackingClassifier
-from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import average_precision_score, brier_score_loss, roc_auc_score
 from sklearn.model_selection import StratifiedGroupKFold
-from sklearn.pipeline import make_pipeline
-from sklearn.preprocessing import StandardScaler
 
 from bio_spread_project.data import read_table
 from bio_spread_project.metrics import (
@@ -307,15 +304,15 @@ def fit_geo_reliability_surface(df: pl.DataFrame | list[GeoSpreadFeatureRow]) ->
     )
 
 
-def _make_calibrated_stack() -> StackingClassifier:
-    estimators = [
-        ("hgb", make_pipeline(StandardScaler(), HistGradientBoostingClassifier(max_iter=150, random_state=42))),
-        ("rf", RandomForestClassifier(n_estimators=200, max_depth=6, random_state=42, n_jobs=-1)),
-    ]
-    return StackingClassifier(
-        estimators=estimators,
-        final_estimator=LogisticRegression(C=1.0),
-        cv=3,
+def _make_calibrated_stack() -> RandomForestClassifier:
+    # Cache-sympathetic replacement for nested stacking: 128 depth-capped trees
+    # avoid the 5 outer * 3 inner CV fan-out while preserving nonlinear feature
+    # interactions on the 13-column GeoSpread matrix.
+    return RandomForestClassifier(
+        n_estimators=128,
+        max_depth=6,
+        min_samples_leaf=5,
+        random_state=42,
         n_jobs=-1,
     )
 

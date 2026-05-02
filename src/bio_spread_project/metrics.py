@@ -5,7 +5,6 @@ from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
-from sklearn.metrics import average_precision_score, roc_auc_score
 
 
 @dataclass(frozen=True)
@@ -88,8 +87,8 @@ def compute_metrics(
         n_backbones=len(labels),
         n_positive=n_positive,
         prevalence=prevalence,
-        roc_auc=float(roc_auc_score(labels, probabilities)) if len(np.unique(labels)) > 1 else 0.5,
-        average_precision=float(average_precision_score(labels, probabilities)),
+        roc_auc=_fast_auc(labels, probabilities),
+        average_precision=_fast_average_precision(labels, probabilities),
         top_k_precision=top_k_precision,
         abstain_rate=abstain_rate,
         expected_calibration_error=float(cal["expected_calibration_error"]),
@@ -114,10 +113,10 @@ def bootstrap_metrics(
         idx = rng.integers(0, n, n)
         y = labels[idx]
         p = probabilities[idx]
-        if len(np.unique(y)) < 2:
+        if int(np.sum(y)) == 0 or int(np.sum(y)) == len(y):
             continue
-        aucs.append(float(roc_auc_score(y, p)))
-        aps.append(float(average_precision_score(y, p)))
+        aucs.append(_fast_auc(y, p))
+        aps.append(_fast_average_precision(y, p))
     if not aucs or not aps:
         return {}
     alpha = (1.0 - confidence) / 2.0
@@ -134,17 +133,43 @@ def bootstrap_metrics(
 def _fast_auc(labels: NDArray[np.integer[Any]], scores: NDArray[np.floating[Any]]) -> float:
     y = labels.astype(np.int64)
     s = scores.astype(np.float64)
-    if len(np.unique(y)) < 2:
+    n_positive = int(np.sum(y))
+    n = len(y)
+    n_negative = n - n_positive
+    if n_positive == 0 or n_negative == 0:
         return 0.5
-    return float(roc_auc_score(y, s))
+    order = np.argsort(s, kind="mergesort")
+    sorted_scores = s[order]
+    sorted_labels = y[order]
+    starts = np.r_[0, np.flatnonzero(np.diff(sorted_scores)) + 1]
+    ends = np.r_[starts[1:], n]
+    # Average ranks handle ties exactly like sklearn's rank-based AUC while
+    # staying in a tight NumPy kernel for bootstrap inner loops.
+    average_ranks = (starts + 1 + ends) / 2.0
+    positives_per_group = np.add.reduceat(sorted_labels, starts)
+    positive_rank_sum = float(np.dot(average_ranks, positives_per_group))
+    auc = (positive_rank_sum - n_positive * (n_positive + 1) / 2.0) / (n_positive * n_negative)
+    return float(auc)
 
 
 def _fast_average_precision(labels: NDArray[np.integer[Any]], scores: NDArray[np.floating[Any]]) -> float:
     y = labels.astype(np.int64)
     s = scores.astype(np.float64)
-    if len(np.unique(y)) < 2:
+    n_positive = int(np.sum(y))
+    if n_positive == 0:
+        return 0.0
+    if n_positive == len(y):
         return 1.0 if int(y[0]) == 1 else 0.0
-    return float(average_precision_score(y, s))
+    order = np.argsort(s, kind="mergesort")[::-1]
+    sorted_scores = s[order]
+    sorted_labels = y[order]
+    threshold_idxs = np.r_[np.flatnonzero(np.diff(sorted_scores)), len(y) - 1]
+    tps = np.cumsum(sorted_labels, dtype=np.float64)[threshold_idxs]
+    fps = 1 + threshold_idxs - tps
+    precision = tps / (tps + fps)
+    recall = tps / n_positive
+    recall_step = recall - np.r_[0.0, recall[:-1]]
+    return float(np.sum(recall_step * precision))
 
 
 def evaluate_predictions(predictions: list[Any]) -> dict[str, float]:

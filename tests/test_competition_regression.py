@@ -1,3 +1,4 @@
+import time
 from pathlib import Path
 
 from bio_spread_project.orchestrator import run_pipeline
@@ -19,3 +20,16 @@ def test_packaged_competition_run_stays_above_metric_floor(tmp_path):
     assert result.metrics["bootstrap_average_precision_ci_low"] < result.metrics["bootstrap_average_precision_ci_high"]
     assert result.metrics["max_single_feature_auc"] < 0.95
     assert result.metrics["suspicious_feature_count"] == 0.0
+
+
+def test_packaged_geo_run_stays_inside_interactive_cpu_budget(tmp_path):
+    start = time.perf_counter()
+    result = run_pipeline(
+        run_mode="geo",
+        geo_spread_features_path=GEO_SPREAD_FEATURES,
+        output_dir=tmp_path / "speed_regression",
+    )
+    elapsed = time.perf_counter() - start
+
+    assert result.metrics["roc_auc"] >= 0.82
+    assert elapsed < 5.0
