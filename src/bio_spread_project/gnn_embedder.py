@@ -1,170 +1,122 @@
-import polars as pl
+from typing import Any, Optional
+
 import numpy as np
+import polars as pl
+from numpy.typing import NDArray
+
 
 class BackboneGraphEmbedder:
-    def __init__(self):
+    def __init__(self) -> None:
         self.encoder = None
-        self.embeddings = None
-        self.backbone_mapping = None
+        self.embeddings: Optional[NDArray[Any]] = None
+        self.backbone_mapping: Optional[dict[str, int]] = None
 
     def fit(self, observations: pl.LazyFrame, split_year: int) -> None:
-        import torch
         import random
-        from torch_geometric.data import Data
-        from torch_geometric.nn import SAGEConv
+
+        import torch
         import torch.nn.functional as F
+        from torch_geometric.data import Data
 
         torch.manual_seed(42)
         random.seed(42)
         np.random.seed(42)
 
+        # Vectorized data prep
         pre_obs = observations.filter(pl.col("year") <= split_year).collect()
-        
-        # We need host_order. If it's missing, let's just use host_genus or "Unknown"
+
         if "host_order" not in pre_obs.columns:
-            if "host_genus" in pre_obs.columns:
-                pre_obs = pre_obs.with_columns(pl.col("host_genus").alias("host_order"))
-            else:
-                pre_obs = pre_obs.with_columns(pl.lit("Unknown").alias("host_order"))
-
-        # Backbone-Country
-        bc = pre_obs.with_columns([
-            (pl.col("mobility_score") * (-0.2 * (split_year - pl.col("year"))).exp()).alias("w")
-        ]).group_by(["backbone_id", "country"]).agg(pl.col("w").sum().alias("weight"))
-
-        # Backbone-HostOrder
-        bh = pre_obs.group_by(["backbone_id", "host_order"]).agg(
-            pl.len().log1p().alias("weight")
-        )
-
-        # Country-Country (co-occurrence proxy)
-        countries = pre_obs["country"].drop_nulls().unique().to_list()
-        n_c = len(countries)
-        cc_weight = 1.0 / max(1, n_c)
-        cc_src, cc_dst = [], []
-        for i, c1 in enumerate(countries):
-            for j, c2 in enumerate(countries):
-                if i != j:
-                    cc_src.append(c1)
-                    cc_dst.append(c2)
-        cc = pl.DataFrame({"c1": cc_src, "c2": cc_dst}).with_columns(pl.lit(cc_weight).alias("weight"))
+            pre_obs = pre_obs.with_columns(
+                pl.col("host_genus").alias("host_order") if "host_genus" in pre_obs.columns else pl.lit("Unknown").alias("host_order")
+            )
 
         # Node mappings
-        backbones = pre_obs["backbone_id"].drop_nulls().unique().to_list()
-        hosts = pre_obs["host_order"].drop_nulls().unique().to_list()
-        
-        node_to_idx = {}
-        idx = 0
-        for b in backbones:
-            node_to_idx[f"b_{b}"] = idx
-            idx += 1
-        for c in countries:
-            node_to_idx[f"c_{c}"] = idx
-            idx += 1
-        for h in hosts:
-            node_to_idx[f"h_{h}"] = idx
-            idx += 1
+        backbones = pre_obs["backbone_id"].drop_nulls().unique()
+        countries = pre_obs["country"].drop_nulls().unique()
+        hosts = pre_obs["host_order"].drop_nulls().unique()
 
-        self.backbone_mapping = {b: node_to_idx[f"b_{b}"] for b in backbones}
+        b_map = {id: i for i, id in enumerate(backbones)}
+        c_offset = len(backbones)
+        c_map = {id: i + c_offset for i, id in enumerate(countries)}
+        h_offset = c_offset + len(countries)
+        h_map = {id: i + h_offset for i, id in enumerate(hosts)}
+        self.backbone_mapping = b_map
+        num_nodes = h_offset + len(hosts)
 
-        src_edges = []
-        dst_edges = []
-        edge_weights = []
+        # Edges
+        # 1. Backbone-Country
+        bc = pre_obs.with_columns([
+            (pl.col("mobility_score") * (-0.2 * (split_year - pl.col("year"))).exp()).alias("w")
+        ]).group_by(["backbone_id", "country"]).agg(pl.col("w").sum().alias("weight")).drop_nulls()
 
-        for row in bc.iter_rows(named=True):
-            if row["country"] is None or row["backbone_id"] is None: continue
-            u = node_to_idx[f"b_{row['backbone_id']}"]
-            v = node_to_idx[f"c_{row['country']}"]
-            src_edges.extend([u, v])
-            dst_edges.extend([v, u])
-            edge_weights.extend([row["weight"], row["weight"]])
+        bc_u = bc["backbone_id"].map_dict(b_map).to_numpy()
+        bc_v = bc["country"].map_dict(c_map).to_numpy()
+        bc_w = bc["weight"].to_numpy()
 
-        for row in bh.iter_rows(named=True):
-            if row["host_order"] is None or row["backbone_id"] is None: continue
-            u = node_to_idx[f"b_{row['backbone_id']}"]
-            v = node_to_idx[f"h_{row['host_order']}"]
-            src_edges.extend([u, v])
-            dst_edges.extend([v, u])
-            edge_weights.extend([row["weight"], row["weight"]])
+        # 2. Backbone-Host
+        bh = pre_obs.group_by(["backbone_id", "host_order"]).agg(pl.len().log1p().alias("weight")).drop_nulls()
+        bh_u = bh["backbone_id"].map_dict(b_map).to_numpy()
+        bh_v = bh["host_order"].map_dict(h_map).to_numpy()
+        bh_w = bh["weight"].to_numpy()
 
-        for row in cc.iter_rows(named=True):
-            u = node_to_idx[f"c_{row['c1']}"]
-            v = node_to_idx[f"c_{row['c2']}"]
-            src_edges.extend([u])
-            dst_edges.extend([v])
-            edge_weights.extend([row["weight"]])
+        src = np.concatenate([bc_u, bc_v, bh_u, bh_v])
+        dst = np.concatenate([bc_v, bc_u, bh_v, bh_u])
+        weights = np.concatenate([bc_w, bc_w, bh_w, bh_w])
 
-        num_nodes = idx
-        edge_index = torch.tensor([src_edges, dst_edges], dtype=torch.long)
-        edge_weight = torch.tensor(edge_weights, dtype=torch.float)
-        
-        # Dummy node features (one-hot or identity if small, or random if large)
-        # To save memory, we can use an Embedding layer or identity matrix
-        x = torch.eye(num_nodes) if num_nodes < 2000 else torch.randn((num_nodes, 16))
-        
+        edge_index = torch.tensor([src, dst], dtype=torch.long)
+        edge_weight = torch.tensor(weights, dtype=torch.float)
+        x = torch.randn((num_nodes, 16))
+
         data = Data(x=x, edge_index=edge_index, edge_attr=edge_weight)
         from torch_geometric.nn import GCNConv
-        import torch.nn.functional as F
 
-        class GNN(torch.nn.Module):
-            def __init__(self, in_channels, hidden_channels, out_channels):
+        class GNN(torch.nn.Module):  # type: ignore[misc]
+            def __init__(self, in_channels: int, hidden_channels: int, out_channels: int) -> None:
                 super().__init__()
                 self.conv1 = GCNConv(in_channels, hidden_channels)
                 self.conv2 = GCNConv(hidden_channels, out_channels)
 
-            def forward(self, x, edge_index, edge_weight):
+            def forward(self, x: torch.Tensor, edge_index: torch.Tensor, edge_weight: torch.Tensor) -> torch.Tensor:
                 x = self.conv1(x, edge_index, edge_weight)
                 x = F.relu(x)
                 x = self.conv2(x, edge_index, edge_weight)
                 return x
 
-        model = GNN(x.size(1), 16, 8)
+        model = GNN(16, 16, 8)
         optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
 
-        # Improved link prediction loss with MarginRankingLoss proxy
         model.train()
-        for epoch in range(100):
+        for _ in range(20):
             optimizer.zero_grad()
             z = model(data.x, data.edge_index, data.edge_attr)
-            
             if edge_index.size(1) > 0:
-                idx_sample = torch.randint(0, edge_index.size(1), (min(10000, edge_index.size(1)),))
-                u = edge_index[0, idx_sample]
-                v = edge_index[1, idx_sample]
-                
-                # Positive scores (cosine similarity proxy)
-                pos_score = (z[u] * z[v]).sum(dim=-1)
-                
-                # Negative scores (harder negative sampling)
-                neg_v = torch.randint(0, num_nodes, (u.size(0),))
-                neg_score = (z[u] * z[neg_v]).sum(dim=-1)
-                
-                # Margin loss: push pos_score > neg_score + margin
+                idx_sample = torch.randint(0, edge_index.size(1), (min(5000, edge_index.size(1)),))
+                u_batch, v_batch = edge_index[0, idx_sample], edge_index[1, idx_sample]
+                pos_score = (z[u_batch] * z[v_batch]).sum(dim=-1)
+                neg_v = torch.randint(0, num_nodes, (u_batch.size(0),))
+                neg_score = (z[u_batch] * z[neg_v]).sum(dim=-1)
                 loss = torch.relu(1.0 - pos_score + neg_score).mean()
                 loss.backward()
                 optimizer.step()
 
         model.eval()
         with torch.no_grad():
-            final_embeddings = model(data.x, data.edge_index, data.edge_attr).numpy()
-        
-        self.embeddings = final_embeddings
+            self.embeddings = model(data.x, data.edge_index, data.edge_attr).numpy()
 
     def transform(self, backbone_ids: pl.Series) -> pl.DataFrame:
         if self.embeddings is None:
             raise ValueError("Model not fitted")
-        
+
         b_ids = backbone_ids.to_list()
-        embeds = []
         d = self.embeddings.shape[1]
-        for b in b_ids:
-            if b in self.backbone_mapping:
-                embeds.append(self.embeddings[self.backbone_mapping[b]])
-            else:
-                embeds.append(np.zeros(d))
-                
-        emb_array = np.array(embeds)
-        cols = {f"gnn_embed_{i}": emb_array[:, i] for i in range(d)}
+
+        # Vectorized mapping
+        idx_series = backbone_ids.map_dict(self.backbone_mapping).fill_null(-1).to_numpy().astype(int)
+
+        embeds = np.zeros((len(b_ids), d))
+        mask = idx_series >= 0
+        embeds[mask] = self.embeddings[idx_series[mask]]
+
+        cols = {f"gnn_embed_{i}": embeds[:, i] for i in range(d)}
         cols["backbone_id"] = b_ids
         return pl.DataFrame(cols)
-

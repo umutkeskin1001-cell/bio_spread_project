@@ -19,7 +19,7 @@
     "trend_report": "trend_report.json"
   },
   "config_fingerprint": "20960113d279194254d7ea4c592e9b96c4d1f299d00c1da55568633b6f389e99",
-  "created_at_utc": "2026-05-02T15:54:12.730835+00:00",
+  "created_at_utc": "2026-05-02T15:46:57.150168+00:00",
   "dependency_fingerprint": "5f9d4508c5fcea54a47f1f2826f9e29f6e1989b8b2722de646885d8104d4bb14",
   "environment": {
     "git_commit": "9cfd575b993e3d892e2d0b791ab21375fcdfc710",
@@ -32,18 +32,14 @@
   "git_commit": "9cfd575b993e3d892e2d0b791ab21375fcdfc710",
   "horizon_years": 3,
   "input_candidates": {
-    "amr": "data/raw/amr.tsv",
-    "geo_spread_features": "data/project_inputs/geo_spread/inputs/backbone_scored.tsv",
-    "input": "data/sample_plasmid_records.csv"
+    "geo_spread_features": "data/project_inputs/geo_spread/inputs/backbone_scored.tsv"
   },
   "input_hashes": {
-    "amr": "dea80560f0b6305b425f870437f2e8cd5adda577952500159196b9593a19a841",
-    "input": "87fcaf5148a0601d39d0a6566fbeb13474b321097fb0cc5c11aa7d6341357762"
+    "geo_spread_features": "80015d8336d4183d76574c497120e0f7945f4ad356debabbb29052aa55fa9376"
   },
-  "input_mode": "observation_records",
+  "input_mode": "geo_reliability_feature_surface",
   "inputs": {
-    "amr": "data/raw/amr.tsv",
-    "input": "data/sample_plasmid_records.csv"
+    "geo_spread_features": "data/project_inputs/geo_spread/inputs/backbone_scored.tsv"
   },
   "policy": {
     "fail_on_drift_fail": false,
@@ -52,19 +48,19 @@
     "require_explicit_surface": false,
     "require_trend_evidence": false
   },
-  "primary_model": "mobility",
+  "primary_model": "geobio_reliability_ensemble",
   "project": "BioSpread",
   "quality_gates": {
     "adversarial_leakage_scan_passed": true,
-    "auc_at_least_target": false,
+    "auc_at_least_target": true,
     "average_precision_above_prevalence": true,
-    "bootstrap_auc_ci_low_at_least_target": false,
+    "bootstrap_auc_ci_low_at_least_target": true,
     "bootstrap_average_precision_ci_low_above_prevalence": true,
-    "calibration_ece_at_most_target": false,
+    "calibration_ece_at_most_target": true,
     "cross_validated": true,
     "external_holdout_auc_at_least_target": true,
     "group_auc_at_least_target": true,
-    "leakage_audit_passed": false,
+    "leakage_audit_passed": true,
     "temporal_holdout_auc_at_least_target": true
   },
   "random_seed_policy": {
@@ -73,14 +69,13 @@
     "model_random_state": 42,
     "permutation_importance_seed": 7
   },
-  "run_id": "5301aca73bc94970b1b550df57f2af83",
-  "run_mode": "input",
-  "selection_reason": "explicit_input_mode",
+  "run_id": "6e8936a1b66843e98cd62565d8c0b724",
+  "run_mode": "geo",
+  "selection_reason": "explicit_geo_mode",
   "semantic_input_hashes": {
-    "amr": "1ec28a2eabc9a73b043f1cec54dd1f13d0fee3a07ef6854b105215024d45463d",
-    "input": "81d5fd881766b7ae96bc150f1cf7df2cc8b07868f4ad9691f7c64eed4de1f73c"
+    "geo_spread_features": "e3fa1700df471c2330543dc32fcbfa769fb8854d753d3d62cb53abb010bb2614"
   },
-  "source_fingerprint": "ab6eb7383b8689000c7800caa33dab1cd9d4b52c4672bdaa4353fb5cd5f7f478",
+  "source_fingerprint": "fb48516c2bb0849b252b05a3859ad559b7535fac8c75a72d588967bef066fd74",
   "split_year": 2020,
   "threshold_sources": {
     "baseline": "project_config/baseline_benchmark.json",

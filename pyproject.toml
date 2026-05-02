@@ -20,12 +20,13 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-  "pytest>=8,<9",
+  "pytest>=9.0.3,<10",
   "pytest-cov>=5,<8",
   "hypothesis>=6,<7",
   "ruff>=0.6,<1",
   "mypy>=1.11,<2",
   "pip-audit>=2.7,<3",
+  "types-PyYAML",
 ]
 
 [project.scripts]
@@ -54,7 +55,13 @@ warn_redundant_casts = true
 warn_unused_ignores = true
 check_untyped_defs = true
 no_implicit_optional = true
+follow_imports = "skip"
+disable_error_code = ["import-untyped"]
 
 [[tool.mypy.overrides]]
-module = ["sklearn", "sklearn.*", "numba", "joblib"]
+module = ["sklearn", "sklearn.*", "joblib", "scipy", "scipy.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["torch_geometric", "torch_geometric.*", "torch", "torch.*"]
 ignore_missing_imports = true

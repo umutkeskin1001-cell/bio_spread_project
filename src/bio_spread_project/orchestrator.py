@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -55,9 +56,9 @@ from bio_spread_project.model import fit_model_surface, select_primary_model
 from bio_spread_project.model_metrics import validation_summary
 from bio_spread_project.registry import append_model_registry_entry
 from bio_spread_project.reporting import render_chic_report
-from bio_spread_project.visualization import save_table_as_png, plot_performance_summary
 from bio_spread_project.runtime_policy import PipelineConfig
 from bio_spread_project.thresholds import load_thresholds
+from bio_spread_project.visualization import plot_performance_summary, save_table_as_png
 
 
 @dataclass(frozen=True)
@@ -105,7 +106,7 @@ def _validate_external_holdout(training_source: Path, external_holdout: Path | N
     if external_holdout.exists() and training_source.exists():
         if sha256_file(external_holdout) == sha256_file(training_source):
             raise ValueError("external holdout must be independent from the training feature surface")
-        
+
         # Genomic identity leakage check: ensure no backbone IDs are shared
         from bio_spread_project.data_io import read_table
         train_ids = set(read_table(training_source).select("backbone_id").to_series().to_list())
@@ -198,183 +199,185 @@ def run_pipeline(config: PipelineConfig | None = None, **kwargs: Any) -> Pipelin
     )
 
     stage = Path(mkdtemp(prefix=".staging_", dir=str(config.output_dir.parent)))
-    write_dataclass_csv(stage / "features.csv", features)
-    write_dataclass_parquet(stage / "features.parquet", features)
-    write_dataclass_csv(stage / "predictions.csv", run.predictions)
-    write_dataclass_parquet(stage / "predictions.parquet", run.predictions)
-    write_json(stage / "metrics.json", metrics)
-    write_json(stage / "audit.json", audit)
-    write_text(stage / "model_card.md", render_model_card(audit=audit, coefficient_summary=run.coefficient_summary))
-    write_json(stage / "model_scorecard.json", {"primary_model": run.model_name, "scorecard": [{"model_name": run.model_name, **run.metrics}]})
-    joblib.dump(run.model, stage / "model.joblib")
+    try:
+        write_dataclass_csv(stage / "features.csv", features)
+        write_dataclass_parquet(stage / "features.parquet", features)
+        write_dataclass_csv(stage / "predictions.csv", run.predictions)
+        write_dataclass_parquet(stage / "predictions.parquet", run.predictions)
+        write_json(stage / "metrics.json", metrics)
+        write_json(stage / "audit.json", audit)
+        write_text(stage / "model_card.md", render_model_card(audit=audit, coefficient_summary=run.coefficient_summary))
+        write_json(stage / "model_scorecard.json", {"primary_model": run.model_name, "scorecard": [{"model_name": run.model_name, **run.metrics}]})
+        joblib.dump(run.model, stage / "model.joblib")
 
-    benchmark = {
-        "project": "BioSpread",
-        "validation_summary": validation_summary(metrics),
-        "quality_gates": audit["quality_gates"],
-        "all_quality_gates_passed": audit["all_quality_gates_passed"],
-    }
-    write_json(stage / "benchmark.json", benchmark)
-    if config.baseline_benchmark_path and Path(config.baseline_benchmark_path).exists():
-        drift_payload = evaluate_drift(
-            current=benchmark,
-            baseline=load_json(config.baseline_benchmark_path),
-            thresholds=load_drift_thresholds(config.drift_thresholds_path),
+        benchmark = {
+            "project": "BioSpread",
+            "validation_summary": validation_summary(metrics),
+            "quality_gates": audit["quality_gates"],
+            "all_quality_gates_passed": audit["all_quality_gates_passed"],
+        }
+        write_json(stage / "benchmark.json", benchmark)
+        if config.baseline_benchmark_path and Path(config.baseline_benchmark_path).exists():
+            drift_payload = evaluate_drift(
+                current=benchmark,
+                baseline=load_json(config.baseline_benchmark_path),
+                thresholds=load_drift_thresholds(config.drift_thresholds_path),
+            )
+        else:
+            drift_payload = {"all_passed": True, "status": "not_evaluated", "reason": "baseline_not_provided"}
+        write_json(stage / "drift_report.json", drift_payload)
+
+        model_registry_path = append_model_registry_entry(
+            stage / "model_registry.jsonl",
+            {**validation_summary(metrics), "model_name": run.model_name, "input_mode": selection.input_mode, "all_quality_gates_passed": audit["all_quality_gates_passed"]},
         )
-    else:
-        drift_payload = {"all_passed": True, "status": "not_evaluated", "reason": "baseline_not_provided"}
-    write_json(stage / "drift_report.json", drift_payload)
-
-    model_registry_path = append_model_registry_entry(
-        stage / "model_registry.jsonl",
-        {**validation_summary(metrics), "model_name": run.model_name, "input_mode": selection.input_mode, "all_quality_gates_passed": audit["all_quality_gates_passed"]},
-    )
-    registry_entries = load_model_registry(model_registry_path).to_dicts()
-    thresholds = load_thresholds(
-        quality_path=config.quality_thresholds_path,
-        drift_path=config.drift_thresholds_path,
-        trend_path=config.trend_thresholds_path,
-    )
-    quality_checks = evaluate_quality_gates(
-        metrics=metrics,
-        input_mode=selection.input_mode,
-        leakage_audit_passed=audit.get("leakage_audit", {}).get("status") == "pass",
-        thresholds=thresholds.quality,
-    )
-    drift_checks = evaluate_drift_checks(
-        current=benchmark,
-        baseline=load_json(config.baseline_benchmark_path) if config.baseline_benchmark_path and Path(config.baseline_benchmark_path).exists() else {"validation_summary": {}},
-        thresholds=thresholds.drift,
-    )
-    trend_checks = evaluate_trend_from_registry(
-        entries=registry_entries,
-        thresholds=thresholds.trend,
-        model_name=run.model_name,
-        input_mode=selection.input_mode,
-        window_size=10,
-    )
-    governance = build_governance_report(
-        quality_checks=quality_checks,
-        drift_checks=drift_checks,
-        trend_checks=trend_checks,
-        policy=config.policy,
-    )
-    write_json(
-        stage / "trend_report.json",
-        {
-            "status": "ok" if not any(c.status == "not_evaluated" for c in trend_checks) else "insufficient_data",
-            "all_passed": all(c.passed for c in trend_checks if c.status != "not_evaluated"),
-            "trend_evidence_sufficient": not any(c.status == "not_evaluated" for c in trend_checks),
-            "checks": {c.name: c.detail for c in trend_checks},
-        },
-    )
-    release_gate = build_release_gate_report(
-        audit=audit,
-        drift_report=drift_payload,
-        trend_report=load_json(stage / "trend_report.json"),
-        allow_conditional_trend_release=config.policy.allow_conditional_release,
-    )
-    write_json(stage / "release_gate.json", release_gate)
-    write_json(
-        stage / "governance_report.json",
-        {
-            "readiness": governance.readiness,
-            "blocked_by": governance.blocked_by,
-            "quality_checks": [c.__dict__ for c in governance.quality_checks],
-            "drift_checks": [c.__dict__ for c in governance.drift_checks],
-            "trend_checks": [c.__dict__ for c in governance.trend_checks],
-            "policy_flags": governance.policy_flags,
-        },
-    )
-
-    generate_dashboard(audit=audit, output_path=stage / "dashboard.html")
-    write_text(
-        stage / "report.md",
-        render_chic_report(
-            predictions=run.predictions,
-            metrics={**metrics, "all_quality_gates_passed": audit["all_quality_gates_passed"]},
-            audit=audit,
-            governance=governance,
-            release_gate=release_gate,
-            split_year=config.split_year,
-            horizon_years=config.horizon_years,
-        ),
-    )
-    # Visual Reports (PNG)
-    plot_performance_summary(metrics, stage / "performance_summary.png")
-    
-    # Table PNGs
-    top_preds = sorted(run.predictions, key=lambda x: x.risk_probability, reverse=True)[:10]
-    risk_headers = ["Rank", "Backbone ID", "Risk Prob", "Confidence", "Future Spread"]
-    risk_rows = [[i+1, p.backbone_id, f"{p.risk_probability:.4f}", p.confidence_tier, p.n_new_countries_future] for i, p in enumerate(top_preds)]
-    save_table_as_png(risk_headers, risk_rows, "HIGH-RISK CANDIDATE REGISTRY", stage / "risk_table.png")
-
-    metric_headers = ["Metric", "Value", "Threshold", "Status"]
-    metric_rows = [
-        ["ROC AUC", f"{metrics.get('roc_auc', 0):.4f}", ">= 0.820", "PASS" if metrics.get("roc_auc", 0) >= 0.82 else "FAIL"],
-        ["Avg Precision", f"{metrics.get('average_precision', 0):.4f}", "> Prev", "PASS" if metrics.get("average_precision", 0) > metrics.get("prevalence", 0) else "FAIL"],
-        ["Spatial CV AUC", f"{metrics.get('group_oof_roc_auc', 0):.4f}", ">= 0.800", "PASS" if metrics.get("group_oof_roc_auc", 0) >= 0.80 else "FAIL"],
-        ["Calibration ECE", f"{metrics.get('expected_calibration_error', 0):.4f}", "<= 0.100", "PASS" if metrics.get("expected_calibration_error", 1) <= 0.1 else "FAIL"],
-    ]
-    save_table_as_png(metric_headers, metric_rows, "CORE ANALYTIC METRICS", stage / "metrics_table.png")
-
-    write_json(
-        stage / "data_registry.json",
-        {"project": "BioSpread", "input_count": len(input_paths), "inputs": {k: str(v) for k, v in input_paths.items()}},
-    )
-
-    root = paths.project_root
-    manifest_artifacts = {
-        "features": "features.csv",
-        "features_parquet": "features.parquet",
-        "predictions": "predictions.csv",
-        "predictions_parquet": "predictions.parquet",
-        "metrics": "metrics.json",
-        "data_registry": "data_registry.json",
-        "drift_report": "drift_report.json",
-        "model_registry": "model_registry.jsonl",
-        "trend_report": "trend_report.json",
-        "audit": "audit.json",
-        "model_card": "model_card.md",
-        "model_scorecard": "model_scorecard.json",
-        "release_gate": "release_gate.json",
-        "governance_report": "governance_report.json",
-        "report": "report.md",
-        "manifest": "manifest.json",
-        "artifact_index": "artifact_index.json",
-    }
-    write_json(
-        stage / "manifest.json",
-        build_manifest(
-            selection=selection,
-            run_mode=config.run_mode,
+        registry_entries = load_model_registry(model_registry_path).to_dicts()
+        thresholds = load_thresholds(
+            quality_path=config.quality_thresholds_path,
+            drift_path=config.drift_thresholds_path,
+            trend_path=config.trend_thresholds_path,
+        )
+        quality_checks = evaluate_quality_gates(
+            metrics=metrics,
+            input_mode=selection.input_mode,
+            leakage_audit_passed=audit.get("leakage_audit", {}).get("status") == "pass",
+            thresholds=thresholds.quality,
+        )
+        drift_checks = evaluate_drift_checks(
+            current=benchmark,
+            baseline=load_json(config.baseline_benchmark_path) if config.baseline_benchmark_path and Path(config.baseline_benchmark_path).exists() else {"validation_summary": {}},
+            thresholds=thresholds.drift,
+        )
+        trend_checks = evaluate_trend_from_registry(
+            entries=registry_entries,
+            thresholds=thresholds.trend,
+            model_name=run.model_name,
+            input_mode=selection.input_mode,
+            window_size=10,
+        )
+        governance = build_governance_report(
+            quality_checks=quality_checks,
+            drift_checks=drift_checks,
+            trend_checks=trend_checks,
             policy=config.policy,
-            input_hashes=audit["input_hashes"],
-            semantic_input_hashes={name: semantic_table_hash(path) for name, path in input_paths.items() if path.exists()},
-            split_year=config.split_year,
-            horizon_years=config.horizon_years,
-            run_metadata={"run_id": uuid4().hex, "created_at_utc": datetime.now(timezone.utc).isoformat()},
-            primary_model=run.model_name,
-            threshold_sources={
-                "quality": portable_path(config.quality_thresholds_path or (root / "project_config" / "quality_thresholds.json")),
-                "drift": portable_path(config.drift_thresholds_path or (root / "project_config" / "drift_thresholds.json")),
-                "trend": portable_path(config.trend_thresholds_path or (root / "project_config" / "trend_thresholds.json")),
-                "baseline": portable_path(config.baseline_benchmark_path or (root / "project_config" / "baseline_benchmark.json")),
+        )
+        write_json(
+            stage / "trend_report.json",
+            {
+                "status": "ok" if not any(c.status == "not_evaluated" for c in trend_checks) else "insufficient_data",
+                "all_passed": all(c.passed for c in trend_checks if c.status != "not_evaluated"),
+                "trend_evidence_sufficient": not any(c.status == "not_evaluated" for c in trend_checks),
+                "checks": {c.name: c.detail for c in trend_checks},
             },
-            quality_gates=audit["quality_gates"],
-            artifacts=manifest_artifacts,
-            environment=audit.get("environment", {}),
-            source_fingerprint=source_fingerprint(root),
-            config_fingerprint=config_fingerprint(root),
-            dependency_fingerprint=dependency_fingerprint(root),
-        ),
-    )
+        )
+        release_gate = build_release_gate_report(
+            audit=audit,
+            drift_report=drift_payload,
+            trend_report=load_json(stage / "trend_report.json"),
+            allow_conditional_trend_release=config.policy.allow_conditional_release,
+        )
+        write_json(stage / "release_gate.json", release_gate)
+        write_json(
+            stage / "governance_report.json",
+            {
+                "readiness": governance.readiness,
+                "blocked_by": governance.blocked_by,
+                "quality_checks": [c.__dict__ for c in governance.quality_checks],
+                "drift_checks": [c.__dict__ for c in governance.drift_checks],
+                "trend_checks": [c.__dict__ for c in governance.trend_checks],
+                "policy_flags": governance.policy_flags,
+            },
+        )
 
-    artifact_set = ArtifactSet(
-        staging_dir=stage,
-        files={name: stage / rel for name, rel in manifest_artifacts.items() if name != "artifact_index"},
-    )
-    commit_artifact_set(config.output_dir, artifact_set)
+        generate_dashboard(audit=audit, output_path=stage / "dashboard.html")
+        write_text(
+            stage / "report.md",
+            render_chic_report(
+                predictions=run.predictions,
+                metrics={**metrics, "all_quality_gates_passed": audit["all_quality_gates_passed"]},
+                audit=audit,
+                governance=governance,
+                release_gate=release_gate,
+                split_year=config.split_year,
+                horizon_years=config.horizon_years,
+            ),
+        )
+        plot_performance_summary(metrics, stage / "performance_summary.png")
+
+        top_preds = sorted(run.predictions, key=lambda x: x.risk_probability, reverse=True)[:10]
+        risk_headers = ["Rank", "Backbone ID", "Risk Prob", "Confidence", "Future Spread"]
+        risk_rows = [[i+1, p.backbone_id, f"{p.risk_probability:.4f}", p.confidence_tier, p.n_new_countries_future] for i, p in enumerate(top_preds)]
+        save_table_as_png(risk_headers, risk_rows, "HIGH-RISK CANDIDATE REGISTRY", stage / "risk_table.png")
+
+        metric_headers = ["Metric", "Value", "Threshold", "Status"]
+        metric_rows = [
+            ["ROC AUC", f"{metrics.get('roc_auc', 0):.4f}", ">= 0.820", "PASS" if metrics.get("roc_auc", 0) >= 0.82 else "FAIL"],
+            ["Avg Precision", f"{metrics.get('average_precision', 0):.4f}", "> Prev", "PASS" if metrics.get("average_precision", 0) > metrics.get("prevalence", 0) else "FAIL"],
+            ["Spatial CV AUC", f"{metrics.get('group_oof_roc_auc', 0):.4f}", ">= 0.800", "PASS" if metrics.get("group_oof_roc_auc", 0) >= 0.80 else "FAIL"],
+            ["Calibration ECE", f"{metrics.get('expected_calibration_error', 0):.4f}", "<= 0.100", "PASS" if metrics.get("expected_calibration_error", 1) <= 0.1 else "FAIL"],
+        ]
+        save_table_as_png(metric_headers, metric_rows, "CORE ANALYTIC METRICS", stage / "metrics_table.png")
+
+        write_json(
+            stage / "data_registry.json",
+            {"project": "BioSpread", "input_count": len(input_paths), "inputs": {k: str(v) for k, v in input_paths.items()}},
+        )
+
+        root = paths.project_root
+        manifest_artifacts = {
+            "features": "features.csv",
+            "features_parquet": "features.parquet",
+            "predictions": "predictions.csv",
+            "predictions_parquet": "predictions.parquet",
+            "metrics": "metrics.json",
+            "data_registry": "data_registry.json",
+            "drift_report": "drift_report.json",
+            "model_registry": "model_registry.jsonl",
+            "trend_report": "trend_report.json",
+            "audit": "audit.json",
+            "model_card": "model_card.md",
+            "model_scorecard": "model_scorecard.json",
+            "release_gate": "release_gate.json",
+            "governance_report": "governance_report.json",
+            "report": "report.md",
+            "manifest": "manifest.json",
+            "artifact_index": "artifact_index.json",
+        }
+        write_json(
+            stage / "manifest.json",
+            build_manifest(
+                selection=selection,
+                run_mode=config.run_mode,
+                policy=config.policy,
+                input_hashes=audit["input_hashes"],
+                semantic_input_hashes={name: semantic_table_hash(path) for name, path in input_paths.items() if path.exists()},
+                split_year=config.split_year,
+                horizon_years=config.horizon_years,
+                run_metadata={"run_id": uuid4().hex, "created_at_utc": datetime.now(timezone.utc).isoformat()},
+                primary_model=run.model_name,
+                threshold_sources={
+                    "quality": portable_path(config.quality_thresholds_path or (root / "project_config" / "quality_thresholds.json")),
+                    "drift": portable_path(config.drift_thresholds_path or (root / "project_config" / "drift_thresholds.json")),
+                    "trend": portable_path(config.trend_thresholds_path or (root / "project_config" / "trend_thresholds.json")),
+                    "baseline": portable_path(config.baseline_benchmark_path or (root / "project_config" / "baseline_benchmark.json")),
+                },
+                quality_gates=audit["quality_gates"],
+                artifacts=manifest_artifacts,
+                environment=audit.get("environment", {}),
+                source_fingerprint=source_fingerprint(root),
+                config_fingerprint=config_fingerprint(root),
+                dependency_fingerprint=dependency_fingerprint(root),
+            ),
+        )
+
+        artifact_set = ArtifactSet(
+            staging_dir=stage,
+            files={name: stage / rel for name, rel in manifest_artifacts.items() if name != "artifact_index"},
+        )
+        commit_artifact_set(config.output_dir, artifact_set)
+    finally:
+        if stage.exists():
+            shutil.rmtree(stage)
 
     if config.policy.fail_on_quality_gates and not audit["all_quality_gates_passed"]:
         raise RuntimeError("quality_gates failed")

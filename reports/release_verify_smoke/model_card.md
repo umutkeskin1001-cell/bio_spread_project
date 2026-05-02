@@ -33,11 +33,11 @@
 - group_auc_at_least_target: `pass`
 - temporal_holdout_auc_at_least_target: `pass`
 - external_holdout_auc_at_least_target: `pass`
-- leakage_audit_passed: `pass`
+- leakage_audit_passed: `fail`
 - adversarial_leakage_scan_passed: `pass`
 
 ## Leakage Guard
-- Status: `pass`
+- Status: `fail`
 - Feature count: `0`
 - Future/outcome columns are excluded from model features.
 
@@ -48,6 +48,6 @@
 - amr: `dea80560f0b6305b425f870437f2e8cd5adda577952500159196b9593a19a841`
 - input: `87fcaf5148a0601d39d0a6566fbeb13474b321097fb0cc5c11aa7d6341357762`
 - Python: `3.9.6`
-- NumPy: `2.0.2`
+- NumPy: `1.26.4`
 - scikit-learn: `1.6.1`
-- Git commit: `54926d6c9018ab0d6aac6396aa2a3ef3cd59033f`
+- Git commit: `9cfd575b993e3d892e2d0b791ab21375fcdfc710`

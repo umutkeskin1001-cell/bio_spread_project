@@ -84,7 +84,7 @@ def run_verification(*, release: bool, skip_security: bool, project_root: Path |
         cwd=root,
     )
     if not skip_security:
-        _run_check("security", [python, "-m", "pip_audit", "-r", "requirements.txt"], cwd=root)
+        _run_check("security", [python, "-m", "pip-audit", "-r", "requirements.txt"], cwd=root)
     print("release verification passed")
     return 0
 

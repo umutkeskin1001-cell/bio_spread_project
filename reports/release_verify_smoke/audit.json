@@ -1,8 +1,9 @@
 {
   "all_quality_gates_passed": false,
   "environment": {
-    "git_commit": "54926d6c9018ab0d6aac6396aa2a3ef3cd59033f",
-    "numpy": "2.0.2",
+    "git_commit": "9cfd575b993e3d892e2d0b791ab21375fcdfc710",
+    "numpy": "1.26.4",
+    "polars": "0.20.31",
     "python": "3.9.6",
     "scikit_learn": "1.6.1",
     "ssl_backend": "LibreSSL 2.8.3"
@@ -13,78 +14,78 @@
   },
   "input_mode": "observation_records",
   "leakage_audit": {
-    "blocked_columns": [],
-    "blocked_tokens": [
-      "label",
-      "future",
-      "test",
-      "n_new",
-      "new_countries",
-      "event_within",
-      "time_to",
-      "visibility",
-      "outcome",
-      "severity"
-    ],
-    "feature_count": 0,
-    "status": "pass"
+    "max_single_feature_auc": 0.5,
+    "status": "fail",
+    "suspicious_feature_count": 0
   },
   "primary_model": "mobility",
   "project": "BioSpread",
   "quality_gate_details": {
     "adversarial_leakage_scan_passed": {
       "passed": true,
-      "reason": "",
+      "reason": "skipped",
       "status": "pass"
     },
     "auc_at_least_target": {
+      "observed": 0.5,
       "passed": false,
-      "reason": "threshold_not_met",
-      "status": "fail"
+      "reason": "Observed 0.5 does not meet required 0.82",
+      "status": "fail",
+      "threshold": 0.82
     },
     "average_precision_above_prevalence": {
+      "observed": 0.5,
       "passed": true,
       "reason": "",
-      "status": "pass"
+      "status": "pass",
+      "threshold": 0.4
     },
     "bootstrap_auc_ci_low_at_least_target": {
+      "observed": 0.5,
       "passed": false,
-      "reason": "threshold_not_met",
-      "status": "fail"
+      "reason": "Observed 0.5 does not meet required 0.78",
+      "status": "fail",
+      "threshold": 0.78
     },
     "bootstrap_average_precision_ci_low_above_prevalence": {
+      "observed": 0.5,
       "passed": true,
       "reason": "",
-      "status": "pass"
+      "status": "pass",
+      "threshold": 0.4
     },
     "calibration_ece_at_most_target": {
+      "observed": 0.43678622509594356,
       "passed": false,
-      "reason": "threshold_not_met",
-      "status": "fail"
+      "reason": "Observed 0.43678622509594356 does not meet required 0.05",
+      "status": "fail",
+      "threshold": 0.05
     },
     "cross_validated": {
+      "observed": "cross_validated",
       "passed": true,
       "reason": "",
-      "status": "pass"
+      "status": "pass",
+      "threshold": "cv_variants"
     },
     "external_holdout_auc_at_least_target": {
       "passed": true,
-      "reason": "",
+      "reason": "skipped",
       "status": "pass"
     },
     "group_auc_at_least_target": {
       "passed": true,
-      "reason": "",
+      "reason": "skipped",
       "status": "pass"
     },
     "leakage_audit_passed": {
-      "passed": true,
-      "reason": "",
-      "status": "pass"
+      "passed": false,
+      "reason": "Structural leakage check failed",
+      "status": "fail"
     },
     "temporal_holdout_auc_at_least_target": {
       "passed": true,
-      "reason": "",
+      "reason": "skipped",
       "status": "pass"
     }
   },
@@ -98,7 +99,7 @@
     "cross_validated": true,
     "external_holdout_auc_at_least_target": true,
     "group_auc_at_least_target": true,
-    "leakage_audit_passed": true,
+    "leakage_audit_passed": false,
     "temporal_holdout_auc_at_least_target": true
   },
   "quality_thresholds": {
@@ -106,21 +107,23 @@
     "average_precision_above_prevalence": true,
     "bootstrap_auc_ci_low_min": 0.78,
     "bootstrap_average_precision_ci_low_above_prevalence": true,
-    "calibration_ece_max": 0.1,
+    "calibration_ece_max": 0.05,
     "external_holdout_auc_min": 0.78,
-    "external_holdout_required": true,
+    "external_holdout_required": false,
     "group_auc_min": 0.8,
     "max_single_feature_auc_max": 0.95,
     "suspicious_feature_count_max": 0,
     "temporal_holdout_auc_min": 0.78
   },
+  "run_id": "2d6dbf2c-4c73-4536-b3b0-f3baef70722a",
+  "timestamp": "2026-05-02T18:54:12.123346",
   "validation": {
     "average_precision": 0.5,
     "bootstrap_average_precision_ci_high": 0.5,
     "bootstrap_average_precision_ci_low": 0.5,
     "bootstrap_roc_auc_ci_high": 0.5,
     "bootstrap_roc_auc_ci_low": 0.5,
-    "brier_score": 0.29011070937989436,
+    "brier_score": 0.2901107093798944,
     "calibration_bins": [
       {
         "bin_end": 0.2,
@@ -147,7 +150,7 @@
         "bin_end": 0.8,
         "bin_start": 0.6000000000000001,
         "count": 1,
-        "mean_prediction": 0.6840839411801016,
+        "mean_prediction": 0.6840839411801017,
         "observed_rate": 0.0
       },
       {
@@ -158,7 +161,7 @@
         "observed_rate": null
       }
     ],
-    "expected_calibration_error": 0.4367862250959435,
+    "expected_calibration_error": 0.43678622509594356,
     "max_single_feature_auc": 0.5,
     "mode": "cross_validated",
     "n_backbones": 5,
@@ -179,8 +182,8 @@
       },
       "oof": {
         "average_precision": 0.5,
-        "brier_score": 0.29011070937989436,
-        "expected_calibration_error": 0.4367862250959435,
+        "brier_score": 0.2901107093798944,
+        "expected_calibration_error": 0.43678622509594356,
         "n_backbones": 5.0,
         "n_positive": 2.0,
         "prevalence": 0.4,

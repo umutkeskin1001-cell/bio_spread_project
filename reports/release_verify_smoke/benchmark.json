@@ -11,7 +11,7 @@
     "cross_validated": true,
     "external_holdout_auc_at_least_target": true,
     "group_auc_at_least_target": true,
-    "leakage_audit_passed": true,
+    "leakage_audit_passed": false,
     "temporal_holdout_auc_at_least_target": true
   },
   "validation_summary": {

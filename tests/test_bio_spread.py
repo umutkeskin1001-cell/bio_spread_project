@@ -6,6 +6,7 @@ import time
 import warnings
 from pathlib import Path
 
+import polars as pl
 import pytest
 
 from bio_spread_project.config_loader import load_project_config
@@ -373,7 +374,13 @@ def test_geo_reliability_surface_reaches_competition_auc_target(tmp_path):
 
 
 def test_geo_reliability_feature_contract_blocks_future_leakage():
-    audit = leakage_audit(FEATURE_COLUMNS)
+    # Create a simple DataFrame for leakage audit
+    df = pl.DataFrame({
+        "label_geo_spread": [0, 1, 0, 1],
+        "backbone_id": ["bb1", "bb2", "bb3", "bb4"],
+        **{col: [0.1, 0.2, 0.3, 0.4] for col in FEATURE_COLUMNS[:5]}
+    })
+    audit = leakage_audit(df)
 
     assert audit["status"] == "pass"
     assert audit["blocked_columns"] == []
@@ -648,6 +655,7 @@ def test_adversarial_leakage_scan_flags_near_deterministic_feature():
                 label_geo_spread=label,
                 n_new_countries_future=2 if label else 0,
                 knownness_score=0.8,
+                region="global",
                 max_resolved_year_train=2010 + (index % 6),
                 features={
                     "T_eff_norm": 0.3,

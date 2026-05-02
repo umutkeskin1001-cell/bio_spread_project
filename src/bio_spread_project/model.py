@@ -37,7 +37,7 @@ class Prediction:
 class ModelRun:
     model_name: str
     description: str
-    model: BioSpreadRiskModel
+    model: Any
     predictions: list[Prediction]
     metrics: dict[str, Any]
     calibration: dict[str, Any]

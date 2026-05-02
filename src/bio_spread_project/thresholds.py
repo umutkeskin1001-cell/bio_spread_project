@@ -31,7 +31,7 @@ def load_thresholds(
 
     paths = ProjectPaths.from_env()
     root = paths.project_root
-    
+
     q = quality_path or (root / "project_config" / "quality_thresholds.json")
     d = drift_path or (root / "project_config" / "drift_thresholds.json")
     t = trend_path or (root / "project_config" / "trend_thresholds.json")

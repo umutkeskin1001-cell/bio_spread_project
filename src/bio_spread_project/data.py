@@ -44,6 +44,17 @@ def read_table(path: str | Path, *, schema_overrides: dict[str, pl.DataType] | N
     raise ValueError(f"Unsupported table format: {input_path}")
 
 
+def _safe_cast_to_string(df_local: pl.DataFrame | pl.LazyFrame, col_name: str) -> pl.Expr:
+    if isinstance(df_local, pl.LazyFrame):
+        dtype = df_local.schema[col_name]
+    else:
+        dtype = df_local.schema[col_name]
+    if isinstance(dtype, pl.List) or (hasattr(dtype, "is_nested") and dtype.is_nested()) or str(dtype).lower().startswith("list"):
+        return pl.col(col_name).list.join(",")
+    else:
+        return pl.col(col_name).cast(pl.Utf8)
+
+
 def load_records(path: str | Path) -> list[PlasmidRecord]:
     """Load plasmid observation records using Polars."""
     df = read_table(path)
@@ -53,7 +64,7 @@ def load_records(path: str | Path) -> list[PlasmidRecord]:
         raise ValueError(f"Input CSV is missing required columns: {', '.join(missing)}")
 
     non_id_columns = [column for column in required if column != "backbone_id"]
-    blank_id = pl.col("backbone_id").is_null() | (pl.col("backbone_id").cast(pl.String).str.strip_chars() == "")
+    blank_id = pl.col("backbone_id").is_null() | (_safe_cast_to_string(df, "backbone_id").str.strip_chars() == "")
     has_other_data = pl.any_horizontal([pl.col(column).is_not_null() for column in non_id_columns])
 
     if df.filter(blank_id & has_other_data).height > 0:
@@ -91,11 +102,11 @@ def load_records(path: str | Path) -> list[PlasmidRecord]:
         raise ValueError(f"Input records contain invalid values: {details}")
 
     cleaned = df.with_columns([
-        pl.col("backbone_id").cast(pl.String),
-        pl.col("country").cast(pl.String),
-        pl.col("host_genus").cast(pl.String),
-        pl.col("clinical_context").cast(pl.String),
-    ])
+            _safe_cast_to_string(df, "backbone_id"),
+            _safe_cast_to_string(df, "country"),
+            _safe_cast_to_string(df, "host_genus"),
+            _safe_cast_to_string(df, "clinical_context"),
+        ])
     return [
         PlasmidRecord(
             backbone_id=str(row["backbone_id"]),
@@ -112,8 +123,9 @@ def load_records(path: str | Path) -> list[PlasmidRecord]:
 
 def _derive_mobility(df: pl.DataFrame) -> pl.Expr:
     """Vectorized mobility score derivation."""
-    if "predicted_mobility" in df.columns:
-        predicted_expr = pl.col("predicted_mobility").fill_null("").cast(pl.String).str.to_lowercase()
+    schema = df.schema
+    if "predicted_mobility" in schema:
+        predicted_expr = _safe_cast_to_string(df, "predicted_mobility").fill_null("").str.to_lowercase()
     else:
         predicted_expr = pl.lit("")
 
@@ -122,12 +134,12 @@ def _derive_mobility(df: pl.DataFrame) -> pl.Expr:
               .otherwise(0.0)
 
     def is_true(col: str) -> pl.Expr:
-        if col not in df.columns:
+        if col not in schema:
             return pl.lit(False)
         c = pl.col(col)
-        if df.get_column(col).dtype == pl.Boolean:
+        if schema[col] == pl.Boolean:
             return c
-        return c.cast(pl.String).str.to_lowercase().is_in(["1", "true", "yes", "y", "t"])
+        return _safe_cast_to_string(df, col).str.to_lowercase().is_in(["1", "true", "yes", "y", "t"])
 
     support = pl.lit(0.0)
     support += pl.when(is_true("has_mpf")).then(0.35).otherwise(0.0)
@@ -141,7 +153,7 @@ def _derive_mobility(df: pl.DataFrame) -> pl.Expr:
 def _derive_clinical_context(df: pl.DataFrame) -> pl.Expr:
     """Vectorized clinical context derivation."""
     cols = ["BIOSAMPLE_pathogenicity", "BIOSAMPLE_package", "ECOSYSTEM_tags", "DISEASE_tags", "record_origin"]
-    present_cols = [c for c in cols if c in df.columns]
+    present_cols = [c for c in cols if c in df.schema]
     combined = pl.concat_str([pl.col(c).fill_null("") for c in present_cols], separator=" ").str.to_lowercase()
 
     return pl.when(combined.str.contains("clinical|hospital|patient|pathogen|disease|human")).then(pl.lit("clinical")) \
@@ -159,11 +171,17 @@ PRIORITY_AMR_WEIGHTS: dict[str, float] = {
 
 def _calculate_weighted_amr(amr_df: pl.DataFrame) -> pl.DataFrame:
     """Calculate priority-weighted AMR score per accession."""
-    if "gene_symbol" not in amr_df.columns and "gene_name" not in amr_df.columns:
+    cols = [c for c in ["gene_symbol", "gene_name"] if c in amr_df.columns]
+    if not cols:
         return amr_df.group_by("NUCCORE_ACC").agg(pl.lit(0.0).alias("amr_gene_count"))
 
+    # Safely coalesce and cast to string
+    exprs = []
+    for c in cols:
+        exprs.append(_safe_cast_to_string(amr_df, c))
+
     amr_df = amr_df.with_columns(
-        pl.coalesce([pl.col(c) for c in ["gene_symbol", "gene_name"] if c in amr_df.columns]).alias("gene_id")
+        pl.coalesce(exprs).alias("gene_id")
     )
 
     weight_expr = pl.lit(1.0)
@@ -202,31 +220,45 @@ def load_backbone_records_frame(
     limit: int | None = None,
 ) -> pl.DataFrame:
     """Load raw records into the columnar observation contract."""
-    df = read_table(path)
+    input_path = Path(path)
+    suffix = input_path.suffix.lower()
+    if suffix == ".parquet":
+        ldf = pl.scan_parquet(input_path)
+    elif suffix in {".tsv", ".tab"}:
+        ldf = pl.scan_csv(input_path, separator="\t")
+    elif suffix == ".csv":
+        ldf = pl.scan_csv(input_path, separator=",")
+    else:
+        raise ValueError(f"Unsupported table format: {input_path}")
+
     if limit:
-        df = df.head(limit)
+        ldf = ldf.head(limit)
 
     amr_gene_count = pl.lit(0.0)
     if amr_path and Path(amr_path).exists():
         amr_df = read_table(amr_path)
         amr_counts = _calculate_weighted_amr(amr_df)
-        df = df.join(amr_counts, left_on="sequence_accession", right_on="NUCCORE_ACC", how="left")
+        ldf = ldf.join(amr_counts.lazy(), left_on="sequence_accession", right_on="NUCCORE_ACC", how="left")
         amr_gene_count = pl.col("amr_gene_count").fill_null(0.0).cast(pl.Float64)
 
-    backbone_id = pl.coalesce([pl.col(c) for c in ["backbone_id", "canonical_id", "sequence_accession"] if c in df.columns])
+    # Safely coalesce backbone ID candidates
+    id_cols = [c for c in ["backbone_id", "canonical_id", "sequence_accession"] if c in ldf.schema]
+    id_exprs = [_safe_cast_to_string(ldf, c) for c in id_cols]
+    backbone_id_expr = pl.coalesce(id_exprs)
+
     year = pl.col("resolved_year").fill_null(0).cast(pl.Int64)
 
     # Keep the production path columnar; dataclasses are only for the public
     # compatibility API. This avoids round-tripping 70k+ rows through Python
     # objects before Polars can aggregate them.
-    return df.with_columns([
-        backbone_id.alias("backbone_id"),
+    return ldf.collect().with_columns([
+        backbone_id_expr.alias("backbone_id"),
         year.alias("year"),
         amr_gene_count.alias("amr_gene_count"),
-        _derive_mobility(df).alias("mobility_score"),
-        _derive_clinical_context(df).alias("clinical_context"),
-        pl.col("country").fill_null("unknown").alias("country"),
-        pl.col("genus").fill_null("unknown").alias("host_genus"),
+        _derive_mobility(ldf).alias("mobility_score"),
+        _derive_clinical_context(ldf).alias("clinical_context"),
+        _safe_cast_to_string(ldf, "country").fill_null("unknown").alias("country"),
+        _safe_cast_to_string(ldf, "genus").fill_null("unknown").alias("host_genus"),
     ]).filter(pl.col("year") > 0).select(
         "backbone_id",
         "year",

@@ -18,7 +18,9 @@ def write_dataclass_csv(path: Path, data: pl.DataFrame | Sequence[Any]) -> Path:
     ensure_directory(path.parent)
     df = data if isinstance(data, pl.DataFrame) else pl.DataFrame(data)
     for name, dtype in zip(df.columns, df.dtypes):
-        if str(dtype).startswith("Struct") or str(dtype).startswith("List"):
+        if isinstance(dtype, pl.List) or str(dtype).startswith("List"):
+            df = df.with_columns(pl.col(name).list.join(",").alias(name))
+        elif isinstance(dtype, pl.Struct) or str(dtype).startswith("Struct"):
             df = df.with_columns(pl.col(name).map_elements(lambda value: json.dumps(value), return_dtype=pl.String).alias(name))
 
     with NamedTemporaryFile(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False) as tmp:

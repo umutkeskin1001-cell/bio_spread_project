@@ -1,0 +1,107 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.9.6, pytest-8.4.2, pluggy-1.6.0 -- /Library/Developer/CommandLineTools/usr/bin/python3
+cachedir: .pytest_cache
+hypothesis profile 'default'
+rootdir: /Users/umut/Projeler/bio_spread_project
+configfile: pyproject.toml
+plugins: anyio-4.12.1, cov-7.1.0, hypothesis-6.141.1
+collecting ... collected 2 items
+
+tests/test_competition_regression.py::test_packaged_competition_run_stays_above_metric_floor DEBUG: train_idx type=<class 'numpy.ndarray'> shape=(5472,)
+DEBUG: train_idx type=<class 'numpy.ndarray'> shape=(5473,)
+DEBUG: train_idx type=<class 'numpy.ndarray'> shape=(5473,)
+DEBUG: train_idx type=<class 'numpy.ndarray'> shape=(5473,)
+DEBUG: train_idx type=<class 'numpy.ndarray'> shape=(5473,)
+DEBUG: df type=<class 'polars.dataframe.frame.DataFrame'>
+DEBUG: dicts len=6841 type=<class 'dict'>
+DEBUG: probs_raw type=<class 'numpy.ndarray'> shape=(6841, 2)
+DEBUG: validation_predictions len=6841
+DEBUG: metrics type=<class 'dict'>
+DEBUG: bootstrap type=<class 'dict'>
+DEBUG: cal_sum type=<class 'dict'>
+DEBUG: Updating metrics...
+DEBUG: Leakage scan...
+FAILED
+tests/test_competition_regression.py::test_packaged_geo_run_stays_inside_interactive_cpu_budget DEBUG: train_idx type=<class 'numpy.ndarray'> shape=(5472,)
+DEBUG: train_idx type=<class 'numpy.ndarray'> shape=(5473,)
+DEBUG: train_idx type=<class 'numpy.ndarray'> shape=(5473,)
+DEBUG: train_idx type=<class 'numpy.ndarray'> shape=(5473,)
+DEBUG: train_idx type=<class 'numpy.ndarray'> shape=(5473,)
+DEBUG: df type=<class 'polars.dataframe.frame.DataFrame'>
+DEBUG: dicts len=6841 type=<class 'dict'>
+DEBUG: probs_raw type=<class 'numpy.ndarray'> shape=(6841, 2)
+DEBUG: validation_predictions len=6841
+DEBUG: metrics type=<class 'dict'>
+DEBUG: bootstrap type=<class 'dict'>
+DEBUG: cal_sum type=<class 'dict'>
+DEBUG: Updating metrics...
+DEBUG: Leakage scan...
+FAILED
+
+=================================== FAILURES ===================================
+____________ test_packaged_competition_run_stays_above_metric_floor ____________
+
+tmp_path = PosixPath('/private/var/folders/8j/s4gdqqk96kdbnkqyzxm1c8wc0000gn/T/pytest-of-umut/pytest-134/test_packaged_competition_run_0')
+
+    def test_packaged_competition_run_stays_above_metric_floor(tmp_path):
+        result = run_pipeline(
+            run_mode="geo",
+            geo_spread_features_path=GEO_SPREAD_FEATURES,
+            output_dir=tmp_path / "competition_regression",
+        )
+    
+        assert result.metrics["roc_auc"] >= 0.82
+>       assert result.metrics["average_precision"] >= 0.74
+E       assert 0.6317917910493469 >= 0.74
+
+tests/test_competition_regression.py:18: AssertionError
+__________ test_packaged_geo_run_stays_inside_interactive_cpu_budget ___________
+
+tmp_path = PosixPath('/private/var/folders/8j/s4gdqqk96kdbnkqyzxm1c8wc0000gn/T/pytest-of-umut/pytest-134/test_packaged_geo_run_stays_in0')
+
+    def test_packaged_geo_run_stays_inside_interactive_cpu_budget(tmp_path):
+        start = time.perf_counter()
+        result = run_pipeline(
+            run_mode="geo",
+            geo_spread_features_path=GEO_SPREAD_FEATURES,
+            output_dir=tmp_path / "speed_regression",
+        )
+        elapsed = time.perf_counter() - start
+    
+        assert result.metrics["roc_auc"] >= 0.82
+>       assert elapsed < 5.0
+E       assert 5.209998041 < 5.0
+
+tests/test_competition_regression.py:35: AssertionError
+=============================== warnings summary ===============================
+../../Library/Python/3.9/lib/python/site-packages/matplotlib/_fontconfig_pattern.py:64
+  /Users/umut/Library/Python/3.9/lib/python/site-packages/matplotlib/_fontconfig_pattern.py:64: PyparsingDeprecationWarning: 'oneOf' deprecated - use 'one_of'
+    prop = Group((name + Suppress("=") + comma_separated(value)) | oneOf(_CONSTANTS))
+
+../../Library/Python/3.9/lib/python/site-packages/matplotlib/_fontconfig_pattern.py:85
+../../Library/Python/3.9/lib/python/site-packages/matplotlib/_fontconfig_pattern.py:85
+../../Library/Python/3.9/lib/python/site-packages/matplotlib/_fontconfig_pattern.py:85
+../../Library/Python/3.9/lib/python/site-packages/matplotlib/_fontconfig_pattern.py:85
+../../Library/Python/3.9/lib/python/site-packages/matplotlib/_fontconfig_pattern.py:85
+../../Library/Python/3.9/lib/python/site-packages/matplotlib/_fontconfig_pattern.py:85
+  /Users/umut/Library/Python/3.9/lib/python/site-packages/matplotlib/_fontconfig_pattern.py:85: PyparsingDeprecationWarning: 'parseString' deprecated - use 'parse_string'
+    parse = parser.parseString(pattern)
+
+../../Library/Python/3.9/lib/python/site-packages/matplotlib/_fontconfig_pattern.py:89
+../../Library/Python/3.9/lib/python/site-packages/matplotlib/_fontconfig_pattern.py:89
+../../Library/Python/3.9/lib/python/site-packages/matplotlib/_fontconfig_pattern.py:89
+../../Library/Python/3.9/lib/python/site-packages/matplotlib/_fontconfig_pattern.py:89
+../../Library/Python/3.9/lib/python/site-packages/matplotlib/_fontconfig_pattern.py:89
+../../Library/Python/3.9/lib/python/site-packages/matplotlib/_fontconfig_pattern.py:89
+  /Users/umut/Library/Python/3.9/lib/python/site-packages/matplotlib/_fontconfig_pattern.py:89: PyparsingDeprecationWarning: 'resetCache' deprecated - use 'reset_cache'
+    parser.resetCache()
+
+../../Library/Python/3.9/lib/python/site-packages/matplotlib/_mathtext.py:45
+  /Users/umut/Library/Python/3.9/lib/python/site-packages/matplotlib/_mathtext.py:45: PyparsingDeprecationWarning: 'enablePackrat' deprecated - use 'enable_packrat'
+    ParserElement.enablePackrat()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_competition_regression.py::test_packaged_competition_run_stays_above_metric_floor - assert 0.6317917910493469 >= 0.74
+FAILED tests/test_competition_regression.py::test_packaged_geo_run_stays_inside_interactive_cpu_budget - assert 5.209998041 < 5.0
+======================= 2 failed, 14 warnings in 12.65s ========================

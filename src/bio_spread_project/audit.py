@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+import datetime
 import platform
 import ssl
 import subprocess
+import uuid
 from pathlib import Path
 from typing import Any, cast
 
 import numpy
+import polars as pl
 import sklearn
 
-from bio_spread_project.geo_reliability import FEATURE_COLUMNS, leakage_audit
 from bio_spread_project.governance import (
     QualityThresholds,
     evaluate_quality_gate_details,
@@ -20,9 +22,6 @@ from bio_spread_project.governance import (
 )
 from bio_spread_project.io_utils import sha256_file
 from bio_spread_project.model_metrics import validation_tracks
-import polars as pl
-import datetime
-import uuid
 
 
 def build_run_audit(
@@ -38,23 +37,28 @@ def build_run_audit(
     average_precision = float(metrics.get("oof_average_precision", metrics.get("average_precision", 0.0)))
     prevalence = float(metrics.get("prevalence", 0.0))
     ece = float(metrics.get("expected_calibration_error", 1.0))
-    bootstrap_auc_low = float(metrics.get("bootstrap_roc_auc_ci_low", auc))
-    bootstrap_auc_high = float(metrics.get("bootstrap_roc_auc_ci_high", auc))
     bootstrap_ap_low = float(metrics.get("bootstrap_average_precision_ci_low", average_precision))
     bootstrap_ap_high = float(metrics.get("bootstrap_average_precision_ci_high", average_precision))
-    audit = leakage_audit(FEATURE_COLUMNS if input_mode == "geo_reliability_feature_surface" else ())
+    leak_status = metrics.get("status", "fail") # Default to fail for security
+    bootstrap_auc_low = float(metrics.get("bootstrap_roc_auc_ci_low", auc))
+    bootstrap_auc_high = float(metrics.get("bootstrap_roc_auc_ci_high", auc))
+    audit_payload = {
+        "status": leak_status,
+        "max_single_feature_auc": metrics.get("max_single_feature_auc", 0.5),
+        "suspicious_feature_count": metrics.get("suspicious_feature_count", 0)
+    }
     thresholds = load_quality_thresholds(quality_thresholds_path)
     quality_checks = evaluate_quality_gates(
         metrics=metrics,
         input_mode=input_mode,
-        leakage_audit_passed=audit["status"] == "pass",
+        leakage_audit_passed=audit_payload["status"] == "pass",
         thresholds=thresholds,
     )
     quality_gates = {check.name: check.passed for check in quality_checks}
     quality_gate_details = evaluate_quality_gate_details(
         metrics=metrics,
         input_mode=input_mode,
-        leakage_audit_passed=audit["status"] == "pass",
+        leakage_audit_passed=audit_payload["status"] == "pass",
         thresholds=thresholds,
     )
     max_single_feature_auc = float(metrics.get("max_single_feature_auc", 0.5))
@@ -89,7 +93,7 @@ def build_run_audit(
         "quality_gate_details": quality_gate_details,
         "all_quality_gates_passed": all(quality_gates.values()),
         "quality_thresholds": _thresholds_payload(thresholds),
-        "leakage_audit": audit,
+        "leakage_audit": audit_payload,
         "environment": {
             "python": platform.python_version(),
             "polars": pl.__version__,

@@ -4,6 +4,7 @@ import ast
 import hashlib
 import json
 import os
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,7 @@ import polars as pl
 from bio_spread_project.io_utils import sha256_file
 
 _AST_CACHE: dict[str, tuple[float, str]] = {}
+_CACHE_LOCK = threading.Lock()
 
 
 class DocstringStripper(ast.NodeTransformer):
@@ -89,16 +91,18 @@ def source_fingerprint(root: Path) -> str:
         mtime = os.stat(path).st_mtime
         path_str = str(path)
 
-        if path_str in _AST_CACHE and _AST_CACHE[path_str][0] == mtime:
-            fingerprints[path_str] = _AST_CACHE[path_str][1]
-            continue
+        with _CACHE_LOCK:
+            if path_str in _AST_CACHE and _AST_CACHE[path_str][0] == mtime:
+                fingerprints[path_str] = _AST_CACHE[path_str][1]
+                continue
 
         with open(path, "r", encoding="utf-8") as f:
             tree = ast.parse(f.read())
 
         clean_tree = stripper.visit(tree)
         ast_hash = hashlib.sha256(ast.dump(clean_tree).encode("utf-8")).hexdigest()
-        _AST_CACHE[path_str] = (mtime, ast_hash)
+        with _CACHE_LOCK:
+            _AST_CACHE[path_str] = (mtime, ast_hash)
         fingerprints[path_str] = ast_hash
 
     return _hash_payload(fingerprints)

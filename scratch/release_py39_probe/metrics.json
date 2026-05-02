@@ -1,0 +1,107 @@
+{
+  "abstain_rate": 0.5908492910393217,
+  "average_precision": 0.705107253486791,
+  "bootstrap_average_precision_ci_high": 0.7388332298719987,
+  "bootstrap_average_precision_ci_low": 0.6591758583392302,
+  "bootstrap_roc_auc_ci_high": 0.9844534053534375,
+  "bootstrap_roc_auc_ci_low": 0.9784051380993876,
+  "brier_score": 0.02436128141701311,
+  "calibration_bins": [
+    {
+      "bin_end": 0.2,
+      "bin_start": 0.0,
+      "count": 6313,
+      "mean_prediction": 0.01028629609626614,
+      "observed_rate": 0.008712181213369238
+    },
+    {
+      "bin_end": 0.4,
+      "bin_start": 0.2,
+      "count": 163,
+      "mean_prediction": 0.2910440377794816,
+      "observed_rate": 0.43558282208588955
+    },
+    {
+      "bin_end": 0.6000000000000001,
+      "bin_start": 0.4,
+      "count": 121,
+      "mean_prediction": 0.5007599870962,
+      "observed_rate": 0.47107438016528924
+    },
+    {
+      "bin_end": 0.8,
+      "bin_start": 0.6000000000000001,
+      "count": 140,
+      "mean_prediction": 0.7012797142822168,
+      "observed_rate": 0.6214285714285714
+    },
+    {
+      "bin_end": 1.0,
+      "bin_start": 0.8,
+      "count": 104,
+      "mean_prediction": 0.8770962437142954,
+      "observed_rate": 0.8846153846153846
+    }
+  ],
+  "expected_calibration_error": 0.007170050897461841,
+  "group_oof_average_precision": 0.705107253486791,
+  "group_oof_roc_auc": 0.9815543033634377,
+  "max_single_feature_auc": 0.9453830522580816,
+  "n_backbones": 6841.0,
+  "n_bins": 5.0,
+  "n_positive": 362.0,
+  "oof_average_precision": 0.705107253486791,
+  "oof_roc_auc": 0.9815543033634377,
+  "prevalence": 0.05291624031574331,
+  "primary_model": "geobio_reliability_ensemble",
+  "roc_auc": 0.9815543033634377,
+  "status": "pass",
+  "suspicious_feature_count": 0.0,
+  "temporal_holdout_average_precision": 0.6084067569284316,
+  "temporal_holdout_n_backbones": 5628.0,
+  "temporal_holdout_roc_auc": 0.991811834669836,
+  "top_features": [
+    {
+      "feature": "geo_macro_region_entropy_train",
+      "score": 2.180134917584137
+    },
+    {
+      "feature": "geo_country_entropy_train",
+      "score": 1.7066083338319635
+    },
+    {
+      "feature": "log1p_n_countries_train",
+      "score": 1.7066083338319635
+    },
+    {
+      "feature": "coherence_score",
+      "score": 1.2879573078114885
+    },
+    {
+      "feature": "eco_clinical_context_saturation_norm",
+      "score": 0.9957681861193499
+    },
+    {
+      "feature": "log1p_member_count_train",
+      "score": 0.8568267853114608
+    },
+    {
+      "feature": "A_eff_norm",
+      "score": 0.79657548127801
+    },
+    {
+      "feature": "mash_neighbor_distance_train_norm",
+      "score": 0.7764254308759029
+    },
+    {
+      "feature": "amr_burden_saturation_norm",
+      "score": 0.5682942421124882
+    },
+    {
+      "feature": "H_external_host_range_norm",
+      "score": 0.5021284913655214
+    }
+  ],
+  "top_k_precision": 0.8676470588235294,
+  "validation_mode": "spatial_group_cv_stacked"
+}

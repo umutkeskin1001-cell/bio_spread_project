@@ -41,17 +41,17 @@ def load_observations(path: str | Path) -> pl.LazyFrame:
         "amr_gene_count",
         "mobility_score",
     }
-    missing = sorted(required - set(schema.names()))
+    missing = sorted(required - set(schema))
     if missing:
         raise ValueError(f"Input records missing required columns: {', '.join(missing)}")
-        
+
     return df.select(
         [
-            pl.col("backbone_id").cast(pl.String),
+            pl.col("backbone_id"),
             pl.col("year").cast(pl.Int64),
-            pl.col("country").cast(pl.String),
-            pl.col("host_genus").cast(pl.String),
-            pl.col("clinical_context").cast(pl.String),
+            pl.col("country"),
+            pl.col("host_genus"),
+            pl.col("clinical_context"),
             pl.col("amr_gene_count").cast(pl.Float64),
             pl.col("mobility_score").cast(pl.Float64),
         ]
@@ -66,14 +66,21 @@ def load_observations(path: str | Path) -> pl.LazyFrame:
 def load_amr_weights(path: str | Path) -> pl.LazyFrame:
     amr = scan_table(path)
     schema = amr.schema
-    if "NUCCORE_ACC" not in schema.names():
+    if "NUCCORE_ACC" not in schema:
         raise ValueError("AMR table missing NUCCORE_ACC column")
 
-    gene_col = "gene_symbol" if "gene_symbol" in schema.names() else "gene_name"
-    if gene_col not in schema.names():
+    gene_col = "gene_symbol" if "gene_symbol" in schema else "gene_name"
+    if gene_col not in schema:
         return amr.select(pl.col("NUCCORE_ACC")).group_by("NUCCORE_ACC").agg(pl.lit(0.0).alias("amr_gene_count"))
 
-    weighted = amr.with_columns(pl.col(gene_col).cast(pl.String).fill_null("").alias("gene_id"))
+    gene_dtype = amr.schema.get(gene_col)
+    if gene_dtype is None:
+        return amr.select(pl.col("NUCCORE_ACC")).group_by("NUCCORE_ACC").agg(pl.lit(0.0).alias("amr_gene_count"))
+
+    if gene_dtype.is_nested():
+        weighted = amr.with_columns(pl.col(gene_col).list.join("").fill_null("").alias("gene_id"))
+    else:
+        weighted = amr.with_columns(pl.col(gene_col).fill_null("").alias("gene_id"))
     weight_expr = pl.lit(1.0)
     for pattern, weight in {
         "blaNDM": 5.0,

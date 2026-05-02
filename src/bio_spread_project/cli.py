@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import subprocess
 from pathlib import Path
 
 from bio_spread_project.config_loader import ProjectPaths
@@ -97,13 +98,11 @@ def main(argv: list[str] | None = None) -> int:
         print("=== BioSpread Health & Scientific Rigor Check ===")
         exit_code = 0
         if args.check_types:
-            import subprocess
             print("Running Mypy (Strict Mode)...")
             completed = subprocess.run(["mypy", "src/bio_spread_project"], check=False)
             if completed.returncode != 0:
                 exit_code = completed.returncode
         if args.check_tests:
-            import subprocess
             print("Running Pytest...")
             completed = subprocess.run(["pytest", "tests/"], check=False)
             if completed.returncode != 0:

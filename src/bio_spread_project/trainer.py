@@ -31,7 +31,7 @@ def cross_validate_estimator(
     engine: DeterministicEngine,
     n_splits: int = 5,
 ) -> NDArray[np.float64]:
-    oof = np.zeros(len(y), dtype=float)
+    oof: NDArray[np.float64] = np.zeros(len(y), dtype=float)
     cv = engine.split(y, n_splits=n_splits)
     for train_idx, valid_idx in cv.split(X, y):
         model = model_factory()

@@ -1,6 +1,5 @@
 {
   "blocked_by": [
-    "quality_gates",
     "drift_evidence_missing"
   ],
   "drift_checks": [
@@ -78,7 +77,7 @@
   "quality_checks": [
     {
       "detail": {
-        "observed": "cross_validated",
+        "observed": "spatial_group_cv_stacked",
         "passed": true,
         "reason": "",
         "status": "pass",
@@ -91,24 +90,24 @@
     },
     {
       "detail": {
-        "observed": 0.5,
-        "passed": false,
-        "reason": "Observed 0.5 does not meet required 0.82",
-        "status": "fail",
-        "threshold": 0.82
-      },
-      "name": "auc_at_least_target",
-      "passed": false,
-      "reason": "Observed 0.5 does not meet required 0.82",
-      "status": "fail"
-    },
-    {
-      "detail": {
-        "observed": 0.5,
+        "observed": 0.9815543033634377,
         "passed": true,
         "reason": "",
         "status": "pass",
-        "threshold": 0.4
+        "threshold": 0.82
+      },
+      "name": "auc_at_least_target",
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    {
+      "detail": {
+        "observed": 0.705107253486791,
+        "passed": true,
+        "reason": "",
+        "status": "pass",
+        "threshold": 0.05291624031574331
       },
       "name": "average_precision_above_prevalence",
       "passed": true,
@@ -117,37 +116,37 @@
     },
     {
       "detail": {
-        "observed": 0.43678622509594356,
-        "passed": false,
-        "reason": "Observed 0.43678622509594356 does not meet required 0.05",
-        "status": "fail",
-        "threshold": 0.05
-      },
-      "name": "calibration_ece_at_most_target",
-      "passed": false,
-      "reason": "Observed 0.43678622509594356 does not meet required 0.05",
-      "status": "fail"
-    },
-    {
-      "detail": {
-        "observed": 0.5,
-        "passed": false,
-        "reason": "Observed 0.5 does not meet required 0.78",
-        "status": "fail",
-        "threshold": 0.78
-      },
-      "name": "bootstrap_auc_ci_low_at_least_target",
-      "passed": false,
-      "reason": "Observed 0.5 does not meet required 0.78",
-      "status": "fail"
-    },
-    {
-      "detail": {
-        "observed": 0.5,
+        "observed": 0.007170050897461841,
         "passed": true,
         "reason": "",
         "status": "pass",
-        "threshold": 0.4
+        "threshold": 0.05
+      },
+      "name": "calibration_ece_at_most_target",
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    {
+      "detail": {
+        "observed": 0.9784051380993876,
+        "passed": true,
+        "reason": "",
+        "status": "pass",
+        "threshold": 0.78
+      },
+      "name": "bootstrap_auc_ci_low_at_least_target",
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    {
+      "detail": {
+        "observed": 0.6591758583392302,
+        "passed": true,
+        "reason": "",
+        "status": "pass",
+        "threshold": 0.05291624031574331
       },
       "name": "bootstrap_average_precision_ci_low_above_prevalence",
       "passed": true,
@@ -156,24 +155,28 @@
     },
     {
       "detail": {
+        "observed": 0.9815543033634377,
         "passed": true,
-        "reason": "skipped",
-        "status": "pass"
+        "reason": "",
+        "status": "pass",
+        "threshold": 0.8
       },
       "name": "group_auc_at_least_target",
       "passed": true,
-      "reason": "skipped",
+      "reason": "",
       "status": "pass"
     },
     {
       "detail": {
+        "observed": 0.991811834669836,
         "passed": true,
-        "reason": "skipped",
-        "status": "pass"
+        "reason": "",
+        "status": "pass",
+        "threshold": 0.78
       },
       "name": "temporal_holdout_auc_at_least_target",
       "passed": true,
-      "reason": "skipped",
+      "reason": "",
       "status": "pass"
     },
     {
@@ -189,24 +192,26 @@
     },
     {
       "detail": {
-        "passed": false,
-        "reason": "Structural leakage check failed",
-        "status": "fail"
+        "passed": true,
+        "reason": "",
+        "status": "pass"
       },
       "name": "leakage_audit_passed",
-      "passed": false,
-      "reason": "Structural leakage check failed",
-      "status": "fail"
+      "passed": true,
+      "reason": "",
+      "status": "pass"
     },
     {
       "detail": {
+        "observed": "count=0, max_auc=0.945",
         "passed": true,
-        "reason": "skipped",
-        "status": "pass"
+        "reason": "",
+        "status": "pass",
+        "threshold": "max_count=0, max_auc=0.95"
       },
       "name": "adversarial_leakage_scan_passed",
       "passed": true,
-      "reason": "skipped",
+      "reason": "",
       "status": "pass"
     }
   ],

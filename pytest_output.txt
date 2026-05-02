@@ -1,0 +1,304 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.9.6, pytest-8.4.2, pluggy-1.6.0 -- /Library/Developer/CommandLineTools/usr/bin/python3
+cachedir: .pytest_cache
+hypothesis profile 'default'
+rootdir: /Users/umut/Projeler/bio_spread_project
+configfile: pyproject.toml
+plugins: anyio-4.12.1, cov-7.1.0, hypothesis-6.141.1
+collecting ... collected 2 items
+
+tests/test_competition_regression.py::test_packaged_competition_run_stays_above_metric_floor DEBUG: train_idx type=<class 'numpy.ndarray'> shape=(5472,)
+DEBUG: train_idx type=<class 'numpy.ndarray'> shape=(5473,)
+DEBUG: train_idx type=<class 'numpy.ndarray'> shape=(5473,)
+DEBUG: train_idx type=<class 'numpy.ndarray'> shape=(5473,)
+DEBUG: train_idx type=<class 'numpy.ndarray'> shape=(5473,)
+DEBUG: df type=<class 'polars.dataframe.frame.DataFrame'>
+DEBUG: dicts len=6841 type=<class 'dict'>
+DEBUG: probs_raw type=<class 'numpy.ndarray'> shape=(6841, 2)
+DEBUG: validation_predictions len=6841
+DEBUG: metrics type=<class 'dict'>
+DEBUG: bootstrap type=<class 'dict'>
+DEBUG: cal_sum type=<class 'dict'>
+DEBUG: Updating metrics...
+DEBUG: Leakage scan...
+FAILED
+tests/test_competition_regression.py::test_packaged_geo_run_stays_inside_interactive_cpu_budget DEBUG: train_idx type=<class 'numpy.ndarray'> shape=(5472,)
+DEBUG: train_idx type=<class 'numpy.ndarray'> shape=(5473,)
+DEBUG: train_idx type=<class 'numpy.ndarray'> shape=(5473,)
+DEBUG: train_idx type=<class 'numpy.ndarray'> shape=(5473,)
+DEBUG: train_idx type=<class 'numpy.ndarray'> shape=(5473,)
+DEBUG: df type=<class 'polars.dataframe.frame.DataFrame'>
+DEBUG: dicts len=6841 type=<class 'dict'>
+DEBUG: probs_raw type=<class 'numpy.ndarray'> shape=(6841, 2)
+DEBUG: validation_predictions len=6841
+DEBUG: metrics type=<class 'dict'>
+DEBUG: bootstrap type=<class 'dict'>
+DEBUG: cal_sum type=<class 'dict'>
+DEBUG: Updating metrics...
+DEBUG: Leakage scan...
+FAILED
+
+=================================== FAILURES ===================================
+____________ test_packaged_competition_run_stays_above_metric_floor ____________
+
+tmp_path = PosixPath('/private/var/folders/8j/s4gdqqk96kdbnkqyzxm1c8wc0000gn/T/pytest-of-umut/pytest-133/test_packaged_competition_run_0')
+
+    def test_packaged_competition_run_stays_above_metric_floor(tmp_path):
+>       result = run_pipeline(
+            run_mode="geo",
+            geo_spread_features_path=GEO_SPREAD_FEATURES,
+            output_dir=tmp_path / "competition_regression",
+        )
+
+tests/test_competition_regression.py:11: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+config = PipelineConfig(input_path=None, backbone_records_path=None, amr_path=None, geo_spread_features_path=PosixPath('/Users/...lse, fail_on_drift_fail=False, fail_on_trend_fail=False, require_trend_evidence=False, require_explicit_surface=False))
+kwargs = {'geo_spread_features_path': PosixPath('/Users/umut/Projeler/bio_spread_project/data/project_inputs/geo_spread/inputs/...zxm1c8wc0000gn/T/pytest-of-umut/pytest-133/test_packaged_competition_run_0/competition_regression'), 'run_mode': 'geo'}
+paths = ProjectPaths(project_root=PosixPath('/Users/umut/Projeler/bio_spread_project'), data_root=PosixPath('/Users/umut/Projeler/bio_spread_project/data'))
+selection = InputSelection(source_path=PosixPath('/Users/umut/Projeler/bio_spread_project/data/project_inputs/geo_spread/inputs/ba...ures': PosixPath('/Users/umut/Projeler/bio_spread_project/data/project_inputs/geo_spread/inputs/backbone_scored.tsv')})
+features = shape: (6_841, 210)
+┌────────────┬───────────┬───────────┬───────────┬───┬───────────┬───────────┬───────────┬────────...39844  ┆ unknown │
+└────────────┴───────────┴───────────┴───────────┴───┴───────────┴───────────┴───────────┴─────────┘
+run = ModelRun(model_name='geobio_reliability_ensemble', description='Leakage-controlled GeoBio ensemble using train-only ge...n_new_countries_future=0, explanation='Ensemble risk: 0.031', meta=None)], coefficient_summary='Ensemble coefficients')
+
+    def run_pipeline(config: PipelineConfig | None = None, **kwargs: Any) -> PipelineResult:
+        if config is None:
+            config = _build_config_from_kwargs(kwargs)
+        elif kwargs:
+            raise ValueError("Provide either PipelineConfig or keyword arguments, not both")
+    
+        paths = ProjectPaths.from_env()
+        selection = select_input_source(config=config, paths=paths)
+    
+        if selection.use_geo_reliability:
+            features = load_geo_spread_features(selection.source_path)
+        else:
+            if selection.input_mode == "raw_backbone_records":
+                record_frame = load_backbone_records_frame(selection.source_path, amr_path=selection.resolved_amr_path)
+                # Zero-copy Polars plan: raw production keeps observations columnar
+                # through feature aggregation, avoiding dataclass/asdict cache churn.
+                features = build_backbone_features_lazy(
+                    record_frame.lazy(),
+                    config=FeatureConfig(split_year=config.split_year, horizon_years=config.horizon_years),
+                ).collect()
+            else:
+                record_rows = load_records(selection.source_path)
+                features = feature_rows_to_frame(
+                    build_backbone_features(record_rows, split_year=config.split_year, horizon_years=config.horizon_years)
+                )
+        if features.is_empty():
+            raise ValueError("No eligible feature rows produced")
+    
+        if selection.use_geo_reliability:
+            run = fit_geo_reliability_surface(features)
+        else:
+            surface = fit_model_surface(features, load_project_config().models)
+            primary_name, _ = select_primary_model(surface)
+            run = surface[primary_name]
+    
+        _validate_external_holdout(Path(selection.source_path), config.external_holdout_path)
+        metrics = {**run.metrics, **run.calibration, "primary_model": run.model_name}
+        if selection.use_geo_reliability and config.external_holdout_path:
+            holdout_features = load_geo_spread_features(config.external_holdout_path)
+            ext_predictions = run.model.predict(holdout_features)
+            ext_metrics = {**evaluate_predictions(ext_predictions), **bootstrap_metric_intervals(ext_predictions, n_resamples=200)}
+            metrics.update({f"external_holdout_{k}": v for k, v in ext_metrics.items()})
+    
+        input_paths = _build_input_paths(selection, config)
+>       audit = build_run_audit(
+            input_paths=input_paths,
+            metrics=metrics,
+            primary_model=run.model_name,
+            input_mode=selection.input_mode,
+            quality_thresholds_path=config.quality_thresholds_path,
+        )
+
+src/bio_spread_project/orchestrator.py:192: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def build_run_audit(
+        *,
+        input_paths: dict[str, Path],
+        metrics: dict[str, Any],
+        primary_model: str,
+        input_mode: str,
+        quality_thresholds_path: str | Path | None = None,
+    ) -> dict[str, Any]:
+        """Build a compact reproducibility and reliability audit payload."""
+        auc = float(metrics.get("oof_roc_auc", metrics.get("roc_auc", 0.0)))
+        average_precision = float(metrics.get("oof_average_precision", metrics.get("average_precision", 0.0)))
+        prevalence = float(metrics.get("prevalence", 0.0))
+        ece = float(metrics.get("expected_calibration_error", 1.0))
+        bootstrap_auc_low = float(metrics.get("bootstrap_roc_auc_ci_low", auc))
+        bootstrap_auc_high = float(metrics.get("bootstrap_roc_auc_ci_high", auc))
+        bootstrap_ap_low = float(metrics.get("bootstrap_average_precision_ci_low", average_precision))
+        bootstrap_ap_high = float(metrics.get("bootstrap_average_precision_ci_high", average_precision))
+>       audit = leakage_audit(FEATURE_COLUMNS if input_mode == "geo_reliability_feature_surface" else ())
+
+src/bio_spread_project/audit.py:45: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+df = ('T_eff_norm', 'H_obs_specialization_norm', 'A_eff_norm', 'coherence_score', 'backbone_purity_norm', 'assignment_confidence_norm', ...)
+
+    def leakage_audit(df: pl.DataFrame) -> dict[str, Any]:
+>       scan = single_feature_leakage_scan(df)
+
+src/bio_spread_project/geo_reliability.py:372: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+df = ('T_eff_norm', 'H_obs_specialization_norm', 'A_eff_norm', 'coherence_score', 'backbone_purity_norm', 'assignment_confidence_norm', ...)
+
+    def single_feature_leakage_scan(df: pl.DataFrame) -> dict[str, Any]:
+>       y = df["label_geo_spread"].to_numpy()
+E       TypeError: tuple indices must be integers or slices, not str
+
+src/bio_spread_project/geo_reliability.py:356: TypeError
+__________ test_packaged_geo_run_stays_inside_interactive_cpu_budget ___________
+
+tmp_path = PosixPath('/private/var/folders/8j/s4gdqqk96kdbnkqyzxm1c8wc0000gn/T/pytest-of-umut/pytest-133/test_packaged_geo_run_stays_in0')
+
+    def test_packaged_geo_run_stays_inside_interactive_cpu_budget(tmp_path):
+        start = time.perf_counter()
+>       result = run_pipeline(
+            run_mode="geo",
+            geo_spread_features_path=GEO_SPREAD_FEATURES,
+            output_dir=tmp_path / "speed_regression",
+        )
+
+tests/test_competition_regression.py:27: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+config = PipelineConfig(input_path=None, backbone_records_path=None, amr_path=None, geo_spread_features_path=PosixPath('/Users/...lse, fail_on_drift_fail=False, fail_on_trend_fail=False, require_trend_evidence=False, require_explicit_surface=False))
+kwargs = {'geo_spread_features_path': PosixPath('/Users/umut/Projeler/bio_spread_project/data/project_inputs/geo_spread/inputs/...dbnkqyzxm1c8wc0000gn/T/pytest-of-umut/pytest-133/test_packaged_geo_run_stays_in0/speed_regression'), 'run_mode': 'geo'}
+paths = ProjectPaths(project_root=PosixPath('/Users/umut/Projeler/bio_spread_project'), data_root=PosixPath('/Users/umut/Projeler/bio_spread_project/data'))
+selection = InputSelection(source_path=PosixPath('/Users/umut/Projeler/bio_spread_project/data/project_inputs/geo_spread/inputs/ba...ures': PosixPath('/Users/umut/Projeler/bio_spread_project/data/project_inputs/geo_spread/inputs/backbone_scored.tsv')})
+features = shape: (6_841, 210)
+┌────────────┬───────────┬───────────┬───────────┬───┬───────────┬───────────┬───────────┬────────...39844  ┆ unknown │
+└────────────┴───────────┴───────────┴───────────┴───┴───────────┴───────────┴───────────┴─────────┘
+run = ModelRun(model_name='geobio_reliability_ensemble', description='Leakage-controlled GeoBio ensemble using train-only ge...n_new_countries_future=0, explanation='Ensemble risk: 0.031', meta=None)], coefficient_summary='Ensemble coefficients')
+
+    def run_pipeline(config: PipelineConfig | None = None, **kwargs: Any) -> PipelineResult:
+        if config is None:
+            config = _build_config_from_kwargs(kwargs)
+        elif kwargs:
+            raise ValueError("Provide either PipelineConfig or keyword arguments, not both")
+    
+        paths = ProjectPaths.from_env()
+        selection = select_input_source(config=config, paths=paths)
+    
+        if selection.use_geo_reliability:
+            features = load_geo_spread_features(selection.source_path)
+        else:
+            if selection.input_mode == "raw_backbone_records":
+                record_frame = load_backbone_records_frame(selection.source_path, amr_path=selection.resolved_amr_path)
+                # Zero-copy Polars plan: raw production keeps observations columnar
+                # through feature aggregation, avoiding dataclass/asdict cache churn.
+                features = build_backbone_features_lazy(
+                    record_frame.lazy(),
+                    config=FeatureConfig(split_year=config.split_year, horizon_years=config.horizon_years),
+                ).collect()
+            else:
+                record_rows = load_records(selection.source_path)
+                features = feature_rows_to_frame(
+                    build_backbone_features(record_rows, split_year=config.split_year, horizon_years=config.horizon_years)
+                )
+        if features.is_empty():
+            raise ValueError("No eligible feature rows produced")
+    
+        if selection.use_geo_reliability:
+            run = fit_geo_reliability_surface(features)
+        else:
+            surface = fit_model_surface(features, load_project_config().models)
+            primary_name, _ = select_primary_model(surface)
+            run = surface[primary_name]
+    
+        _validate_external_holdout(Path(selection.source_path), config.external_holdout_path)
+        metrics = {**run.metrics, **run.calibration, "primary_model": run.model_name}
+        if selection.use_geo_reliability and config.external_holdout_path:
+            holdout_features = load_geo_spread_features(config.external_holdout_path)
+            ext_predictions = run.model.predict(holdout_features)
+            ext_metrics = {**evaluate_predictions(ext_predictions), **bootstrap_metric_intervals(ext_predictions, n_resamples=200)}
+            metrics.update({f"external_holdout_{k}": v for k, v in ext_metrics.items()})
+    
+        input_paths = _build_input_paths(selection, config)
+>       audit = build_run_audit(
+            input_paths=input_paths,
+            metrics=metrics,
+            primary_model=run.model_name,
+            input_mode=selection.input_mode,
+            quality_thresholds_path=config.quality_thresholds_path,
+        )
+
+src/bio_spread_project/orchestrator.py:192: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def build_run_audit(
+        *,
+        input_paths: dict[str, Path],
+        metrics: dict[str, Any],
+        primary_model: str,
+        input_mode: str,
+        quality_thresholds_path: str | Path | None = None,
+    ) -> dict[str, Any]:
+        """Build a compact reproducibility and reliability audit payload."""
+        auc = float(metrics.get("oof_roc_auc", metrics.get("roc_auc", 0.0)))
+        average_precision = float(metrics.get("oof_average_precision", metrics.get("average_precision", 0.0)))
+        prevalence = float(metrics.get("prevalence", 0.0))
+        ece = float(metrics.get("expected_calibration_error", 1.0))
+        bootstrap_auc_low = float(metrics.get("bootstrap_roc_auc_ci_low", auc))
+        bootstrap_auc_high = float(metrics.get("bootstrap_roc_auc_ci_high", auc))
+        bootstrap_ap_low = float(metrics.get("bootstrap_average_precision_ci_low", average_precision))
+        bootstrap_ap_high = float(metrics.get("bootstrap_average_precision_ci_high", average_precision))
+>       audit = leakage_audit(FEATURE_COLUMNS if input_mode == "geo_reliability_feature_surface" else ())
+
+src/bio_spread_project/audit.py:45: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+df = ('T_eff_norm', 'H_obs_specialization_norm', 'A_eff_norm', 'coherence_score', 'backbone_purity_norm', 'assignment_confidence_norm', ...)
+
+    def leakage_audit(df: pl.DataFrame) -> dict[str, Any]:
+>       scan = single_feature_leakage_scan(df)
+
+src/bio_spread_project/geo_reliability.py:372: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+df = ('T_eff_norm', 'H_obs_specialization_norm', 'A_eff_norm', 'coherence_score', 'backbone_purity_norm', 'assignment_confidence_norm', ...)
+
+    def single_feature_leakage_scan(df: pl.DataFrame) -> dict[str, Any]:
+>       y = df["label_geo_spread"].to_numpy()
+E       TypeError: tuple indices must be integers or slices, not str
+
+src/bio_spread_project/geo_reliability.py:356: TypeError
+=============================== warnings summary ===============================
+../../Library/Python/3.9/lib/python/site-packages/matplotlib/_fontconfig_pattern.py:64
+  /Users/umut/Library/Python/3.9/lib/python/site-packages/matplotlib/_fontconfig_pattern.py:64: PyparsingDeprecationWarning: 'oneOf' deprecated - use 'one_of'
+    prop = Group((name + Suppress("=") + comma_separated(value)) | oneOf(_CONSTANTS))
+
+../../Library/Python/3.9/lib/python/site-packages/matplotlib/_fontconfig_pattern.py:85
+../../Library/Python/3.9/lib/python/site-packages/matplotlib/_fontconfig_pattern.py:85
+../../Library/Python/3.9/lib/python/site-packages/matplotlib/_fontconfig_pattern.py:85
+../../Library/Python/3.9/lib/python/site-packages/matplotlib/_fontconfig_pattern.py:85
+../../Library/Python/3.9/lib/python/site-packages/matplotlib/_fontconfig_pattern.py:85
+../../Library/Python/3.9/lib/python/site-packages/matplotlib/_fontconfig_pattern.py:85
+  /Users/umut/Library/Python/3.9/lib/python/site-packages/matplotlib/_fontconfig_pattern.py:85: PyparsingDeprecationWarning: 'parseString' deprecated - use 'parse_string'
+    parse = parser.parseString(pattern)
+
+../../Library/Python/3.9/lib/python/site-packages/matplotlib/_fontconfig_pattern.py:89
+../../Library/Python/3.9/lib/python/site-packages/matplotlib/_fontconfig_pattern.py:89
+../../Library/Python/3.9/lib/python/site-packages/matplotlib/_fontconfig_pattern.py:89
+../../Library/Python/3.9/lib/python/site-packages/matplotlib/_fontconfig_pattern.py:89
+../../Library/Python/3.9/lib/python/site-packages/matplotlib/_fontconfig_pattern.py:89
+../../Library/Python/3.9/lib/python/site-packages/matplotlib/_fontconfig_pattern.py:89
+  /Users/umut/Library/Python/3.9/lib/python/site-packages/matplotlib/_fontconfig_pattern.py:89: PyparsingDeprecationWarning: 'resetCache' deprecated - use 'reset_cache'
+    parser.resetCache()
+
+../../Library/Python/3.9/lib/python/site-packages/matplotlib/_mathtext.py:45
+  /Users/umut/Library/Python/3.9/lib/python/site-packages/matplotlib/_mathtext.py:45: PyparsingDeprecationWarning: 'enablePackrat' deprecated - use 'enable_packrat'
+    ParserElement.enablePackrat()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_competition_regression.py::test_packaged_competition_run_stays_above_metric_floor - TypeError: tuple indices must be integers or slices, not str
+FAILED tests/test_competition_regression.py::test_packaged_geo_run_stays_inside_interactive_cpu_budget - TypeError: tuple indices must be integers or slices, not str
+======================= 2 failed, 14 warnings in 11.45s ========================

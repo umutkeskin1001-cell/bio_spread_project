@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Union, cast
+from typing import Any, cast
 
 import polars as pl
 
@@ -16,17 +16,17 @@ ALLOWED_CHECK_STATUSES = {"pass", "fail", "not_evaluated", "blocked", "not_requi
 
 @dataclass(frozen=True)
 class QualityThresholds:
-    auc_min: float = 0.0
-    calibration_ece_max: float = 1.0
-    bootstrap_auc_ci_low_min: float = 0.0
-    group_auc_min: float = 0.0
-    temporal_holdout_auc_min: float = 0.0
-    external_holdout_auc_min: float = 0.0
-    max_single_feature_auc_max: float = 1.0
-    average_precision_above_prevalence: bool = False
-    bootstrap_average_precision_ci_low_above_prevalence: bool = False
-    external_holdout_required: bool = False
-    suspicious_feature_count_max: int = 1000
+    auc_min: float = 0.82
+    calibration_ece_max: float = 0.10
+    bootstrap_auc_ci_low_min: float = 0.78
+    group_auc_min: float = 0.80
+    temporal_holdout_auc_min: float = 0.78
+    external_holdout_auc_min: float = 0.78
+    max_single_feature_auc_max: float = 0.95
+    average_precision_above_prevalence: bool = True
+    bootstrap_average_precision_ci_low_above_prevalence: bool = True
+    external_holdout_required: bool = True
+    suspicious_feature_count_max: int = 0
 
     def __post_init__(self) -> None:
         for name in (
@@ -44,21 +44,21 @@ class QualityThresholds:
 
 @dataclass(frozen=True)
 class DriftThresholds:
-    roc_auc_max_drop: float = 1.0
-    average_precision_max_drop: float = 1.0
-    group_auc_max_drop: float = 1.0
-    temporal_auc_max_drop: float = 1.0
-    external_holdout_auc_max_drop: float = 1.0
-    max_single_feature_auc_max_increase: float = 1.0
-    suspicious_feature_count_max_increase: int = 1000
+    roc_auc_max_drop: float = 0.03
+    average_precision_max_drop: float = 0.04
+    group_auc_max_drop: float = 0.04
+    temporal_auc_max_drop: float = 0.04
+    external_holdout_auc_max_drop: float = 0.04
+    max_single_feature_auc_max_increase: float = 0.03
+    suspicious_feature_count_max_increase: int = 0
 
 
 @dataclass(frozen=True)
 class TrendThresholds:
-    roc_auc_max_drop: float = 1.0
-    average_precision_max_drop: float = 1.0
-    min_gate_pass_rate: float = 0.0
-    required_entries_for_go: int = 0
+    roc_auc_max_drop: float = 0.02
+    average_precision_max_drop: float = 0.03
+    min_gate_pass_rate: float = 0.90
+    required_entries_for_go: int = 20
 
 
 def load_quality_thresholds(path: str | Path | None = None) -> QualityThresholds:
@@ -207,9 +207,11 @@ def evaluate_drift(
     }
     metric_checks: dict[str, Any] = {}
     all_passed = True
+    missing_required_metric = False
     for metric_name, (threshold_name, max_drop) in checks.items():
         if metric_name not in current_summary or metric_name not in baseline_summary:
             metric_checks[metric_name] = {"status": "not_available"}
+            missing_required_metric = True
             continue
         current_value = float(current_summary[metric_name])
         baseline_value = float(baseline_summary[metric_name])
@@ -228,6 +230,8 @@ def evaluate_drift(
         passed = delta <= max_increase
         aux_checks[metric_name] = {"status": "pass" if passed else "fail", "current": current_value, "baseline": baseline_value, "delta": delta, "max_increase": max_increase}
         all_passed = all_passed and passed
+    if missing_required_metric:
+        all_passed = False
     return {"all_passed": all_passed, "metric_checks": metric_checks, "aux_checks": aux_checks}
 
 
@@ -264,11 +268,11 @@ def evaluate_model_registry_trend(
     previous = df.slice(len(df) - 2 * resolved_window, resolved_window)
 
     def get_mean(data: pl.DataFrame, col: str) -> float:
-        return float(cast(Union[float, int], data[col].mean())) if col in data.columns else 0.0
+        return float(cast(Any, data[col].mean())) if col in data.columns else 0.0
 
     recent_auc, prev_auc = get_mean(recent, "roc_auc"), get_mean(previous, "roc_auc")
     recent_ap, prev_ap = get_mean(recent, "average_precision"), get_mean(previous, "average_precision")
-    gate_rate = float(cast(Union[float, int], recent["all_quality_gates_passed"].cast(pl.Int32).mean())) if "all_quality_gates_passed" in recent.columns else 0.0
+    gate_rate = float(cast(Any, recent["all_quality_gates_passed"].cast(pl.Int32).mean())) if "all_quality_gates_passed" in recent.columns else 0.0
     auc_delta, ap_delta = recent_auc - prev_auc, recent_ap - prev_ap
     auc_passed = auc_delta >= -thresholds.roc_auc_max_drop
     ap_passed = ap_delta >= -thresholds.average_precision_max_drop

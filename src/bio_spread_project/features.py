@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, is_dataclass
-from typing import Sequence
+from typing import Any, Sequence
 
 import polars as pl
 
@@ -49,7 +49,7 @@ def feature_rows_to_frame(rows: list[BackboneFeatureRow]) -> pl.DataFrame:
 
 def build_surveillance_intensity(pre_df_records: pl.DataFrame, all_records: pl.LazyFrame, split_year: int) -> pl.DataFrame:
     country_agg = all_records.filter(pl.col("year") <= split_year).group_by("country").len().collect()
-    
+
     unique_b_c = pre_df_records.select(["backbone_id", "country"]).drop_nulls().unique()
     return (
         unique_b_c
@@ -60,7 +60,7 @@ def build_surveillance_intensity(pre_df_records: pl.DataFrame, all_records: pl.L
 
 def build_host_sampling_entropy(pre_df_records: pl.DataFrame) -> pl.DataFrame:
     if "host_genus" not in pre_df_records.columns or pre_df_records.is_empty():
-        unique_backbones = pre_df_records["backbone_id"].unique() if "backbone_id" in pre_df_records.columns else []
+        unique_backbones: pl.Series | list[Any] = pre_df_records["backbone_id"].unique() if "backbone_id" in pre_df_records.columns else []
         return pl.DataFrame({"backbone_id": unique_backbones, "host_sampling_shannon": [0.0] * len(unique_backbones)})
 
     host_counts = (
@@ -180,7 +180,12 @@ def build_backbone_features_lazy(
     ).agg([pl.col("country").unique().alias("future_countries")])
     return (
         pre_df.join(future_df, on="backbone_id", how="left")
-        .with_columns(pl.col("future_countries").fill_null([]))
+        .with_columns(
+            [
+                pl.col("future_countries").fill_null(pl.lit([], dtype=pl.List(pl.String))),
+                pl.col("pre_countries").fill_null(pl.lit([], dtype=pl.List(pl.String))),
+            ]
+        )
         .with_columns(
             pl.col("future_countries").list.set_difference(pl.col("pre_countries")).list.len().alias("n_new_countries_future")
         )
