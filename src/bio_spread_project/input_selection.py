@@ -6,7 +6,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from bio_spread_project.paths import ProjectPaths
+from bio_spread_project.config_loader import ProjectPaths
+from bio_spread_project.runtime_policy import PipelineConfig
 
 RUN_MODES = {"auto", "raw", "geo", "input"}
 
@@ -35,24 +36,33 @@ def ensure_readable_file(path: str | Path, *, label: str, allow_empty: bool = Fa
 
 def select_input_source(
     *,
-    run_mode: str,
-    input_path: str | Path | None,
-    backbone_records_path: str | Path | None,
-    amr_path: str | Path | None,
-    geo_spread_features_path: str | Path | None,
-    require_explicit_surface: bool,
+    config: PipelineConfig | None = None,
+    paths: ProjectPaths | None = None,
+    run_mode: str | None = None,
+    input_path: str | Path | None = None,
+    backbone_records_path: str | Path | None = None,
+    amr_path: str | Path | None = None,
+    geo_spread_features_path: str | Path | None = None,
+    require_explicit_surface: bool | None = None,
 ) -> InputSelection:
+    if config is not None:
+        run_mode = config.run_mode
+        input_path = config.input_path
+        backbone_records_path = config.backbone_records_path
+        amr_path = config.amr_path
+        geo_spread_features_path = config.geo_spread_features_path
+        require_explicit_surface = config.policy.require_explicit_surface
+    if run_mode is None or require_explicit_surface is None:
+        raise ValueError("run_mode and require_explicit_surface must be provided")
+
     if run_mode not in RUN_MODES:
         accepted = ", ".join(sorted(RUN_MODES))
         raise ValueError(f"Unknown run_mode `{run_mode}`; expected one of: {accepted}")
     if input_path is not None and backbone_records_path is not None:
         raise ValueError("Provide either input_path or backbone_records_path, not both")
 
-    packaged_geo_path = (
-        Path(geo_spread_features_path)
-        if geo_spread_features_path is not None
-        else ProjectPaths.from_env().geo_spread_features
-    )
+    active_paths = paths or ProjectPaths.from_env()
+    packaged_geo_path = Path(geo_spread_features_path) if geo_spread_features_path is not None else active_paths.geo_spread_features
     resolved_records_path = Path(backbone_records_path) if backbone_records_path is not None else None
     resolved_amr_path = Path(amr_path) if amr_path is not None else None
     candidate_inputs = {

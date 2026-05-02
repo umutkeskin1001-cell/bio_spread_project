@@ -9,7 +9,7 @@ test-cov:
 	$(PYTHON) -m pytest -q tests --cov=src/bio_spread_project --cov-report=term-missing --cov-fail-under=90
 
 lint:
-	$(PYTHON) -m ruff check src tests run_project.py verify_project.py
+	$(PYTHON) -m ruff check src tests
 
 typecheck:
 	$(PYTHON) -m mypy src
@@ -31,13 +31,13 @@ security:
 quality: lint typecheck test-cov security
 
 verify:
-	$(PYTHON) verify_project.py
+	$(PYTHON) -m bio_spread_project.cli verify
 
 release-verify:
-	$(PYTHON) verify_project.py --release
+	$(PYTHON) -m bio_spread_project.cli verify --release
 
 run:
-	$(PYTHON) run_project.py
+	$(PYTHON) -m bio_spread_project.cli run
 
 compile:
 	$(PYTHON) -m compileall src

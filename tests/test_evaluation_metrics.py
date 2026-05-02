@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from sklearn.metrics import average_precision_score, roc_auc_score
 
-from bio_spread_project.evaluation import _fast_auc, _fast_average_precision, evaluate_predictions
+from bio_spread_project.metrics import _fast_auc, _fast_average_precision, evaluate_predictions
 from bio_spread_project.model import Prediction
 
 

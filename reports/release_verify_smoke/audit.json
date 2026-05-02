@@ -1,0 +1,195 @@
+{
+  "all_quality_gates_passed": false,
+  "environment": {
+    "git_commit": "986298a2e52d5da8075254f2b4545c2285746855",
+    "numpy": "2.0.2",
+    "python": "3.9.6",
+    "scikit_learn": "1.6.1",
+    "ssl_backend": "LibreSSL 2.8.3"
+  },
+  "input_hashes": {
+    "amr": "dea80560f0b6305b425f870437f2e8cd5adda577952500159196b9593a19a841",
+    "input": "87fcaf5148a0601d39d0a6566fbeb13474b321097fb0cc5c11aa7d6341357762"
+  },
+  "input_mode": "observation_records",
+  "leakage_audit": {
+    "blocked_columns": [],
+    "blocked_tokens": [
+      "label",
+      "future",
+      "test",
+      "n_new",
+      "new_countries",
+      "event_within",
+      "time_to",
+      "visibility",
+      "outcome",
+      "severity"
+    ],
+    "feature_count": 0,
+    "status": "pass"
+  },
+  "primary_model": "mobility",
+  "project": "BioSpread",
+  "quality_gate_details": {
+    "adversarial_leakage_scan_passed": {
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    "auc_at_least_target": {
+      "passed": false,
+      "reason": "threshold_not_met",
+      "status": "fail"
+    },
+    "average_precision_above_prevalence": {
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    "bootstrap_auc_ci_low_at_least_target": {
+      "passed": false,
+      "reason": "threshold_not_met",
+      "status": "fail"
+    },
+    "bootstrap_average_precision_ci_low_above_prevalence": {
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    "calibration_ece_at_most_target": {
+      "passed": false,
+      "reason": "threshold_not_met",
+      "status": "fail"
+    },
+    "cross_validated": {
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    "external_holdout_auc_at_least_target": {
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    "group_auc_at_least_target": {
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    "leakage_audit_passed": {
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    "temporal_holdout_auc_at_least_target": {
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    }
+  },
+  "quality_gates": {
+    "adversarial_leakage_scan_passed": true,
+    "auc_at_least_target": false,
+    "average_precision_above_prevalence": true,
+    "bootstrap_auc_ci_low_at_least_target": false,
+    "bootstrap_average_precision_ci_low_above_prevalence": true,
+    "calibration_ece_at_most_target": false,
+    "cross_validated": true,
+    "external_holdout_auc_at_least_target": true,
+    "group_auc_at_least_target": true,
+    "leakage_audit_passed": true,
+    "temporal_holdout_auc_at_least_target": true
+  },
+  "quality_thresholds": {
+    "auc_min": 0.82,
+    "average_precision_above_prevalence": true,
+    "bootstrap_auc_ci_low_min": 0.78,
+    "bootstrap_average_precision_ci_low_above_prevalence": true,
+    "calibration_ece_max": 0.1,
+    "external_holdout_auc_min": 0.78,
+    "external_holdout_required": true,
+    "group_auc_min": 0.8,
+    "max_single_feature_auc_max": 0.95,
+    "suspicious_feature_count_max": 0,
+    "temporal_holdout_auc_min": 0.78
+  },
+  "validation": {
+    "average_precision": 0.5,
+    "bootstrap_average_precision_ci_high": 0.5,
+    "bootstrap_average_precision_ci_low": 0.5,
+    "bootstrap_roc_auc_ci_high": 0.5,
+    "bootstrap_roc_auc_ci_low": 0.5,
+    "brier_score": 0.29011070937989436,
+    "calibration_bins": [
+      {
+        "bin_end": 0.2,
+        "bin_start": 0.0,
+        "count": 2,
+        "mean_prediction": 0.1411907437118095,
+        "observed_rate": 0.5
+      },
+      {
+        "bin_end": 0.4,
+        "bin_start": 0.2,
+        "count": 1,
+        "mean_prediction": 0.3674683460140854,
+        "observed_rate": 0.0
+      },
+      {
+        "bin_end": 0.6000000000000001,
+        "bin_start": 0.4,
+        "count": 1,
+        "mean_prediction": 0.5852396742908507,
+        "observed_rate": 1.0
+      },
+      {
+        "bin_end": 0.8,
+        "bin_start": 0.6000000000000001,
+        "count": 1,
+        "mean_prediction": 0.6840839411801016,
+        "observed_rate": 0.0
+      },
+      {
+        "bin_end": 1.0,
+        "bin_start": 0.8,
+        "count": 0,
+        "mean_prediction": null,
+        "observed_rate": null
+      }
+    ],
+    "expected_calibration_error": 0.4367862250959435,
+    "max_single_feature_auc": 0.5,
+    "mode": "cross_validated",
+    "n_backbones": 5,
+    "n_positive": 2,
+    "prevalence": 0.4,
+    "roc_auc": 0.5,
+    "suspicious_feature_count": 0,
+    "top_features": [],
+    "tracks": {
+      "adversarial_leakage": {
+        "status": "not_evaluated"
+      },
+      "external_holdout": {
+        "status": "not_evaluated"
+      },
+      "group_oof": {
+        "status": "not_evaluated"
+      },
+      "oof": {
+        "average_precision": 0.5,
+        "brier_score": 0.29011070937989436,
+        "expected_calibration_error": 0.4367862250959435,
+        "n_backbones": 5.0,
+        "n_positive": 2.0,
+        "prevalence": 0.4,
+        "roc_auc": 0.5,
+        "status": "evaluated"
+      },
+      "temporal_holdout": {
+        "status": "not_evaluated"
+      }
+    }
+  }
+}

@@ -19,6 +19,11 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
 from bio_spread_project.data import read_table
+from bio_spread_project.metrics import (
+    bootstrap_metric_intervals,
+    calibration_summary,
+    evaluate_predictions,
+)
 from bio_spread_project.model import BioSpreadRiskModel, ModelRun, Prediction
 
 MODEL_NAME = "geobio_reliability_ensemble"
@@ -224,8 +229,6 @@ def _derive_knownness_expr() -> pl.Expr:
 
 def fit_geo_reliability_surface(df: pl.DataFrame | list[GeoSpreadFeatureRow]) -> ModelRun:
     from bio_spread_project.audit import render_model_card
-    from bio_spread_project.calibration import calibration_summary
-    from bio_spread_project.evaluation import bootstrap_metric_intervals, evaluate_predictions
 
     if isinstance(df, list):
         df = geo_rows_to_frame(df)
@@ -311,8 +314,6 @@ def _make_calibrated_stack() -> StackingClassifier:
 
 
 def _temporal_holdout_metrics(df: pl.DataFrame) -> dict[str, Any]:
-    from bio_spread_project.calibration import calibration_summary
-    from bio_spread_project.evaluation import evaluate_predictions
 
     if len(df) < 20:
         return {"temporal_holdout_status": "not_evaluated", "temporal_holdout_reason": "insufficient_rows"}

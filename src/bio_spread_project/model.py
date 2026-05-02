@@ -12,8 +12,9 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import StandardScaler
 
-from bio_spread_project.config import ModelSpec, load_project_config
+from bio_spread_project.config_loader import ModelSpec, load_project_config
 from bio_spread_project.features import feature_rows_to_frame
+from bio_spread_project.metrics import calibration_summary, evaluate_predictions
 
 
 @dataclass(frozen=True)
@@ -154,8 +155,6 @@ def _extract_matrix(df: pl.DataFrame, names: tuple[str, ...]) -> NDArray[np.floa
 
 
 def fit_model_surface(df: pl.DataFrame, specs: tuple[ModelSpec, ...]) -> dict[str, ModelRun]:
-    from bio_spread_project.calibration import calibration_summary
-    from bio_spread_project.evaluation import evaluate_predictions
 
     if isinstance(df, list):
         df = feature_rows_to_frame(df)

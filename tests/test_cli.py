@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -7,6 +8,7 @@ import pytest
 from bio_spread_project import cli
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+SRC_ROOT = PROJECT_ROOT / "src"
 FIXTURE = PROJECT_ROOT / "data" / "sample_plasmid_records.csv"
 RAW_BACKBONES = PROJECT_ROOT / "data" / "raw" / "plasmid_backbones.tsv"
 RAW_AMR = PROJECT_ROOT / "data" / "raw" / "amr.tsv"
@@ -60,9 +62,12 @@ def test_cli_defaults_follow_bio_spread_data_root(monkeypatch, tmp_path):
 
 
 def test_verify_project_has_release_mode():
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(SRC_ROOT) if not env.get("PYTHONPATH") else f"{SRC_ROOT}{os.pathsep}{env['PYTHONPATH']}"
     completed = subprocess.run(
-        [sys.executable, "verify_project.py", "--help"],
+        [sys.executable, "-m", "bio_spread_project.cli", "verify", "--help"],
         cwd=PROJECT_ROOT,
+        env=env,
         text=True,
         capture_output=True,
         check=True,
@@ -72,9 +77,12 @@ def test_verify_project_has_release_mode():
 
 
 def test_release_verification_runs_real_checks():
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(SRC_ROOT) if not env.get("PYTHONPATH") else f"{SRC_ROOT}{os.pathsep}{env['PYTHONPATH']}"
     completed = subprocess.run(
-        [sys.executable, "verify_project.py", "--release", "--skip-security"],
+        [sys.executable, "-m", "bio_spread_project.cli", "verify", "--release", "--skip-security"],
         cwd=PROJECT_ROOT,
+        env=env,
         text=True,
         capture_output=True,
         check=True,
@@ -86,9 +94,9 @@ def test_release_verification_runs_real_checks():
 
 
 def test_verify_project_ssl_warning_detects_non_openssl_backend():
-    from verify_project import _ssl_backend_warning
+    from bio_spread_project.verification import ssl_backend_warning
 
-    assert _ssl_backend_warning("LibreSSL 2.8.3")
-    assert _ssl_backend_warning("OpenSSL 1.0.2")
-    assert _ssl_backend_warning("OpenSSL 1.1.1") is None
-    assert _ssl_backend_warning("OpenSSL 3.0.0") is None
+    assert ssl_backend_warning("LibreSSL 2.8.3")
+    assert ssl_backend_warning("OpenSSL 1.0.2")
+    assert ssl_backend_warning("OpenSSL 1.1.1") is None
+    assert ssl_backend_warning("OpenSSL 3.0.0") is None

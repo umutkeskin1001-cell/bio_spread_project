@@ -1,8 +1,11 @@
-from bio_spread_project.quality import QualityThresholds, evaluate_quality_gates
+from bio_spread_project.governance import QualityThresholds
+from bio_spread_project.governance import evaluate_quality_gates as evaluate_quality_checks
 
 
 def test_geo_quality_gates_fail_when_group_and_temporal_metrics_are_missing():
-    gates = evaluate_quality_gates(
+    gates = {
+        c.name: c.passed
+        for c in evaluate_quality_checks(
         metrics={
             "validation_mode": "cross_validated",
             "roc_auc": 0.9,
@@ -17,13 +20,15 @@ def test_geo_quality_gates_fail_when_group_and_temporal_metrics_are_missing():
         input_mode="geo_reliability_feature_surface",
         leakage_audit_passed=True,
         thresholds=QualityThresholds(external_holdout_required=True),
-    )
+    )}
     assert gates["group_auc_at_least_target"] is False
     assert gates["temporal_holdout_auc_at_least_target"] is False
 
 
 def test_geo_quality_does_not_backfill_temporal_from_spatial_group_oof():
-    gates = evaluate_quality_gates(
+    gates = {
+        c.name: c.passed
+        for c in evaluate_quality_checks(
         metrics={
             "validation_mode": "spatial_group_cv_stacked",
             "roc_auc": 0.99,
@@ -39,7 +44,7 @@ def test_geo_quality_does_not_backfill_temporal_from_spatial_group_oof():
         input_mode="geo_reliability_feature_surface",
         leakage_audit_passed=True,
         thresholds=QualityThresholds(external_holdout_required=True),
-    )
+    )}
 
     assert gates["group_auc_at_least_target"] is True
     assert gates["temporal_holdout_auc_at_least_target"] is False
@@ -47,7 +52,9 @@ def test_geo_quality_does_not_backfill_temporal_from_spatial_group_oof():
 
 
 def test_geo_quality_requires_external_holdout_by_default():
-    gates = evaluate_quality_gates(
+    gates = {
+        c.name: c.passed
+        for c in evaluate_quality_checks(
         metrics={
             "validation_mode": "spatial_group_cv_stacked",
             "roc_auc": 0.9,
@@ -64,6 +71,6 @@ def test_geo_quality_requires_external_holdout_by_default():
         input_mode="geo_reliability_feature_surface",
         leakage_audit_passed=True,
         thresholds=QualityThresholds(),
-    )
+    )}
 
     assert gates["external_holdout_auc_at_least_target"] is False

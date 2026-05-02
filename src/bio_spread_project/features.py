@@ -36,6 +36,13 @@ class BackboneFeatureRow:
     knownness_score: float
 
 
+@dataclass(frozen=True)
+class FeatureConfig:
+    split_year: int = 2020
+    horizon_years: int = 3
+    min_new_countries_for_spread: int = 2
+
+
 def feature_rows_to_frame(rows: list[BackboneFeatureRow]) -> pl.DataFrame:
     return pl.DataFrame([asdict(row) for row in rows]) if rows else pl.DataFrame()
 
@@ -108,3 +115,62 @@ def build_backbone_features(
             )
         )
     return rows
+
+
+def build_backbone_features_lazy(
+    records: pl.LazyFrame,
+    *,
+    config: FeatureConfig,
+) -> pl.LazyFrame:
+    taxonomy_df = pl.DataFrame(
+        {
+            "host_genus": list(GENUS_TO_ORDER.keys()),
+            "host_order": list(GENUS_TO_ORDER.values()),
+        }
+    ).lazy()
+
+    df = records.join(taxonomy_df, on="host_genus", how="left").with_columns(
+        pl.col("host_order").fill_null(pl.concat_str([pl.lit("Unknown_"), pl.col("host_genus")]))
+    )
+
+    pre_df = df.filter(pl.col("year") <= config.split_year).group_by("backbone_id").agg(
+        [
+            pl.len().alias("n_records_pre"),
+            pl.col("country").n_unique().alias("n_countries_pre"),
+            pl.col("host_genus").n_unique().alias("n_hosts_pre"),
+            pl.col("host_order").n_unique().alias("host_diversity_pre"),
+            pl.col("amr_gene_count").mean().alias("mean_amr_gene_count_pre"),
+            pl.col("mobility_score").mean().alias("mean_mobility_score_pre"),
+            pl.col("clinical_context").str.to_lowercase().is_in(CLINICAL_TERMS).mean().alias("clinical_fraction_pre"),
+            pl.col("country").unique().alias("pre_countries"),
+        ]
+    )
+    future_df = df.filter((pl.col("year") > config.split_year) & (pl.col("year") <= config.split_year + config.horizon_years)).group_by(
+        "backbone_id"
+    ).agg([pl.col("country").unique().alias("future_countries")])
+    return (
+        pre_df.join(future_df, on="backbone_id", how="left")
+        .with_columns(pl.col("future_countries").fill_null([]))
+        .with_columns(
+            pl.col("future_countries").list.set_difference(pl.col("pre_countries")).list.len().alias("n_new_countries_future")
+        )
+        .with_columns(
+            [
+                pl.when(pl.col("n_new_countries_future") >= config.min_new_countries_for_spread)
+                .then(1)
+                .otherwise(0)
+                .alias("label_geo_spread"),
+                (
+                    (
+                        pl.col("n_records_pre").clip(upper_bound=8) / 8.0
+                        + pl.col("n_countries_pre").clip(upper_bound=5) / 5.0
+                    )
+                    / 2.0
+                )
+                .clip(0.0, 1.0)
+                .alias("knownness_score"),
+            ]
+        )
+        .drop(["pre_countries", "future_countries"])
+        .sort("backbone_id")
+    )

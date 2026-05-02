@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from bio_spread_project.pipeline import run_pipeline
+from bio_spread_project.orchestrator import run_pipeline
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 GEO_SPREAD_FEATURES = PROJECT_ROOT / "data" / "project_inputs" / "geo_spread" / "inputs" / "backbone_scored.tsv"

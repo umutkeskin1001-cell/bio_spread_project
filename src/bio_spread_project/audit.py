@@ -12,14 +12,14 @@ import numpy
 import sklearn
 
 from bio_spread_project.geo_reliability import FEATURE_COLUMNS, leakage_audit
-from bio_spread_project.io_utils import sha256_file
-from bio_spread_project.model_metrics import validation_tracks
-from bio_spread_project.quality import (
+from bio_spread_project.governance import (
     QualityThresholds,
     evaluate_quality_gate_details,
     evaluate_quality_gates,
     load_quality_thresholds,
 )
+from bio_spread_project.io_utils import sha256_file
+from bio_spread_project.model_metrics import validation_tracks
 
 
 def build_run_audit(
@@ -41,12 +41,13 @@ def build_run_audit(
     bootstrap_ap_high = float(metrics.get("bootstrap_average_precision_ci_high", average_precision))
     audit = leakage_audit(FEATURE_COLUMNS if input_mode == "geo_reliability_feature_surface" else ())
     thresholds = load_quality_thresholds(quality_thresholds_path)
-    quality_gates = evaluate_quality_gates(
+    quality_checks = evaluate_quality_gates(
         metrics=metrics,
         input_mode=input_mode,
         leakage_audit_passed=audit["status"] == "pass",
         thresholds=thresholds,
     )
+    quality_gates = {check.name: check.passed for check in quality_checks}
     quality_gate_details = evaluate_quality_gate_details(
         metrics=metrics,
         input_mode=input_mode,

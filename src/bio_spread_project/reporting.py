@@ -17,6 +17,14 @@ def _fmt_metric(metrics: dict[str, float], key: str) -> str:
     return _fmt(float(metrics[key]))
 
 
+def _fmt_optional(value: object) -> str:
+    if value is None:
+        return "not_evaluated"
+    if isinstance(value, (int, float)):
+        return _fmt(float(value))
+    return str(value)
+
+
 def render_markdown_report(
     *,
     predictions: list[Prediction],
@@ -77,7 +85,7 @@ def render_markdown_report(
     for row in calibration.get("calibration_bins", []):
         lines.append(
             f"| {_fmt(float(row['bin_start']))}-{_fmt(float(row['bin_end']))} | "
-            f"{_fmt(float(row['mean_prediction']))} | {_fmt(float(row['observed_rate']))} | "
+            f"{_fmt_optional(row['mean_prediction'])} | {_fmt_optional(row['observed_rate'])} | "
             f"{int(float(row['count']))} |"
         )
     lines.extend(

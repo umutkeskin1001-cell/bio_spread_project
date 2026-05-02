@@ -5,13 +5,16 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from bio_spread_project.paths import ProjectPaths
-from bio_spread_project.trend import (
+from bio_spread_project.config_loader import ProjectPaths
+from bio_spread_project.governance import (
     evaluate_model_registry_trend,
     load_model_registry,
     load_trend_thresholds,
     write_trend_report,
 )
+from bio_spread_project.orchestrator import run_pipeline
+from bio_spread_project.runtime_policy import EnforcementPolicy, PipelineConfig
+from bio_spread_project.verification import run_verification
 
 
 def _default_trend_thresholds_path() -> Path:
@@ -80,6 +83,9 @@ def build_parser() -> argparse.ArgumentParser:
     health = subparsers.add_parser("health", help="Check project health and scientific rigor status")
     health.add_argument("--check-types", action="store_true", help="Run mypy check")
     health.add_argument("--check-tests", action="store_true", help="Run pytest")
+    verify = subparsers.add_parser("verify", help="Run verification checks")
+    verify.add_argument("--release", action="store_true", help="Run release-grade verification checks")
+    verify.add_argument("--skip-security", action="store_true", help="Skip dependency vulnerability audit")
 
     return parser
 
@@ -104,6 +110,8 @@ def main(argv: list[str] | None = None) -> int:
                 exit_code = completed.returncode
         print("Health check complete.")
         return exit_code
+    if args.command == "verify":
+        return run_verification(release=bool(args.release), skip_security=bool(args.skip_security))
 
     if args.command == "trend":
         thresholds = load_trend_thresholds(args.trend_thresholds)
@@ -120,9 +128,6 @@ def main(argv: list[str] | None = None) -> int:
         if args.fail_on_fail and payload.get("status") == "ok" and not payload.get("all_passed", False):
             raise SystemExit(2)
         return 0
-
-    from bio_spread_project.pipeline import BioSpreadPipeline
-    from bio_spread_project.runtime_policy import EnforcementPolicy, PipelineConfig
 
     policy = EnforcementPolicy(
         fail_on_quality_gates=args.fail_on_quality_gates,
@@ -147,7 +152,7 @@ def main(argv: list[str] | None = None) -> int:
         horizon_years=args.horizon_years,
         policy=policy,
     )
-    result = BioSpreadPipeline(config).run()
+    result = run_pipeline(config)
     print(f"Input mode: {result.input_mode}")
     print(f"Selection reason: {result.selection_reason}")
     print(f"Predictions: {result.predictions_path}")
@@ -160,6 +165,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Model registry: {result.model_registry_path}")
     print(f"Trend report: {result.trend_report_path}")
     print(f"Release gate: {result.release_gate_path}")
+    print(f"Artifact index: {result.artifact_index_path}")
     print(f"ROC AUC: {result.metrics['roc_auc']:.3f}")
     return 0
 

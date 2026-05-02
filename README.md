@@ -48,7 +48,7 @@ green.
 
 ```bash
 cd bio_spread_project
-python3 run_project.py
+python3 -m bio_spread_project.cli run
 ```
 
 This runs the packaged inputs and prints the selected input mode plus the reason
@@ -170,26 +170,20 @@ Run full verification:
 
 ```bash
 cd bio_spread_project
-python3 verify_project.py
+python3 -m bio_spread_project.cli verify
 ```
 
 Run release verification:
 
 ```bash
-python3 verify_project.py --release
+python3 -m bio_spread_project.cli verify --release
 ```
 
 Release verification runs bytecode compilation, ruff, mypy, pytest, a CLI smoke
 run, and dependency audit. Use `--skip-security` only when the dependency audit
 tool is unavailable or blocked by local network policy.
 
-For lightweight/CI environments without packaged data files:
-
-```bash
-python3 verify_project.py --skip-run-if-data-missing
-```
-
-Or via Make targets:
+Via Make targets:
 
 ```bash
 make test
@@ -286,8 +280,8 @@ normal standalone product path uses `data/raw/plasmid_backbones.tsv` plus
 
 ```bash
 python3 -m pip install -r requirements-dev.txt
-python3 run_project.py --mode geo --output-dir reports/competition_final
-python3 verify_project.py --release
+python3 -m bio_spread_project.cli run --mode geo --output-dir reports/competition_final
+python3 -m bio_spread_project.cli verify --release
 ```
 
 See `docs/competition_submission.md` for the final artifact checklist.

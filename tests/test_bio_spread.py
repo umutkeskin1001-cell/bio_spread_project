@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 import warnings
@@ -6,11 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from bio_spread_project.calibration import calibration_summary
-from bio_spread_project.config import load_project_config
+from bio_spread_project.config_loader import load_project_config
 from bio_spread_project.data import load_backbone_records, load_records
-from bio_spread_project.drift import DriftThresholds, evaluate_drift, load_drift_thresholds
-from bio_spread_project.evaluation import bootstrap_metric_intervals, evaluate_predictions
 from bio_spread_project.features import build_backbone_features
 from bio_spread_project.geo_reliability import (
     FEATURE_COLUMNS,
@@ -20,11 +18,23 @@ from bio_spread_project.geo_reliability import (
     load_geo_spread_feature_rows,
     single_feature_leakage_scan,
 )
+from bio_spread_project.governance import (
+    DriftThresholds,
+    TrendThresholds,
+    evaluate_drift,
+    evaluate_model_registry_trend,
+    load_drift_thresholds,
+    load_quality_thresholds,
+    load_trend_thresholds,
+)
+from bio_spread_project.metrics import (
+    bootstrap_metric_intervals,
+    calibration_summary,
+    evaluate_predictions,
+)
 from bio_spread_project.model import BioSpreadRiskModel, fit_model_surface, select_primary_model
-from bio_spread_project.pipeline import run_pipeline
-from bio_spread_project.quality import load_quality_thresholds
+from bio_spread_project.orchestrator import run_pipeline
 from bio_spread_project.reporting import render_markdown_report
-from bio_spread_project.trend import TrendThresholds, evaluate_model_registry_trend, load_trend_thresholds
 
 FIXTURE = Path(__file__).resolve().parents[1] / "data" / "sample_plasmid_records.csv"
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -429,25 +439,31 @@ def test_report_marks_metrics_as_cross_validated(tmp_path):
     assert "Katsayı özeti" in report
 
 
-def test_run_project_script_executes_from_project_root(tmp_path):
+def test_cli_run_module_executes_from_project_root(tmp_path):
     _require_files(RAW_BACKBONES, RAW_AMR, GEO_SPREAD_FEATURES)
     project_root = Path(__file__).resolve().parents[1]
     output_dir = tmp_path / "run"
 
+    env = os.environ.copy()
+    src_root = project_root / "src"
+    env["PYTHONPATH"] = str(src_root) if not env.get("PYTHONPATH") else f"{src_root}{os.pathsep}{env['PYTHONPATH']}"
     completed = subprocess.run(
         [
             sys.executable,
-            "run_project.py",
+            "-m",
+            "bio_spread_project.cli",
+            "run",
             "--output-dir",
             str(output_dir),
         ],
         cwd=project_root,
+        env=env,
         text=True,
         capture_output=True,
         check=True,
     )
 
-    assert "BioSpread run completed" in completed.stdout
+    assert "Input mode:" in completed.stdout
     assert (output_dir / "report.md").exists()
     assert (output_dir / "predictions.csv").exists()
 

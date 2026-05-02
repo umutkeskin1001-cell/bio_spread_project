@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from bio_spread_project.trend import TrendThresholds, evaluate_model_registry_trend, load_trend_thresholds
+from bio_spread_project.governance import TrendThresholds, evaluate_model_registry_trend, load_trend_thresholds
 
 
 def test_trend_evaluation_exposes_required_history_when_insufficient():

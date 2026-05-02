@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from bio_spread_project.pipeline import run_pipeline
-from bio_spread_project.release_gate import build_release_gate_report
+from bio_spread_project.governance import build_release_gate_report
+from bio_spread_project.orchestrator import run_pipeline
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 RAW_BACKBONES = PROJECT_ROOT / "data" / "raw" / "plasmid_backbones.tsv"
