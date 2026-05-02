@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import warnings
 from pathlib import Path
 
@@ -336,6 +337,21 @@ def test_learned_model_surface_beats_prevalence_on_raw_tables(tmp_path):
     assert result.metrics["roc_auc"] >= 0.60
     assert result.metrics["average_precision"] > result.metrics["prevalence"]
     assert result.metrics.get("expected_calibration_error", 0.0) <= 0.20 or result.metrics.get("brier_score", 0.0) <= 0.25
+
+
+def test_raw_pipeline_stays_inside_polars_cpu_budget(tmp_path):
+    _require_files(RAW_BACKBONES, RAW_AMR)
+    start = time.perf_counter()
+    result = run_pipeline(
+        run_mode="raw",
+        backbone_records_path=RAW_BACKBONES,
+        amr_path=RAW_AMR,
+        output_dir=tmp_path / "raw_speed",
+    )
+    elapsed = time.perf_counter() - start
+
+    assert result.metrics["average_precision"] > result.metrics["prevalence"]
+    assert elapsed < 1.6
 
 
 def test_geo_reliability_surface_reaches_competition_auc_target(tmp_path):

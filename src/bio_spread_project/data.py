@@ -179,7 +179,29 @@ def load_backbone_records(
     amr_path: str | Path | None = None,
     limit: int | None = None,
 ) -> list[PlasmidRecord]:
-    """Load raw records and derive model observations using Polars."""
+    """Load raw records and derive model observations as compatibility objects."""
+    out = load_backbone_records_frame(path, amr_path=amr_path, limit=limit)
+    return [
+        PlasmidRecord(
+            backbone_id=str(row["backbone_id"]),
+            year=int(row["year"]) if row["year"] is not None else None,
+            country=str(row["country"]),
+            host_genus=str(row["host_genus"]),
+            clinical_context=str(row["clinical_context"]),
+            amr_gene_count=float(row["amr_gene_count"]),
+            mobility_score=float(row["mobility_score"]),
+        )
+        for row in out.to_dicts()
+    ]
+
+
+def load_backbone_records_frame(
+    path: str | Path,
+    *,
+    amr_path: str | Path | None = None,
+    limit: int | None = None,
+) -> pl.DataFrame:
+    """Load raw records into the columnar observation contract."""
     df = read_table(path)
     if limit:
         df = df.head(limit)
@@ -194,7 +216,10 @@ def load_backbone_records(
     backbone_id = pl.coalesce([pl.col(c) for c in ["backbone_id", "canonical_id", "sequence_accession"] if c in df.columns])
     year = pl.col("resolved_year").fill_null(0).cast(pl.Int64)
 
-    out = df.with_columns([
+    # Keep the production path columnar; dataclasses are only for the public
+    # compatibility API. This avoids round-tripping 70k+ rows through Python
+    # objects before Polars can aggregate them.
+    return df.with_columns([
         backbone_id.alias("backbone_id"),
         year.alias("year"),
         amr_gene_count.alias("amr_gene_count"),
@@ -202,16 +227,12 @@ def load_backbone_records(
         _derive_clinical_context(df).alias("clinical_context"),
         pl.col("country").fill_null("unknown").alias("country"),
         pl.col("genus").fill_null("unknown").alias("host_genus"),
-    ]).filter(pl.col("year") > 0)
-    return [
-        PlasmidRecord(
-            backbone_id=str(row["backbone_id"]),
-            year=int(row["year"]) if row["year"] is not None else None,
-            country=str(row["country"]),
-            host_genus=str(row["host_genus"]),
-            clinical_context=str(row["clinical_context"]),
-            amr_gene_count=float(row["amr_gene_count"]),
-            mobility_score=float(row["mobility_score"]),
-        )
-        for row in out.to_dicts()
-    ]
+    ]).filter(pl.col("year") > 0).select(
+        "backbone_id",
+        "year",
+        "country",
+        "host_genus",
+        "clinical_context",
+        "amr_gene_count",
+        "mobility_score",
+    )
