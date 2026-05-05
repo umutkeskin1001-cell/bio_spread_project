@@ -18,19 +18,23 @@
     "report": "report.md",
     "trend_report": "trend_report.json"
   },
-  "config_fingerprint": "2a55d30bf08f09cc6d852cff2145cbeef9746f3e4226a013575dd07409574c0d",
-  "created_at_utc": "2026-05-02T20:09:54.526828+00:00",
+  "config_fingerprint": "f4d211b552055aa98e29e03bee300ce75353c69813570141a7c25f2b0da78bf8",
+  "created_at_utc": "2026-05-02T21:46:52.848346+00:00",
   "dag_trace": [
     "select_input_source",
     "load_or_build_features",
     "enrich_features",
     "add_synergy_features",
+    "add_graph_contagion",
+    "add_bio_adapter",
     "add_phylo_propagation",
+    "adversarial_audit",
     "train_model",
     "evaluate_gates"
   ],
   "dependency_fingerprint": "d273e729fcf3af7fc5f4027da88ab44aa93c9f2f750c41b9d78b295a437947a7",
   "enrichment_modules": [
+    "adversarial_phantom_gate",
     "country_slope_train",
     "enable_phylo_spatial_embedding",
     "enable_rank_focal_loss",
@@ -49,14 +53,14 @@
     "synergy_interactions"
   ],
   "environment": {
-    "git_commit": "553263ea1cfa41f65941c5fff43a7689265586fe",
+    "git_commit": "d35dcbd1e43cf8110448d5cfffbaff7d8179852d",
     "numpy": "1.26.4",
     "polars": "0.20.31",
     "python": "3.9.6",
     "scikit_learn": "1.6.1",
     "ssl_backend": "LibreSSL 2.8.3"
   },
-  "git_commit": "553263ea1cfa41f65941c5fff43a7689265586fe",
+  "git_commit": "d35dcbd1e43cf8110448d5cfffbaff7d8179852d",
   "horizon_years": 3,
   "input_candidates": {
     "amr": "data/raw/amr.tsv",
@@ -100,14 +104,14 @@
     "model_random_state": 42,
     "permutation_importance_seed": 7
   },
-  "run_id": "cb86a455f2884084aaba8e35509901fa",
-  "run_mode": "geo",
-  "selection_reason": "explicit_geo_mode",
+  "run_id": "e8b0924518074402ae82758b75f51cec",
+  "run_mode": "auto",
+  "selection_reason": "auto_selected_geo_surface_because_feature_surface_exists",
   "semantic_input_hashes": {
     "amr": "1ec28a2eabc9a73b043f1cec54dd1f13d0fee3a07ef6854b105215024d45463d",
     "geo_spread_features": "e3fa1700df471c2330543dc32fcbfa769fb8854d753d3d62cb53abb010bb2614"
   },
-  "source_fingerprint": "68d458ce36f4cee1244fb4732b01dfeebbc01025caad2ab32f92cded115f21d9",
+  "source_fingerprint": "b81a901a3483073252de06b7cafc03338fda9c6d452fc036f41c04436b257fb7",
   "split_year": 2020,
   "threshold_sources": {
     "baseline": "project_config/baseline_benchmark.json",

@@ -3,11 +3,7 @@
   "scorecard": [
     {
       "abstain_rate": 0.016177957532861477,
-      "average_precision": 0.8902586190670988,
-      "bootstrap_average_precision_ci_high": 0.9178547215444638,
-      "bootstrap_average_precision_ci_low": 0.8560463563599243,
-      "bootstrap_roc_auc_ci_high": 0.9403064693175169,
-      "bootstrap_roc_auc_ci_low": 0.9041103781134812,
+      "average_precision": 0.8195031143902662,
       "canary_self_test": {
         "alarm_count": 0,
         "auc_floor": 0.9,
@@ -15,83 +11,84 @@
         "reason": "",
         "status": "pass"
       },
-      "expected_calibration_error": 0.03373729385571601,
-      "group_oof_average_precision": 0.8902586190670988,
-      "group_oof_roc_auc": 0.9216936741653228,
+      "conformal_qhat_90": 0.625,
+      "expected_calibration_error": 0.01703410493617278,
+      "group_oof_average_precision": 0.8195031143902662,
+      "group_oof_roc_auc": 0.8840153497757454,
       "leakage_alarm_count": 0.0,
       "leakage_alarm_features": [],
       "max_single_feature_auc": 0.9165146668781446,
       "model_name": "geobio_reliability_ensemble",
       "n_backbones": 989.0,
       "n_positive": 362.0,
-      "oof_average_precision": 0.8902586190670988,
-      "oof_roc_auc": 0.9216936741653228,
+      "oof_average_precision": 0.8195031143902662,
+      "oof_roc_auc": 0.8840153497757454,
       "permutation_sanity": {
         "alarm_count": 0,
         "auc_ceiling": 0.6,
         "n_trials": 8,
-        "permutation_auc_max": 0.5227404901001876,
-        "permutation_auc_mean": 0.4867707865218042,
+        "permutation_auc_max": 0.5218395058464846,
+        "permutation_auc_mean": 0.4859292804462185,
         "permutation_auc_values": [
-          0.4821080828641166,
-          0.5058993541110436,
-          0.5194141179165895,
-          0.4495426788971424,
-          0.469998766378528,
-          0.4965855119969688,
-          0.44787728990985753,
-          0.5227404901001876
+          0.4802818825063664,
+          0.5054675865958216,
+          0.5187444376888982,
+          0.4501660983196314,
+          0.468994246036991,
+          0.4948694564135099,
+          0.44707103016204497,
+          0.5218395058464846
         ],
         "reason": "",
         "status": "pass"
       },
       "prevalence": 0.3660262891809909,
-      "roc_auc": 0.9216936741653228,
+      "roc_auc": 0.8840153497757454,
       "status": "pass",
       "suspicious_feature_count": 0.0,
-      "temporal_holdout_average_precision": 0.9091654215272548,
+      "temporal_holdout_average_precision": 0.8425746851464134,
       "temporal_holdout_n_backbones": 791.0,
-      "temporal_holdout_roc_auc": 0.9189474776024582,
+      "temporal_holdout_roc_auc": 0.8743501147428334,
       "top_features": [
         {
-          "feature": "synergy_coherence_score__country_slope_train",
-          "score": 0.09750254623111107
+          "feature": "T_eff_norm",
+          "score": 0.2623254348659655
         },
         {
-          "feature": "psge_3",
-          "score": 0.09545413652643248
+          "feature": "H_obs_specialization_norm",
+          "score": 0.2623254348659655
         },
         {
-          "feature": "country_slope_train",
-          "score": 0.09357908512164674
+          "feature": "A_eff_norm",
+          "score": 0.2623254348659655
         },
         {
-          "feature": "psge_6",
-          "score": 0.09222974669770763
+          "feature": "coherence_score",
+          "score": 0.2623254348659655
         },
         {
-          "feature": "synergy_H_obs_specialization_norm__A_eff_norm",
-          "score": 0.09152099852637648
-        },
-        {
-          "feature": "geo_dominant_region_share_train",
-          "score": 0.0911057999954184
-        },
-        {
-          "feature": "log1p_n_countries_train",
-          "score": 0.09095743287486034
+          "feature": "backbone_purity_norm",
+          "score": 0.2623254348659655
         },
         {
           "feature": "assignment_confidence_norm",
-          "score": 0.09094241662434661
+          "score": 0.2623254348659655
         },
         {
-          "feature": "gnn_embed_0",
-          "score": 0.09094241662434661
+          "feature": "mash_neighbor_distance_train_norm",
+          "score": 0.2623254348659655
         },
         {
-          "feature": "gnn_embed_1",
-          "score": 0.09094241662434661
+          "feature": "orit_support",
+          "score": 0.2623254348659655
+        },
+        {
+          "feature": "H_external_host_range_norm",
+          "score": 0.2623254348659655
+        },
+        {
+          "feature": "geo_country_entropy_train",
+          "score": 0.2623254348659655
         }
       ],
       "top_k_precision": 1.0,

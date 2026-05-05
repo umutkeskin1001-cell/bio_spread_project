@@ -674,6 +674,7 @@ def fit_geo_reliability_surface(
                 loss.backward()
                 opt.step()
 
+
             evid_fold.eval()
             with torch.no_grad():
                 x_val_t = torch.as_tensor(np.array(X_meta_val, dtype=np.float32, copy=True))
@@ -887,14 +888,41 @@ def fit_geo_reliability_surface(
             loss.backward()
             opt.step()
 
+<<<<<<< HEAD
     # Wrap in our ensemble
+=======
+    # ---------------------------------------------------------
+    # NESTED ISOTONIC CALIBRATION (Honest OOF ECE)
+    # ---------------------------------------------------------
+    from sklearn.isotonic import IsotonicRegression
+    from sklearn.model_selection import KFold
+    calibrated_oof = np.zeros_like(oof_meta_probs)
+    cal_cv = KFold(n_splits=5, shuffle=True, random_state=42)
+    for c_train_idx, c_val_idx in cal_cv.split(oof_meta_probs):
+        iso_fold = IsotonicRegression(out_of_bounds='clip')
+        iso_fold.fit(oof_meta_probs[c_train_idx], y[c_train_idx])
+        calibrated_oof[c_val_idx] = iso_fold.transform(oof_meta_probs[c_val_idx])
+    
+    # Final calibrator for predict() on future data
+    calibrator = IsotonicRegression(out_of_bounds='clip')
+    calibrator.fit(oof_meta_probs, y)
+    
+    oof_meta_probs = calibrated_oof
+
+
+
+
+>>>>>>> 652e8458f0103f7d28df330a4311abe978728db1
     ensemble = GeoBioReliabilityModel(
         base_estimators=fitted_base,
         meta_estimator=meta_final, 
         feature_columns=tuple(all_final_features),
         importances=[],
         meta_scaler=None,
+<<<<<<< HEAD
         bio_features=bio_features,
+=======
+>>>>>>> 652e8458f0103f7d28df330a4311abe978728db1
         calibrator=calibrator
     )
     # Attach enrichment models for self-contained inference
@@ -1017,12 +1045,17 @@ def fit_geo_reliability_surface(
 
 
 class GeoBioReliabilityModel:
+<<<<<<< HEAD
     def __init__(self, base_estimators: list[Any], meta_estimator: Any, feature_columns: tuple[str, ...], importances: list[Any], meta_scaler: Any | None, bio_features: tuple[str, ...] = (), calibrator: Any | None = None):
+=======
+    def __init__(self, base_estimators: list[Any], meta_estimator: Any, feature_columns: tuple[str, ...], importances: list[Any], meta_scaler: Any | None, calibrator: Any | None = None):
+>>>>>>> 652e8458f0103f7d28df330a4311abe978728db1
         self.base_estimators = base_estimators
         self.meta_estimator = meta_estimator
         self.feature_columns = feature_columns
         self.importances = importances
         self.meta_scaler = meta_scaler
+<<<<<<< HEAD
         self.bio_features = bio_features
         self.calibrator = calibrator
         # Storage for inductive enrichment models
@@ -1033,6 +1066,9 @@ class GeoBioReliabilityModel:
         self.grps_label_df: pl.DataFrame | None = None
         self.mixture_weight: float = 0.6
         self.evid_clf: Any | None = None
+=======
+        self.calibrator = calibrator
+>>>>>>> 652e8458f0103f7d28df330a4311abe978728db1
 
     def predict(self, df: pl.DataFrame) -> list[Prediction]:
         # Force enrichment by dropping potentially stale GNN/Phylo columns
@@ -1080,11 +1116,23 @@ class GeoBioReliabilityModel:
             import torch
             self.evid_clf.eval()
             with torch.no_grad():
+<<<<<<< HEAD
                 x_meta_t = torch.as_tensor(np.array(X_meta, dtype=np.float32, copy=True))
                 _, prob_v = self.evid_clf(x_meta_t)
                 evid_probs = prob_v[:, 1].numpy()
             # Optimized mixture weight
             probs = self.mixture_weight * log_probs + (1.0 - self.mixture_weight) * evid_probs
+=======
+                alpha_all, prob_all = evid_clf(torch.FloatTensor(X_meta))
+                ep = prob_all[:, 1].numpy()
+                eu = 2.0 / alpha_all.sum(dim=1).numpy()
+            X_lgb_all = np.hstack([X_meta, ep.reshape(-1, 1), np.log(eu + 1e-6).reshape(-1, 1)])
+            lgb_p = self.meta_estimator.predict(X_lgb_all)
+            # Map ranking score to [0, 1] via sigmoid
+            lgb_p_prob = 1.0 / (1.0 + np.exp(-lgb_p))
+            # Mixture: 10% ranker (for SOTA order) + 90% evidential (for calibration)
+            probs = 0.1 * lgb_p_prob + 0.9 * ep
+>>>>>>> 652e8458f0103f7d28df330a4311abe978728db1
         else:
             probs = log_probs
         
@@ -1092,6 +1140,15 @@ class GeoBioReliabilityModel:
             # Calibrate the mixture
             probs = self.calibrator.transform(probs)
 
+<<<<<<< HEAD
+=======
+        if getattr(self, "calibrator", None) is not None:
+            probs = self.calibrator.transform(probs)
+
+
+
+        print(f"DEBUG: probs range [{np.min(probs):.4f}, {np.max(probs):.4f}]")
+>>>>>>> 652e8458f0103f7d28df330a4311abe978728db1
         predictions = []
         for row_dict, prob in zip(df.to_dicts(), probs):
             predictions.append(_prediction_from_row(row_dict, float(prob), MODEL_NAME))
