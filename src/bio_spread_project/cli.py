@@ -27,6 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
     default_raw_backbones = paths.raw_backbones
     default_raw_amr = paths.raw_amr
     default_geo_spread_features = paths.geo_spread_features
+    default_external_holdout = paths.external_holdout_geo_spread_features
     default_output = paths.default_output_dir
 
     parser = argparse.ArgumentParser(description="BioSpread geographic spread early-warning workflow")
@@ -40,7 +41,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--external-holdout",
         type=Path,
-        default=None,
+        default=default_external_holdout,
         help="Optional external holdout feature surface (TSV) for independent evaluation",
     )
     run.add_argument("--baseline-benchmark", type=Path, default=None)
@@ -73,6 +74,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--require-trend-evidence",
         action="store_true",
         help="Treat insufficient model-registry history as a blocking release-gate failure",
+    )
+    run.add_argument(
+        "--require-strict-lineage",
+        action="store_true",
+        help="Require lineage coverage for all model features in the feature surface.",
     )
 
     trend = subparsers.add_parser("trend", help="Evaluate rolling trend from model registry history")
@@ -134,6 +140,7 @@ def main(argv: list[str] | None = None) -> int:
         fail_on_trend_fail=args.fail_on_trend_fail,
         require_trend_evidence=args.require_trend_evidence,
         require_explicit_surface=args.require_explicit_surface,
+        require_strict_lineage=args.require_strict_lineage,
     )
     config = PipelineConfig(
         input_path=args.input,

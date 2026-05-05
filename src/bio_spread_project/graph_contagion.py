@@ -32,21 +32,39 @@ def build_fastrp_embeddings(records: pl.DataFrame, mash_df: pl.DataFrame, split_
 
     # 2. Geographic adjacency (Shared country ratio)
     rows_g, cols_g, data_g = [], [], []
-    bb_countries = pre.group_by('backbone_id').agg(pl.col('country').unique())
-    country_sets = {r['backbone_id']: set(r['country']) for r in bb_countries.to_dicts()}
-    
-    for i, bb_i in enumerate(backbone_ids):
-        set_i = country_sets.get(bb_i, set())
-        if not set_i: continue
-        for j, bb_j in enumerate(backbone_ids):
-            if i == j: continue
-            set_j = country_sets.get(bb_j, set())
-            if not set_j: continue
-            inter = len(set_i & set_j)
-            maxs = max(len(set_i), len(set_j))
-            if maxs > 0 and inter > 0:
-                ratio = inter / maxs
-                rows_g.append(i); cols_g.append(j); data_g.append(ratio * 0.5)
+    bb_countries = pre.group_by("backbone_id").agg(pl.col("country").drop_nulls().unique())
+    country_sets = {r["backbone_id"]: set(r["country"]) for r in bb_countries.to_dicts()}
+    set_sizes = {bb: len(cset) for bb, cset in country_sets.items()}
+
+    # Build candidate overlaps via country -> backbones index to avoid dense O(n^2) scan.
+    country_to_backbones: dict[str, list[str]] = {}
+    for bb, countries in country_sets.items():
+        for country in countries:
+            country_to_backbones.setdefault(str(country), []).append(str(bb))
+
+    overlap_counts: dict[tuple[str, str], int] = {}
+    for shared_backbones in country_to_backbones.values():
+        uniq = sorted(set(shared_backbones))
+        m = len(uniq)
+        for a_idx in range(m):
+            for b_idx in range(a_idx + 1, m):
+                a = uniq[a_idx]
+                b = uniq[b_idx]
+                overlap_counts[(a, b)] = overlap_counts.get((a, b), 0) + 1
+
+    for (bb_a, bb_b), inter in overlap_counts.items():
+        maxs = max(set_sizes.get(bb_a, 0), set_sizes.get(bb_b, 0))
+        if maxs <= 0:
+            continue
+        ratio = float(inter) / float(maxs)
+        i = id_to_idx.get(bb_a)
+        j = id_to_idx.get(bb_b)
+        if i is None or j is None or i == j:
+            continue
+        w = ratio * 0.5
+        rows_g.extend([i, j])
+        cols_g.extend([j, i])
+        data_g.extend([w, w])
     
     B = coo_matrix((data_g, (rows_g, cols_g)), shape=(n, n)).tocsr()
     C = 0.7 * A + 0.3 * B + eye(n)  # self-loops for connectivity

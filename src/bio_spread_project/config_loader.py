@@ -25,15 +25,23 @@ class ProjectPaths:
 
     @property
     def raw_backbones(self) -> Path:
-        return self.data_root / "raw" / "plasmid_backbones.tsv"
+        # SOTA default: curated backbone table built from external-source pipeline
+        # (NCBI Pathogen Detection + PLSDB + PubMLST harmonization layer).
+        return self.data_root / "project_inputs" / "silver" / "plasmid_backbones.tsv"
 
     @property
     def raw_amr(self) -> Path:
-        return self.data_root / "raw" / "amr.tsv"
+        # SOTA default: curated AMR table from external-source ingestion layer.
+        return self.data_root / "project_inputs" / "raw" / "amr.tsv"
 
     @property
     def geo_spread_features(self) -> Path:
-        return self.data_root / "project_inputs" / "geo_spread" / "inputs" / "backbone_scored.tsv"
+        # SOTA default: strict train-only surface to avoid identity overlap with external holdout.
+        return self.data_root / "project_inputs" / "geo_spread" / "inputs" / "backbone_scored_train_only.tsv"
+
+    @property
+    def external_holdout_geo_spread_features(self) -> Path:
+        return self.data_root / "project_inputs" / "geo_spread" / "inputs" / "external_holdout_curated_v1.tsv"
 
     @property
     def default_output_dir(self) -> Path:

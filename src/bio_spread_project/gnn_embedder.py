@@ -13,9 +13,21 @@ class BackboneGraphEmbedder:
 
     def fit(self, observations: pl.LazyFrame, split_year: int) -> None:
         import random
+        import warnings
 
         import torch
         import torch.nn.functional as F
+
+        warnings.filterwarnings(
+            "ignore",
+            message="`torch_geometric.distributed` has been deprecated*",
+            category=DeprecationWarning,
+        )
+        warnings.filterwarnings(
+            "ignore",
+            message="`torch.jit.script` is deprecated*",
+            category=DeprecationWarning,
+        )
         from torch_geometric.data import Data
 
         torch.manual_seed(42)
@@ -49,14 +61,14 @@ class BackboneGraphEmbedder:
             (pl.col("mobility_score") * (-0.2 * (split_year - pl.col("year"))).exp()).alias("w")
         ]).group_by(["backbone_id", "country"]).agg(pl.col("w").sum().alias("weight")).drop_nulls()
 
-        bc_u = bc["backbone_id"].replace(b_map, default=None).to_numpy()
-        bc_v = bc["country"].replace(c_map, default=None).to_numpy()
+        bc_u = bc["backbone_id"].replace(b_map).to_numpy()
+        bc_v = bc["country"].replace(c_map).to_numpy()
         bc_w = bc["weight"].to_numpy()
 
         # 2. Backbone-Host
         bh = pre_obs.group_by(["backbone_id", "host_order"]).agg(pl.len().log1p().alias("weight")).drop_nulls()
-        bh_u = bh["backbone_id"].replace(b_map, default=None).to_numpy()
-        bh_v = bh["host_order"].replace(h_map, default=None).to_numpy()
+        bh_u = bh["backbone_id"].replace(b_map).to_numpy()
+        bh_v = bh["host_order"].replace(h_map).to_numpy()
         bh_w = bh["weight"].to_numpy()
 
         src = np.concatenate([bc_u, bc_v, bh_u, bh_v])
@@ -111,7 +123,7 @@ class BackboneGraphEmbedder:
         d = self.embeddings.shape[1]
 
         # Vectorized mapping
-        idx_series = backbone_ids.replace(self.backbone_mapping, default=None).fill_null(-1).to_numpy().astype(int)
+        idx_series = np.array([self.backbone_mapping.get(str(bb), -1) for bb in b_ids], dtype=int)
 
         embeds = np.zeros((len(b_ids), d))
         mask = idx_series >= 0

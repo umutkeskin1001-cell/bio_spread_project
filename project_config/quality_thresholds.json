@@ -9,5 +9,10 @@
   "external_holdout_required": false,
   "external_holdout_auc_min": 0.78,
   "max_single_feature_auc_max": 0.95,
-  "suspicious_feature_count_max": 0
+  "suspicious_feature_count_max": 0,
+  "temporal_consistency_required": true,
+  "feature_lineage_required": true,
+  "max_unknown_lineage_count": 0,
+  "calibration_bin_gap_max": 0.2,
+  "max_disabled_feature_leak_count": 0
 }

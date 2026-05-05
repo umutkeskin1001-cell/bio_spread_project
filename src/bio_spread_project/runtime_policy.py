@@ -13,6 +13,7 @@ class EnforcementPolicy:
     fail_on_trend_fail: bool = False
     require_trend_evidence: bool = False
     require_explicit_surface: bool = False
+    require_strict_lineage: bool = False
 
     @property
     def allow_conditional_release(self) -> bool:

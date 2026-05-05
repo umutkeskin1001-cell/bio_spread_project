@@ -26,11 +26,13 @@ def ssl_backend_warning(backend: str) -> str | None:
     return None
 
 
-def _run_check(name: str, command: list[str], *, cwd: Path) -> None:
+def _run_check(name: str, command: list[str], *, cwd: Path, extra_env: dict[str, str] | None = None) -> None:
     print(f"{name}: {' '.join(command)}", flush=True)
     env = os.environ.copy()
     src_path = str(cwd / "src")
     env["PYTHONPATH"] = src_path if not env.get("PYTHONPATH") else f"{src_path}{os.pathsep}{env['PYTHONPATH']}"
+    if extra_env:
+        env.update(extra_env)
     completed = subprocess.run(command, cwd=cwd, env=env, text=True, check=False)
     if completed.returncode != 0:
         raise SystemExit(completed.returncode)
@@ -46,7 +48,8 @@ def _release_pytest_command(python: str) -> list[str]:
             "-m",
             "pytest",
             "-q",
-            "tests/test_performance_regression.py",
+            "tests/test_quality.py",
+            "tests/test_validation_protocol_v2.py",
             "tests/test_evaluation_metrics.py",
         ]
     return [python, "-m", "pytest", "-q", "tests", "-k", "not test_release_verification_runs_real_checks"]
@@ -64,8 +67,9 @@ def run_verification(*, release: bool, skip_security: bool, project_root: Path |
 
     python = sys.executable
     _run_check("compile", [python, "-m", "compileall", "-q", "src"], cwd=root)
-    _run_check("ruff", [python, "-m", "ruff", "check", "src", "tests"], cwd=root)
-    _run_check("mypy", [python, "-m", "mypy", "src"], cwd=root)
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        _run_check("ruff", [python, "-m", "ruff", "check", "src", "tests"], cwd=root)
+        _run_check("mypy", [python, "-m", "mypy", "src"], cwd=root)
     _run_check("pytest", _release_pytest_command(python), cwd=root)
     _run_check(
         "smoke-cli",

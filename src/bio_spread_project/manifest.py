@@ -72,6 +72,7 @@ def build_manifest(
             "fail_on_trend_fail": policy.fail_on_trend_fail,
             "require_trend_evidence": policy.require_trend_evidence,
             "require_explicit_surface": policy.require_explicit_surface,
+            "require_strict_lineage": policy.require_strict_lineage,
         },
         "threshold_sources": threshold_sources,
         "quality_gates": quality_gates,

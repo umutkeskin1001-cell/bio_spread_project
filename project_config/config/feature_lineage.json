@@ -1,0 +1,1169 @@
+{
+  "features": {
+    "A_H_obs_synergy_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "A_consistency": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "A_content_raw": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "A_eff": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "A_eff_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "A_raw": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "A_raw_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "A_recurrence": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "A_recurrence_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "H_A_synergy_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "H_augmented_eff": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "H_augmented_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "H_augmented_raw": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "H_augmented_specialization_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "H_breadth_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "H_eff": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "H_eff_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "H_evenness_T_synergy_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "H_external_host_range_norm": {
+      "source": "host_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "H_external_host_range_score": {
+      "source": "host_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "H_external_host_range_support": {
+      "source": "host_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "H_genus_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "H_genus_richness_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "H_obs": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "H_obs_basic": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "H_obs_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "H_obs_specialization_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "H_phylogenetic_augmented_eff": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "H_phylogenetic_augmented_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "H_phylogenetic_augmented_raw": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "H_phylogenetic_augmented_specialization_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "H_phylogenetic_eff": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "H_phylogenetic_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "H_phylogenetic_raw": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "H_phylogenetic_specialization_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "H_raw": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "H_specialization_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "H_support": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "H_support_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "H_support_norm_residual": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "T_A_synergy_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "T_H_obs_synergy_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "T_coherence_synergy_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "T_eff": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "T_eff_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "T_raw": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "T_raw_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "amr_burden_latent_norm": {
+      "source": "amr_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "amr_burden_saturation_norm": {
+      "source": "amr_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "amr_class_richness_norm": {
+      "source": "amr_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "amr_clinical_escalation_norm": {
+      "source": "amr_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "amr_clinical_threat_norm": {
+      "source": "amr_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "amr_gene_burden_norm": {
+      "source": "amr_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "amr_load_density_norm": {
+      "source": "amr_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "amr_mdr_proxy_norm": {
+      "source": "amr_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "amr_mechanism_diversity_norm": {
+      "source": "amr_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "amr_support_factor": {
+      "source": "amr_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "amr_support_norm": {
+      "source": "amr_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "amr_support_norm_residual": {
+      "source": "amr_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "amr_support_observed_flag": {
+      "source": "amr_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "amr_xdr_proxy_norm": {
+      "source": "amr_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "arithmetic_priority_index": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "assignment_confidence_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "assignment_confidence_score": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "assignment_primary_fraction": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "backbone_assignment_mode": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "backbone_purity_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "backbone_purity_score": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "bio_priority_index": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "canonical_member_count_train": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "class_unique_count": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "clinical_A_synergy_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "clinical_context_fraction_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "clinical_context_fraction_train": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "clinical_context_sparse_penalty_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "clinical_weapon_synergy_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "coherence_score": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "context_support_guard_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "context_support_observed_flag": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "country_slope_train": {
+      "source": "geo_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "eco_clinical_context_latent_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "eco_clinical_context_saturation_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "ecology_context_diversity_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "ecology_context_diversity_train": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "ecology_context_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "ecology_context_score": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "endemic_resistance_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "environmental_context_fraction_train": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "event_within_1y_label": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "event_within_3y_label": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "event_within_5y_label": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "evidence_support_index": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "evolutionary_jump_score_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "external_host_support_observed_flag": {
+      "source": "host_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "external_t_synergy_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "family_purity_train": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "family_unique_count": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "food_context_fraction_train": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "genus_purity_train": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "genus_unique_count": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "geo_country_entropy_train": {
+      "source": "geo_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "geo_country_record_count_train": {
+      "source": "geo_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "geo_dominant_region_share_train": {
+      "source": "geo_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "geo_macro_region_entropy_train": {
+      "source": "geo_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "host_associated_context_fraction_train": {
+      "source": "host_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "host_breadth_slope_train": {
+      "source": "host_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "host_observation_count": {
+      "source": "host_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "host_phylogenetic_dispersion_norm": {
+      "source": "host_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "host_range_latent_norm": {
+      "source": "host_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "host_range_saturation_norm": {
+      "source": "host_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "host_support_factor": {
+      "source": "host_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "host_support_observed_flag": {
+      "source": "host_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "host_taxon_evenness_norm": {
+      "source": "host_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "host_taxon_evenness_score": {
+      "source": "host_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "host_taxon_signature_count": {
+      "source": "host_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "insd_share_train": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "last_resort_convergence_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "legacy_geometric_priority_index": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "log1p_member_count_train": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "log1p_n_countries_train": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "macro_region_jump_label": {
+      "source": "geo_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "mash_neighbor_distance_train_mean": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "mash_neighbor_distance_train_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "max_pmid_count_train": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "max_resolved_year_train": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "mdr_proxy_fraction": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "mean_amr_class_count": {
+      "source": "amr_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "mean_amr_clinical_threat_score": {
+      "source": "amr_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "mean_amr_gene_count": {
+      "source": "amr_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "mean_amr_mechanism_diversity_proxy": {
+      "source": "amr_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "mean_last_resort_convergence_score": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "mean_n_replicon_types_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "mean_n_replicon_types_train": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "mean_pmid_count_train": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "member_count_total": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "member_count_train": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "metadata_missingness_burden": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "metadata_support_depth_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "min_resolved_year_test": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "mobility_dominance": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "mobility_purity_train": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "mobility_shift_slope_train": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "mobilizable_support": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "monotonic_latent_priority_index": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "mpf_support": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "multi_replicon_fraction_train": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "n_countries_test": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "n_countries_train": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "n_new_countries": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "n_new_countries_recomputed": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "n_new_macro_regions": {
+      "source": "geo_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "n_test_macro_regions": {
+      "source": "geo_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "n_test_records_seen_in_training": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "n_train_macro_regions": {
+      "source": "geo_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "new_macro_regions": {
+      "source": "geo_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "operational_priority_index": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "order_unique_count": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "orit_support": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "pathogenic_context_fraction_norm": {
+      "source": "host_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "pathogenic_context_fraction_train": {
+      "source": "host_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "phylo_breadth_augmented_score": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "phylo_breadth_score": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "phylo_pairwise_dispersion_score": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "phylo_prop_risk": {
+      "source": "phylo_propagation",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "phylum_unique_count": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "plasmidfinder_complexity_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "plasmidfinder_complexity_score": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "plasmidfinder_dominant_type_purity_train": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "plasmidfinder_mean_coverage_train": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "plasmidfinder_mean_max_identity_train": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "plasmidfinder_mean_type_count_train": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "plasmidfinder_multi_type_fraction_train": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "plasmidfinder_presence_fraction_train": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "plasmidfinder_support_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "plasmidfinder_support_score": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "pmlst_allele_purity_train": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "pmlst_coherence_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "pmlst_coherence_score": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "pmlst_presence_fraction_train": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "pmlst_presence_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "pmlst_scheme_purity_train": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "pmlst_st_purity_train": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "pmlst_support_observed_flag": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "predicted_host_range_score": {
+      "source": "host_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "primary_replicon_diversity_train": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "priority_index": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "psge_0": {
+      "source": "graph_embedding",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "psge_1": {
+      "source": "graph_embedding",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "psge_2": {
+      "source": "graph_embedding",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "psge_3": {
+      "source": "graph_embedding",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "psge_4": {
+      "source": "graph_embedding",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "psge_5": {
+      "source": "graph_embedding",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "psge_6": {
+      "source": "graph_embedding",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "psge_7": {
+      "source": "graph_embedding",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "recent_expansion_flag": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "refseq_share_train": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "relaxase_support": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "replicon_architecture_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "replicon_dominance": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "replicon_multiplicity_latent_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "replicon_multiplicity_saturation_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "replicon_purity_train": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "reported_host_range_score": {
+      "source": "host_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "silent_carrier_risk_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "split_year": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "spread_label": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "spread_severity_bin": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "strict_operational_priority_index": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "strict_priority_index": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "support_shrinkage": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "support_shrinkage_norm": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "synergy_H_external_host_range_norm__replicon_architecture_norm": {
+      "source": "interaction_transform",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "synergy_H_obs_specialization_norm__A_eff_norm": {
+      "source": "interaction_transform",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "synergy_T_eff_norm__A_eff_norm": {
+      "source": "interaction_transform",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "synergy_T_eff_norm__H_obs_specialization_norm": {
+      "source": "interaction_transform",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "synergy_backbone_purity_norm__assignment_confidence_norm": {
+      "source": "interaction_transform",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "synergy_coherence_score__country_slope_train": {
+      "source": "interaction_transform",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "synergy_country_slope_train__mobility_shift_slope_train": {
+      "source": "interaction_transform",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "synergy_geo_country_entropy_train__host_breadth_slope_train": {
+      "source": "interaction_transform",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "synergy_orit_support__amr_burden_saturation_norm": {
+      "source": "interaction_transform",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "test_seen_in_training_fraction": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "test_year_end": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "three_countries_within_3y_label": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "three_countries_within_5y_label": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "time_to_first_new_country_years": {
+      "source": "geo_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "time_to_third_new_country_years": {
+      "source": "geo_features",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "topology_dominance": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "training_only_future_unseen_backbone_flag": {
+      "source": "geo_surface",
+      "temporal_scope": "forbidden",
+      "label_touched": false
+    },
+    "visibility_expansion_label": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "xdr_proxy_fraction": {
+      "source": "geo_surface",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "mean_antibiotic_pressure": {
+      "source": "country_indicators",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "max_health_exp": {
+      "source": "country_indicators",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    },
+    "tourist_entropy": {
+      "source": "country_indicators",
+      "temporal_scope": "pre_split",
+      "label_touched": false
+    }
+  }
+}

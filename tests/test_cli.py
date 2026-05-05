@@ -98,7 +98,7 @@ def test_release_verification_bounds_nested_pytest_when_invoked_from_pytest(monk
 
     commands = []
 
-    def capture_check(name, command, *, cwd):
+    def capture_check(name, command, *, cwd, extra_env=None):
         commands.append((name, command, cwd))
 
     monkeypatch.setenv("PYTEST_CURRENT_TEST", "tests/test_cli.py::test_release_verification_runs_real_checks")
@@ -107,7 +107,8 @@ def test_release_verification_bounds_nested_pytest_when_invoked_from_pytest(monk
     assert verification.run_verification(release=True, skip_security=True, project_root=PROJECT_ROOT) == 0
 
     pytest_command = next(command for name, command, _ in commands if name == "pytest")
-    assert "tests/test_performance_regression.py" in pytest_command
+    assert "tests/test_quality.py" in pytest_command
+    assert "tests/test_validation_protocol_v2.py" in pytest_command
     assert "tests/test_evaluation_metrics.py" in pytest_command
     assert "-k" not in pytest_command
 

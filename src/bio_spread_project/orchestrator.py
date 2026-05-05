@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import shutil
+from dataclasses import replace
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import os
 from pathlib import Path
 from tempfile import mkdtemp
 from typing import Any
@@ -27,6 +29,7 @@ from bio_spread_project.dashboard import generate_dashboard
 from bio_spread_project.data import load_backbone_records_frame, load_records
 from bio_spread_project.embeddings import EmbeddingStore
 from bio_spread_project.external_features import (
+    apply_disabled_feature_mask,
     add_grps_to_features,
     augment_amr_diversity_features,
     augment_country_indicator_features,
@@ -67,8 +70,13 @@ from bio_spread_project.io_utils import (
     write_json,
     write_text,
 )
+from bio_spread_project.leakage_policy import detect_forbidden_columns, validate_feature_surface
 from bio_spread_project.manifest import build_manifest, portable_path
-from bio_spread_project.metrics import bootstrap_metric_intervals, evaluate_predictions
+from bio_spread_project.metrics import (
+    bootstrap_metric_intervals,
+    calibration_summary,
+    evaluate_predictions,
+)
 from bio_spread_project.model import Prediction, fit_model_surface, select_primary_model
 from bio_spread_project.model_metrics import validation_summary
 from bio_spread_project.phylo_spatial_embedder import PhyloSpatialGraphEmbedder
@@ -138,6 +146,60 @@ def _validate_external_holdout(training_source: Path, external_holdout: Path | N
             raise ValueError(f"Identity Leakage detected: {count} backbones shared between training and external holdout (e.g., {', '.join(sample)})")
 
 
+def _knownness_slice_metrics(
+    predictions: list[Prediction],
+    *,
+    quantile: float = 0.20,
+    min_samples: int = 20,
+) -> dict[str, float | None]:
+    if not predictions:
+        return {
+            "knownness_slice_threshold": None,
+            "knownness_slice_n": None,
+            "knownness_slice_prevalence": None,
+            "knownness_slice_roc_auc": None,
+            "knownness_slice_average_precision": None,
+            "knownness_slice_expected_calibration_error": None,
+            "knownness_slice_brier_score": None,
+            "knownness_slice_top_k_precision": None,
+            "knownness_slice_abstain_rate": None,
+        }
+    knownness = np.asarray([float(p.knownness_score) for p in predictions], dtype=np.float64)
+    threshold = float(np.quantile(knownness, quantile))
+    subset = [p for p in predictions if float(p.knownness_score) <= threshold]
+    payload: dict[str, float | None] = {
+        "knownness_slice_threshold": threshold,
+        "knownness_slice_n": float(len(subset)),
+    }
+    if len(subset) < min_samples:
+        payload.update(
+            {
+                "knownness_slice_prevalence": None,
+                "knownness_slice_roc_auc": None,
+                "knownness_slice_average_precision": None,
+                "knownness_slice_expected_calibration_error": None,
+                "knownness_slice_brier_score": None,
+                "knownness_slice_top_k_precision": None,
+                "knownness_slice_abstain_rate": None,
+            }
+        )
+        return payload
+    base = evaluate_predictions(subset)
+    cal = calibration_summary(subset)
+    payload.update(
+        {
+            "knownness_slice_prevalence": float(base.get("prevalence", 0.0)),
+            "knownness_slice_roc_auc": float(base["roc_auc"]) if base.get("roc_auc") is not None else None,
+            "knownness_slice_average_precision": float(base["average_precision"]) if base.get("average_precision") is not None else None,
+            "knownness_slice_expected_calibration_error": float(cal.get("expected_calibration_error", 0.0)),
+            "knownness_slice_brier_score": float(cal.get("brier_score", 0.0)),
+            "knownness_slice_top_k_precision": float(base.get("top_k_precision", 0.0)),
+            "knownness_slice_abstain_rate": float(base.get("abstain_rate", 0.0)),
+        }
+    )
+    return payload
+
+
 def _build_config_from_kwargs(kwargs: dict[str, Any]) -> PipelineConfig:
     from bio_spread_project.runtime_policy import EnforcementPolicy
 
@@ -147,6 +209,7 @@ def _build_config_from_kwargs(kwargs: dict[str, Any]) -> PipelineConfig:
         fail_on_trend_fail=kwargs.get("fail_on_trend_fail", False),
         require_trend_evidence=kwargs.get("require_trend_evidence", False),
         require_explicit_surface=kwargs.get("require_explicit_surface", False),
+        require_strict_lineage=kwargs.get("require_strict_lineage", False),
     )
     return PipelineConfig(
         input_path=kwargs.get("input_path"),
@@ -173,17 +236,25 @@ def run_pipeline(config: PipelineConfig | None = None, **kwargs: Any) -> Pipelin
         raise ValueError("Provide either PipelineConfig or keyword arguments, not both")
 
     active_enrichment_modules: list[str] = []
+    leakage_policy_report: dict[str, Any] = {}
 
     def _step_select_input(state: PipelineState) -> PipelineState:
         paths = ProjectPaths.from_env()
         selection = select_input_source(config=config, paths=paths)
-        enrich_cfg = load_enrichment_flags(paths.project_root / "project_config" / "config" / "enriched_features.yaml")
+        enrich_flags_path = Path(
+            os.environ.get(
+                "BIO_SPREAD_ENRICH_FLAGS_PATH",
+                str(paths.project_root / "project_config" / "config" / "enriched_features.yaml"),
+            )
+        )
+        enrich_cfg = load_enrichment_flags(enrich_flags_path)
         state.payload.update(
             {
                 "paths": paths,
                 "selection": selection,
                 "enrich_cfg": enrich_cfg,
                 "external_dir": paths.data_root / "external",
+                "enrich_flags_path": enrich_flags_path,
             }
         )
         return state
@@ -285,37 +356,11 @@ def run_pipeline(config: PipelineConfig | None = None, **kwargs: Any) -> Pipelin
         return state
 
     def _step_add_phylo_propagation(state: PipelineState) -> PipelineState:
-        features = state.payload["features"]
-        enrich_cfg = state.payload["enrich_cfg"]
-        external_dir = state.payload["external_dir"]
-        selection = state.payload["selection"]
-        if enrich_cfg.enable_phylo_propagation and selection.use_geo_reliability:
-            mash_path = external_dir / "mash_distances.tsv"
-            if mash_path.exists():
-                from bio_spread_project.phylo_propagation import build_phylo_propagation
-                prop = build_phylo_propagation(features, mash_path, split_year=config.split_year)
-                if not prop.is_empty():
-                    features = features.join(prop, on="backbone_id", how="left", coalesce=True).with_columns(
-                        pl.col("phylo_prop_risk").fill_null(0.5)
-                    )
-                    active_enrichment_modules.append("phylo_prop")
-        state.payload["features"] = features
+        # DEPRECATED: Moved inside fit_geo_reliability_surface to prevent leakage
         return state
 
     def _step_add_graph_contagion(state: PipelineState) -> PipelineState:
-        features = state.payload["features"]
-        enrich_cfg = state.payload["enrich_cfg"]
-        raw_for_enrichment = state.payload.get("raw_for_enrichment")
-        external_dir = state.payload["external_dir"]
-        if enrich_cfg.enable_graph_contagion and raw_for_enrichment is not None:
-            mash_path = external_dir / "mash_distances.tsv"
-            if mash_path.exists():
-                from bio_spread_project.graph_contagion import build_fastrp_embeddings
-                mash_df = pl.read_csv(mash_path, separator="\t")
-                graph_emb = build_fastrp_embeddings(raw_for_enrichment, mash_df, config.split_year)
-                features = features.join(graph_emb, on="backbone_id", how="left", coalesce=True)
-                active_enrichment_modules.append("graph_contagion")
-        state.payload["features"] = features
+        # DEPRECATED: Moved inside fit_geo_reliability_surface to prevent leakage
         return state
 
     def _step_add_bio_adapter(state: PipelineState) -> PipelineState:
@@ -345,29 +390,39 @@ def run_pipeline(config: PipelineConfig | None = None, **kwargs: Any) -> Pipelin
 
     def _step_train_model(state: PipelineState) -> PipelineState:
         features_local = state.payload["features"]
+        dropped_leakage_columns = detect_forbidden_columns([str(c) for c in features_local.columns])
+        if dropped_leakage_columns:
+            features_local = features_local.drop(dropped_leakage_columns)
+            state.payload["features"] = features_local
+        masked_features, dropped_disabled_columns = apply_disabled_feature_mask(features_local, state.payload["enrich_cfg"])
+        features_local = masked_features
+        state.payload["features"] = features_local
+        nonlocal leakage_policy_report
+        leakage_policy_report = validate_feature_surface(
+            features_local,
+            lineage_path=paths.project_root / "project_config" / "config" / "feature_lineage.json",
+            strict_lineage=bool(config.policy.require_strict_lineage),
+        )
+        leakage_policy_report["dropped_leakage_columns"] = dropped_leakage_columns
+        leakage_policy_report["dropped_disabled_columns"] = dropped_disabled_columns
         raw_for_enrichment = state.payload.get("raw_for_enrichment")
         dominant_country_targets: dict[str, str] = {}
         if raw_for_enrichment is not None and {"backbone_id", "country", "year"}.issubset(set(raw_for_enrichment.columns)):
             pre_country = (raw_for_enrichment.filter(pl.col("year") <= config.split_year).drop_nulls(subset=["backbone_id", "country"]).group_by(["backbone_id", "country"]).len().sort(["backbone_id", "len"], descending=[False, True]).group_by("backbone_id").agg(pl.first("country").alias("dominant_country")))
             dominant_country_targets = {str(row["backbone_id"]): str(row["dominant_country"]) for row in pre_country.to_dicts()}
-        if selection.use_geo_reliability and raw_for_enrichment is not None and enrich_cfg.enable_phylo_spatial_embedding:
-            base_names = tuple(c for c in FEATURE_COLUMNS if (not c.startswith("oof_")) and c in features_local.columns)
-            x_for_psge = _feature_matrix(features_local, base_names)
-            psge_df = PhyloSpatialGraphEmbedder().fit_transform(raw_for_enrichment, split_year=config.split_year, backbone_ids=features_local["backbone_id"].to_list(), feature_matrix=x_for_psge, mash_path=(external_dir / "mash_distances.tsv"), save_path=(config.output_dir / "psge_model.pt"))
-            if not psge_df.is_empty():
-                features_local = features_local.join(psge_df, on="backbone_id", how="left", coalesce=True)
-                for i in range(8):
-                    col = f"psge_{i}"
-                    if col in features_local.columns:
-                        features_local = features_local.with_columns(pl.col(col).fill_null(0.0))
-                        active_enrichment_modules.append(col)
-                active_enrichment_modules.append("enable_phylo_spatial_embedding")
         if selection.use_geo_reliability:
             if enrich_cfg.enable_rank_focal_loss:
                 active_enrichment_modules.append("enable_rank_focal_loss")
             if enrich_cfg.enable_soft_country_debiasing:
                 active_enrichment_modules.append("enable_soft_country_debiasing")
-            run_local = fit_geo_reliability_surface(features_local, modeling_flags=enrich_cfg, dominant_country_targets=dominant_country_targets)
+            run_local = fit_geo_reliability_surface(
+                features_local, 
+                modeling_flags=enrich_cfg, 
+                dominant_country_targets=dominant_country_targets, 
+                external_dir=external_dir,
+                raw_records=raw_for_enrichment,
+                split_year=config.split_year
+            )
         else:
             surface = fit_model_surface(features_local, load_project_config().models)
             primary_name, _ = select_primary_model(surface)
@@ -381,15 +436,20 @@ def run_pipeline(config: PipelineConfig | None = None, **kwargs: Any) -> Pipelin
         [
             PipelineStep(name="enrich_features", fn=_step_enrich_features),
             PipelineStep(name="add_synergy_features", fn=_step_add_synergy_features),
-            PipelineStep(name="add_graph_contagion", fn=_step_add_graph_contagion),
-            PipelineStep(name="add_bio_adapter", fn=_step_add_bio_adapter),
-            PipelineStep(name="add_phylo_propagation", fn=_step_add_phylo_propagation),
             PipelineStep(name="adversarial_audit", fn=_step_adversarial_audit),
             PipelineStep(name="train_model", fn=_step_train_model),
         ],
     )
     features = dag_state.payload["features"]
     run = dag_state.payload["run"]
+    if leakage_policy_report:
+        run.metrics["feature_lineage_status"] = str(leakage_policy_report.get("status", "pass"))
+        run.metrics["feature_lineage_unknown_count"] = float(leakage_policy_report.get("unknown_lineage_count", 0))
+        run.metrics["dropped_leakage_columns"] = list(leakage_policy_report.get("dropped_leakage_columns", []))
+        run.metrics["dropped_disabled_columns"] = list(leakage_policy_report.get("dropped_disabled_columns", []))
+        disabled = set(run.metrics["dropped_disabled_columns"])
+        model_cols = set(getattr(run.model, "feature_columns", ()) or ())
+        run.metrics["disabled_feature_leak_count"] = float(len(disabled.intersection(model_cols)))
     if selection.use_geo_reliability:
         if enrich_cfg.enable_conformal and run.predictions:
             pred_df = pl.DataFrame(
@@ -408,12 +468,17 @@ def run_pipeline(config: PipelineConfig | None = None, **kwargs: Any) -> Pipelin
                 )
             )
             scores = _feature_matrix(score_frame, base_cols)
+            if hasattr(run.model, "bio_features") and run.model.bio_features is not None:
+                scores_bio = _feature_matrix(score_frame, run.model.bio_features)
+            else:
+                scores_bio = scores
+
             oof_base = []
             for m in run.model.base_estimators:
                 if hasattr(m, "predict_proba"):
-                    oof_base.append(m.predict_proba(scores)[:, 1])
+                    oof_base.append(m.predict_proba(scores_bio)[:, 1])
                 else:
-                    d = m.decision_function(scores)
+                    d = m.decision_function(scores_bio)
                     oof_base.append(1 / (1 + np.exp(-d)))
             x_meta = scores if not oof_base else np.hstack([scores, np.vstack(oof_base).T])
             labels = score_frame["label_geo_spread"].to_numpy()
@@ -503,6 +568,7 @@ def run_pipeline(config: PipelineConfig | None = None, **kwargs: Any) -> Pipelin
         holdout_features = load_geo_spread_features(config.external_holdout_path)
         ext_predictions = run.model.predict(holdout_features)
         ext_metrics = {**evaluate_predictions(ext_predictions), **bootstrap_metric_intervals(ext_predictions, n_resamples=200)}
+        ext_metrics.update(_knownness_slice_metrics(ext_predictions, quantile=0.20, min_samples=20))
         metrics.update({f"external_holdout_{k}": v for k, v in ext_metrics.items()})
 
     input_paths = _build_input_paths(selection, config)
@@ -554,11 +620,14 @@ def run_pipeline(config: PipelineConfig | None = None, **kwargs: Any) -> Pipelin
             drift_path=config.drift_thresholds_path,
             trend_path=config.trend_thresholds_path,
         )
+        quality_thresholds = thresholds.quality
+        if config.policy.require_strict_lineage:
+            quality_thresholds = replace(quality_thresholds, feature_lineage_required=True)
         quality_checks = evaluate_quality_gates(
             metrics=metrics,
             input_mode=selection.input_mode,
             leakage_audit_passed=audit.get("leakage_audit", {}).get("status") == "pass",
-            thresholds=thresholds.quality,
+            thresholds=quality_thresholds,
         )
         drift_checks = evaluate_drift_checks(
             current=benchmark,

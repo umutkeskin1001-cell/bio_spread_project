@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import math
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -38,8 +37,83 @@ class EnrichmentFlags:
     enable_adversarial_phantom_gate: bool = True
 
 
+FEATURE_GROUPS: dict[str, tuple[str, ...]] = {
+    "intrinsic_plasmid": (
+        "inc_group_code",
+        "mob_typer_code",
+        "conjugation_score",
+        "toxin_antitoxin_count",
+        "replicon_count",
+        "avg_gc_content",
+        "plasmid_size_kb",
+        "phage_related_genes_count",
+    ),
+    "host_traits": (
+        "frac_pathogenic_hosts",
+        "env_diversity",
+        "gram_stain_entropy",
+        "metabolic_diversity",
+    ),
+    "country_indicators": (
+        "mean_antibiotic_pressure",
+        "max_health_exp",
+        "tourist_entropy",
+    ),
+    "temporal_trends": (
+        "country_slope_train",
+        "host_breadth_slope_train",
+        "mobility_shift_slope_train",
+        "recent_expansion_flag",
+        "country_slope_train_right",
+        "host_breadth_slope_train_right",
+        "mobility_shift_slope_train_right",
+        "recent_expansion_flag_right",
+    ),
+    "amr_diversity": (
+        "carbapenemase_count",
+        "esbl_count",
+        "colistin_resistance_count",
+        "other_amr_count",
+        "amr_class_shannon",
+    ),
+}
+
+
 def _parse_bool(value: str) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def disabled_feature_columns(flags: EnrichmentFlags, columns: list[str]) -> list[str]:
+    drop: set[str] = set()
+    colset = set(columns)
+    if not flags.enable_intrinsic_plasmid_features:
+        drop.update(c for c in FEATURE_GROUPS["intrinsic_plasmid"] if c in colset)
+    if not flags.enable_host_traits:
+        drop.update(c for c in FEATURE_GROUPS["host_traits"] if c in colset)
+    if not flags.enable_country_indicators:
+        drop.update(c for c in FEATURE_GROUPS["country_indicators"] if c in colset)
+    if not flags.enable_temporal_trends:
+        drop.update(c for c in FEATURE_GROUPS["temporal_trends"] if c in colset)
+    if not flags.enable_amr_diversity:
+        drop.update(c for c in FEATURE_GROUPS["amr_diversity"] if c in colset)
+    if not flags.enable_synergy_interactions:
+        drop.update(c for c in columns if c.startswith("synergy_"))
+    if not flags.enable_phylo_spatial_embedding:
+        drop.update(c for c in columns if c.startswith("psge_") or c.startswith("gnn_embed_"))
+    if not flags.enable_graph_contagion:
+        drop.update(c for c in columns if c.startswith("fastrp_"))
+    if not flags.enable_grps and "grps" in colset:
+        drop.add("grps")
+    if not flags.enable_phylo_propagation and "phylo_prop_risk" in colset:
+        drop.add("phylo_prop_risk")
+    return sorted(drop)
+
+
+def apply_disabled_feature_mask(features: pl.DataFrame, flags: EnrichmentFlags) -> tuple[pl.DataFrame, list[str]]:
+    dropped = disabled_feature_columns(flags, [str(c) for c in features.columns])
+    if not dropped:
+        return features, []
+    return features.drop(dropped), dropped
 
 
 def load_enrichment_flags(config_path: Path) -> EnrichmentFlags:
@@ -139,35 +213,52 @@ def augment_host_trait_features(features: pl.DataFrame, records: pl.DataFrame, e
     if pre.is_empty():
         return features, False
     with_traits = pre.join(traits, left_on="host_genus", right_on="genus", how="left", coalesce=True)
+    if with_traits.is_empty():
+        return features, False
 
-    rows: list[dict[str, float | str]] = []
-    for bb in with_traits["backbone_id"].unique().to_list():
-        bb_df = with_traits.filter(pl.col("backbone_id") == bb)
-        n = max(1, bb_df.height)
-        pathogen_vals = bb_df["is_pathogen"].cast(pl.Utf8).fill_null("").str.to_lowercase().to_list()
-        frac_pathogenic = float(sum(v in {"1", "true", "yes", "y"} for v in pathogen_vals)) / float(n)
-        env_div = float(bb_df["environment_primary"].drop_nulls().n_unique()) if "environment_primary" in bb_df.columns else 0.0
-        metab_div = float(bb_df["metabolism"].drop_nulls().n_unique()) if "metabolism" in bb_df.columns else 0.0
-        gram_entropy = 0.0
-        if "gram_stain" in bb_df.columns:
-            gram_counts = bb_df.group_by("gram_stain").len()
-            total = max(1.0, float(gram_counts["len"].sum()))
-            for c in gram_counts["len"].to_list():
-                p = float(c) / total
-                if p > 0.0:
-                    gram_entropy += -p * math.log(p)
+    pathogen_true = {"1", "true", "yes", "y"}
+    with_traits = with_traits.with_columns(
+        pl.col("is_pathogen")
+        .cast(pl.Utf8)
+        .fill_null("")
+        .str.to_lowercase()
+        .is_in(pathogen_true)
+        .cast(pl.Float64)
+        .alias("_is_pathogen_float")
+    )
 
-        rows.append(
-            {
-                "backbone_id": str(bb),
-                "frac_pathogenic_hosts": frac_pathogenic,
-                "env_diversity": env_div,
-                "gram_stain_entropy": gram_entropy,
-                "metabolic_diversity": metab_div,
-            }
+    core_agg = with_traits.group_by("backbone_id").agg(
+        [
+            pl.col("_is_pathogen_float").mean().fill_null(0.0).alias("frac_pathogenic_hosts"),
+            pl.col("environment_primary").drop_nulls().n_unique().cast(pl.Float64).alias("env_diversity"),
+            pl.col("metabolism").drop_nulls().n_unique().cast(pl.Float64).alias("metabolic_diversity"),
+        ]
+    )
+
+    gram_counts = (
+        with_traits.select(["backbone_id", "gram_stain"])
+        .drop_nulls()
+        .group_by(["backbone_id", "gram_stain"])
+        .len()
+    )
+    if gram_counts.is_empty():
+        gram_entropy = core_agg.select(["backbone_id"]).with_columns(pl.lit(0.0).alias("gram_stain_entropy"))
+    else:
+        gram_totals = gram_counts.group_by("backbone_id").agg(pl.col("len").sum().alias("_gram_total"))
+        gram_entropy = (
+            gram_counts.join(gram_totals, on="backbone_id", how="left")
+            .with_columns((pl.col("len").cast(pl.Float64) / pl.col("_gram_total").cast(pl.Float64)).alias("_gram_p"))
+            .with_columns(
+                pl.when(pl.col("_gram_p") > 0.0)
+                .then(-pl.col("_gram_p") * pl.col("_gram_p").log())
+                .otherwise(0.0)
+                .alias("_gram_h")
+            )
+            .group_by("backbone_id")
+            .agg(pl.col("_gram_h").sum().alias("gram_stain_entropy"))
         )
 
-    agg = pl.DataFrame(rows)
+    agg = core_agg.join(gram_entropy, on="backbone_id", how="left", coalesce=True)
     return features.join(agg, on="backbone_id", how="left", coalesce=True).with_columns(
         [
             pl.col("frac_pathogenic_hosts").fill_null(0.0),
