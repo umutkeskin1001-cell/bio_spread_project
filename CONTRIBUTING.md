@@ -14,13 +14,13 @@ make lint
 make typecheck
 make test-cov
 make smoke-cli
-python3 verify_project.py --skip-run-if-data-missing
+make verify
 ```
 
 ## Release-intended run
 
 ```bash
-python3 run_project.py \
+python3 -m bio_spread_project.cli run \
   --fail-on-quality-gates \
   --fail-on-drift-fail \
   --fail-on-trend-fail \

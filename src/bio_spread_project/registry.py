@@ -19,7 +19,29 @@ def append_model_registry_entry(path: str | Path, entry: dict[str, Any]) -> Path
         **entry,
     }
     with registry_path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(payload, sort_keys=True) + "\n")
-        handle.flush()
-        os.fsync(handle.fileno())
+        _lock_exclusive(handle)
+        try:
+            handle.write(json.dumps(payload, sort_keys=True) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        finally:
+            _unlock(handle)
     return registry_path
+
+
+def _lock_exclusive(handle: Any) -> None:
+    try:
+        import fcntl
+
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    except (ImportError, OSError):
+        return
+
+
+def _unlock(handle: Any) -> None:
+    try:
+        import fcntl
+
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    except (ImportError, OSError):
+        return

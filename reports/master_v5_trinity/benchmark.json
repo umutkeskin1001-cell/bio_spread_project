@@ -1,0 +1,35 @@
+{
+  "all_quality_gates_passed": false,
+  "project": "BioSpread",
+  "quality_gates": {
+    "adversarial_leakage_scan_passed": true,
+    "auc_at_least_target": true,
+    "average_precision_above_prevalence": true,
+    "bootstrap_auc_ci_low_at_least_target": true,
+    "bootstrap_average_precision_ci_low_above_prevalence": true,
+    "calibration_bin_gap_at_most_target": true,
+    "calibration_ece_at_most_target": true,
+    "cross_validated": true,
+    "disabled_feature_leak_passed": true,
+    "external_holdout_auc_at_least_target": false,
+    "feature_lineage_passed": true,
+    "group_auc_at_least_target": true,
+    "leakage_audit_passed": true,
+    "low_knownness_slice_ap_at_least_target": false,
+    "low_knownness_slice_auc_at_least_target": true,
+    "low_knownness_slice_ece_at_most_target": true,
+    "temporal_consistency_passed": false,
+    "temporal_holdout_auc_at_least_target": true
+  },
+  "validation_summary": {
+    "average_precision": 0.79890013869418,
+    "bootstrap_roc_auc_ci_high": 0.902839994342629,
+    "bootstrap_roc_auc_ci_low": 0.8598787978396134,
+    "external_holdout_roc_auc": 0.7072884012539185,
+    "group_oof_roc_auc": 0.8798288954471598,
+    "max_single_feature_auc": 0.9147876114998177,
+    "roc_auc": 0.8833023841894088,
+    "suspicious_feature_count": 0.0,
+    "temporal_holdout_roc_auc": 0.9463902077954902
+  }
+}

@@ -1,0 +1,69 @@
+{
+  "primary_model": "geobio_reliability_ensemble",
+  "scorecard": [
+    {
+      "abstain_rate": 0.016177957532861477,
+      "average_precision": 0.7922327203965798,
+      "bootstrap_average_precision_ci_high": 0.8354474964270318,
+      "bootstrap_average_precision_ci_low": 0.742958864547164,
+      "bootstrap_confidence": 0.95,
+      "bootstrap_resamples": 200.0,
+      "bootstrap_roc_auc_ci_high": 0.9043557247941929,
+      "bootstrap_roc_auc_ci_low": 0.8623888845995064,
+      "canary_self_test": {
+        "alarm_count": 0,
+        "auc_floor": 0.9,
+        "canary_auc": 1.0,
+        "reason": "",
+        "status": "pass"
+      },
+      "conformal_qhat_90": 0.645540796963947,
+      "crc_threshold": 0.002720023341761671,
+      "decision_alert_rate": 0.35591506572295245,
+      "decision_low_risk_rate": 0.6440849342770475,
+      "decision_review_rate": 0.0,
+      "expected_calibration_error": 0.010687622725347241,
+      "group_oof_average_precision": 0.7922327203965798,
+      "group_oof_roc_auc": 0.8819952946152423,
+      "leakage_alarm_count": 0.0,
+      "leakage_alarm_features": [],
+      "max_single_feature_auc": 0.9144593653898685,
+      "model_name": "geobio_reliability_ensemble",
+      "n_backbones": 989.0,
+      "n_positive": 362.0,
+      "ood_threshold": 0.0,
+      "oof_average_precision": 0.7922327203965798,
+      "oof_roc_auc": 0.8819952946152423,
+      "permutation_sanity": {
+        "alarm_count": 0,
+        "auc_ceiling": 0.75,
+        "n_trials": 4,
+        "permutation_auc_max": 0.5258619930036039,
+        "permutation_auc_mean": 0.4913602439045882,
+        "permutation_auc_values": [
+          0.4740058332672465,
+          0.5087939587794197,
+          0.5258619930036039,
+          0.4567791905680827
+        ],
+        "reason": "",
+        "status": "pass"
+      },
+      "prevalence": 0.3660262891809909,
+      "roc_auc": 0.8819952946152423,
+      "status": "pass",
+      "suspicious_feature_count": 0.0,
+      "temporal_holdout_average_precision": 0.7741139059946607,
+      "temporal_holdout_n_backbones": 198.0,
+      "temporal_holdout_roc_auc": 0.9388773388773389,
+      "top_features": [
+        {
+          "feature": "intercept",
+          "score": 0.0
+        }
+      ],
+      "top_k_precision": 1.0,
+      "validation_mode": "spatial_group_cv_stacked"
+    }
+  ]
+}

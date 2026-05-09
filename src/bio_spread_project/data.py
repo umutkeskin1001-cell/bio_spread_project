@@ -27,6 +27,7 @@ class PlasmidRecord:
     clinical_context: str
     amr_gene_count: float
     mobility_score: float
+    mash_neighbor_distance: float = 0.0
 
     def __post_init__(self) -> None:
         if not self.backbone_id:
@@ -37,6 +38,8 @@ class PlasmidRecord:
             raise ValueError("amr_gene_count must be finite and non-negative")
         if not math.isfinite(self.mobility_score) or not 0.0 <= self.mobility_score <= 1.0:
             raise ValueError("mobility_score must be finite in [0, 1]")
+        if not math.isfinite(self.mash_neighbor_distance):
+            raise ValueError("mash_neighbor_distance must be finite")
 
 
 def read_table(path: str | Path, *, schema_overrides: dict[str, pl.DataType] | None = None) -> pl.DataFrame:
@@ -121,6 +124,7 @@ def load_records(path: str | Path) -> list[PlasmidRecord]:
             clinical_context=str(row["clinical_context"]),
             amr_gene_count=float(row["amr_gene_count"]),
             mobility_score=float(row["mobility_score"]),
+            mash_neighbor_distance=float(row["mash_neighbor_distance"]) if "mash_neighbor_distance" in row else 0.0,
         )
         for row in cleaned.to_dicts()
     ]
@@ -159,6 +163,8 @@ def _derive_clinical_context(df: pl.DataFrame) -> pl.Expr:
     """Vectorized clinical context derivation."""
     cols = ["BIOSAMPLE_pathogenicity", "BIOSAMPLE_package", "ECOSYSTEM_tags", "DISEASE_tags", "record_origin"]
     present_cols = [c for c in cols if c in _lazy_schema(df)]
+    if not present_cols:
+        return pl.lit("unknown")
     combined = pl.concat_str([pl.col(c).fill_null("") for c in present_cols], separator=" ").str.to_lowercase()
 
     return pl.when(combined.str.contains("clinical|hospital|patient|pathogen|disease|human")).then(pl.lit("clinical")) \
@@ -239,6 +245,14 @@ def load_backbone_records_frame(
     if limit:
         ldf = ldf.head(limit)
 
+    schema = _lazy_schema(ldf)
+    id_cols = [c for c in ["backbone_id", "canonical_id", "sequence_accession"] if c in schema]
+    if not id_cols:
+        raise ValueError("Raw backbone records missing required identifier columns: backbone_id, canonical_id, or sequence_accession")
+    missing = sorted({"resolved_year", "country", "genus"} - set(schema))
+    if missing:
+        raise ValueError(f"Raw backbone records missing required columns: {', '.join(missing)}")
+
     amr_gene_count = pl.lit(0.0)
     if amr_path and Path(amr_path).exists():
         amr_df = read_table(amr_path)
@@ -247,7 +261,6 @@ def load_backbone_records_frame(
         amr_gene_count = pl.col("amr_gene_count").fill_null(0.0).cast(pl.Float64)
 
     # Safely coalesce backbone ID candidates
-    id_cols = [c for c in ["backbone_id", "canonical_id", "sequence_accession"] if c in _lazy_schema(ldf)]
     id_exprs = [_safe_cast_to_string(ldf, c) for c in id_cols]
     backbone_id_expr = pl.coalesce(id_exprs)
 

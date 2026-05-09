@@ -6,8 +6,9 @@ from typing import Any
 
 import polars as pl
 
+from bio_spread_project._constants import LEAKAGE_NAME_TOKENS
 
-FORBIDDEN_TOKENS = ("future", "target", "outcome", "event_within_", "time_to_", "jump")
+FORBIDDEN_TOKENS = LEAKAGE_NAME_TOKENS
 ALLOWLIST_EXACT = {"label_geo_spread", "n_new_countries_future"}
 NON_MODEL_COLUMNS = {
     "backbone_id",

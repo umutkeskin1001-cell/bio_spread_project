@@ -215,6 +215,10 @@ def _thresholds_payload(thresholds: QualityThresholds) -> dict[str, Any]:
         "external_holdout_required": thresholds.external_holdout_required,
         "max_single_feature_auc_max": thresholds.max_single_feature_auc_max,
         "suspicious_feature_count_max": thresholds.suspicious_feature_count_max,
+        "low_knownness_slice_auc_min": thresholds.low_knownness_slice_auc_min,
+        "low_knownness_slice_ap_min": thresholds.low_knownness_slice_ap_min,
+        "low_knownness_slice_ece_max": thresholds.low_knownness_slice_ece_max,
+        "low_knownness_slice_required": thresholds.low_knownness_slice_required,
     }
 
 

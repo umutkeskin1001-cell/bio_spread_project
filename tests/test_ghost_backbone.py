@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import polars as pl
-import pytest
 
 from bio_spread_project.orchestrator import run_pipeline
 
@@ -48,23 +47,34 @@ def test_ghost_backbone_with_fixture(tmp_path: Path) -> None:
     if not fixture.exists():
         return
     all_records = pl.read_csv(fixture)
-    feats = (
-        all_records.group_by("backbone_id")
-        .agg([
-            pl.col("country").n_unique().alias("n_countries"),
-            pl.col("year").min().alias("min_year"),
-        ])
-        .sort("n_countries", descending=True)
-    )
-    if feats.is_empty():
+    if all_records.is_empty():
         return
-    backbone_id = str(feats["backbone_id"][0])
-    earliest_year = int(feats["min_year"][0])
-    try:
-        risk, alarm = ghost_backbone_test(str(fixture), backbone_id, earliest_year, output_dir=str(tmp_path / "ghost"))
-    except ValueError as exc:
-        if "at least 2 classes" in str(exc):
-            pytest.skip("ghost subset has only one class; skipping")
-        raise
+
+    candidate: tuple[str, int] | None = None
+    backbones = all_records["backbone_id"].unique().to_list()
+    for bb in backbones:
+        bb_df = all_records.filter(pl.col("backbone_id") == bb).sort("year")
+        years = bb_df["year"].unique().sort().to_list()
+        for y in years:
+            subset = bb_df.filter(pl.col("year") <= y)
+            if subset.height < 2:
+                continue
+            if "label_geo_spread" in subset.columns:
+                labels = subset["label_geo_spread"].fill_null(0).cast(pl.Int64)
+            elif "n_new_countries_future" in subset.columns:
+                labels = subset["n_new_countries_future"].fill_null(0).cast(pl.Int64).gt(0).cast(pl.Int64)
+            else:
+                continue
+            if labels.n_unique() >= 2:
+                candidate = (str(bb), int(y))
+                break
+        if candidate is not None:
+            break
+
+    if candidate is None:
+        return
+
+    backbone_id, earliest_year = candidate
+    risk, alarm = ghost_backbone_test(str(fixture), backbone_id, earliest_year, output_dir=str(tmp_path / "ghost"))
     assert risk > 0.0
     assert alarm >= 0.0

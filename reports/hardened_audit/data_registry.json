@@ -1,0 +1,9 @@
+{
+  "input_count": 3,
+  "inputs": {
+    "amr": "data/raw/amr.tsv",
+    "external_holdout": "data/project_inputs/geo_spread/inputs/external_holdout.tsv",
+    "geo_spread_features": "data/project_inputs/geo_spread/inputs/backbone_scored_train_only.tsv"
+  },
+  "project": "BioSpread"
+}

@@ -35,6 +35,13 @@ class EnrichmentFlags:
     enable_bio_adapter: bool = True
     enable_evidential_weighting: bool = True
     enable_adversarial_phantom_gate: bool = True
+    # --- BioSpread v4.0 Infinite Architect ---
+    enable_gnn_embedding: bool = False
+    enable_pu_learning: bool = False
+    enable_ipw_debiasing: bool = False
+    enable_survival_analysis: bool = False
+    enable_optuna_tuning: bool = False
+    enable_shap_null_importance: bool = False
 
 
 FEATURE_GROUPS: dict[str, tuple[str, ...]] = {
@@ -75,6 +82,8 @@ FEATURE_GROUPS: dict[str, tuple[str, ...]] = {
         "colistin_resistance_count",
         "other_amr_count",
         "amr_class_shannon",
+        "neighbor_historical_spread_rate",
+        "grps",
     ),
 }
 
@@ -106,6 +115,8 @@ def disabled_feature_columns(flags: EnrichmentFlags, columns: list[str]) -> list
         drop.add("grps")
     if not flags.enable_phylo_propagation and "phylo_prop_risk" in colset:
         drop.add("phylo_prop_risk")
+    if not flags.enable_gnn_embedding:
+        drop.update(c for c in columns if c.startswith("gnn_embed_"))
     return sorted(drop)
 
 
@@ -147,6 +158,12 @@ def load_enrichment_flags(config_path: Path) -> EnrichmentFlags:
         enable_bio_adapter=values.get("enable_bio_adapter", True),
         enable_evidential_weighting=values.get("enable_evidential_weighting", True),
         enable_adversarial_phantom_gate=values.get("enable_adversarial_phantom_gate", True),
+        enable_gnn_embedding=values.get("enable_gnn_embedding", False),
+        enable_pu_learning=values.get("enable_pu_learning", False),
+        enable_ipw_debiasing=values.get("enable_ipw_debiasing", False),
+        enable_survival_analysis=values.get("enable_survival_analysis", False),
+        enable_optuna_tuning=values.get("enable_optuna_tuning", False),
+        enable_shap_null_importance=values.get("enable_shap_null_importance", False),
     )
 
 

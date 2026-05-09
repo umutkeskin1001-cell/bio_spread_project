@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -11,35 +12,37 @@ os.environ.setdefault("LOKY_MAX_CPU_COUNT", "1")
 import numpy as np
 import polars as pl
 from numpy.typing import NDArray
+from scipy.optimize import fmin
 from sklearn.ensemble import HistGradientBoostingClassifier, RandomForestClassifier
+from sklearn.isotonic import IsotonicRegression
 from sklearn.linear_model import LogisticRegression, RidgeClassifier
 from sklearn.metrics import average_precision_score, roc_auc_score
 from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
-from sklearn.isotonic import IsotonicRegression
-from scipy.optimize import fmin
 
 from bio_spread_project.data import read_table
+from bio_spread_project.embeddings import EmbeddingStore
 from bio_spread_project.external_features import EnrichmentFlags
-from bio_spread_project.losses import focal_pairwise_loss, reliability_weighted_propensity, soft_ndcg_loss
-from bio_spread_project.metrics import (
-    bootstrap_metric_intervals,
-    compute_metrics,
-    calibration_summary,
-    evaluate_predictions,
-)
-from bio_spread_project.model import ModelRun, Prediction
-from bio_spread_project.validation_protocol_v2 import (
-    build_rolling_temporal_windows,
-    evaluate_temporal_consistency,
-)
 from bio_spread_project.features_enrichment import (
     PhyloSpatialGraphEmbedder,
     compute_grps,
 )
-from bio_spread_project.embeddings import EmbeddingStore
+from bio_spread_project.knownness_metrics import knownness_slice_metrics
+from bio_spread_project.losses import focal_pairwise_loss, reliability_weighted_propensity, soft_ndcg_loss
+from bio_spread_project.metrics import (
+    bootstrap_metric_intervals,
+    calibration_summary,
+    compute_metrics,
+    evaluate_predictions,
+)
+from bio_spread_project.model import ModelRun, Prediction
 from bio_spread_project.phylo_propagation import build_phylo_propagation
+from bio_spread_project.validation_protocol_v2 import (
+    build_rolling_temporal_windows,
+    evaluate_temporal_consistency,
+)
+from bio_spread_project.gene_graph_utils import build_gene_sharing_edges
 
 MODEL_NAME = "geobio_reliability_ensemble"
 MODEL_DESCRIPTION = (
@@ -112,6 +115,7 @@ FEATURE_COLUMNS: tuple[str, ...] = (
     "psge_6",
     "psge_7",
     "grps",
+    "neighbor_historical_spread_rate",
     "phylo_prop_risk",
     "synergy_T_eff_norm__H_obs_specialization_norm",
     "synergy_T_eff_norm__A_eff_norm",
@@ -123,6 +127,7 @@ FEATURE_COLUMNS: tuple[str, ...] = (
     "synergy_geo_country_entropy_train__host_breadth_slope_train",
     "synergy_country_slope_train__mobility_shift_slope_train",
     "synergy_mean_antibiotic_pressure__frac_pathogenic_hosts",
+    "synergy_grps__amr_burden_saturation_norm",
     "fastrp_0", "fastrp_1", "fastrp_2", "fastrp_3", "fastrp_4", "fastrp_5", "fastrp_6", "fastrp_7",
     "fastrp_8", "fastrp_9", "fastrp_10", "fastrp_11", "fastrp_12", "fastrp_13", "fastrp_14", "fastrp_15",
     "oof_rf", "oof_hgb", "oof_ridge",
@@ -262,6 +267,8 @@ def _active_geo_feature_columns(flags: EnrichmentFlags | None) -> tuple[str, ...
             continue
         if (not flags.enable_phylo_propagation) and c == "phylo_prop_risk":
             continue
+        if (not getattr(flags, "enable_gnn_embedding", False)) and c.startswith("gnn_embed_"):
+            continue
         active.append(c)
     forced_exclude = {
         token.strip()
@@ -284,60 +291,6 @@ def _max_bin_calibration_gap(cal_bins: list[dict[str, Any]]) -> float:
     return float(max(gaps)) if gaps else 0.0
 
 
-def _knownness_slice_metrics(
-    predictions: list[Prediction],
-    *,
-    quantile: float = 0.20,
-    min_samples: int = 20,
-) -> dict[str, float | None]:
-    if not predictions:
-        return {
-            "knownness_slice_threshold": None,
-            "knownness_slice_n": None,
-            "knownness_slice_prevalence": None,
-            "knownness_slice_roc_auc": None,
-            "knownness_slice_average_precision": None,
-            "knownness_slice_expected_calibration_error": None,
-            "knownness_slice_brier_score": None,
-            "knownness_slice_top_k_precision": None,
-            "knownness_slice_abstain_rate": None,
-        }
-    knownness = np.asarray([float(p.knownness_score) for p in predictions], dtype=np.float64)
-    threshold = float(np.quantile(knownness, quantile))
-    subset = [p for p in predictions if float(p.knownness_score) <= threshold]
-    payload: dict[str, float | None] = {
-        "knownness_slice_threshold": threshold,
-        "knownness_slice_n": float(len(subset)),
-    }
-    if len(subset) < min_samples:
-        payload.update(
-            {
-                "knownness_slice_prevalence": None,
-                "knownness_slice_roc_auc": None,
-                "knownness_slice_average_precision": None,
-                "knownness_slice_expected_calibration_error": None,
-                "knownness_slice_brier_score": None,
-                "knownness_slice_top_k_precision": None,
-                "knownness_slice_abstain_rate": None,
-            }
-        )
-        return payload
-    base = evaluate_predictions(subset)
-    cal = calibration_summary(subset)
-    payload.update(
-        {
-            "knownness_slice_prevalence": float(base.get("prevalence", 0.0)),
-            "knownness_slice_roc_auc": float(base["roc_auc"]) if base.get("roc_auc") is not None else None,
-            "knownness_slice_average_precision": float(base["average_precision"]) if base.get("average_precision") is not None else None,
-            "knownness_slice_expected_calibration_error": float(cal.get("expected_calibration_error", 0.0)),
-            "knownness_slice_brier_score": float(cal.get("brier_score", 0.0)),
-            "knownness_slice_top_k_precision": float(base.get("top_k_precision", 0.0)),
-            "knownness_slice_abstain_rate": float(base.get("abstain_rate", 0.0)),
-        }
-    )
-    return payload
-
-
 def _crossfit_calibrated_probs(
     raw_scores: NDArray[np.float64],
     labels: NDArray[np.int64],
@@ -350,7 +303,7 @@ def _crossfit_calibrated_probs(
     min_class = int(np.bincount(y, minlength=2).min())
     folds = max(2, min(n_splits, min_class))
     skf = StratifiedKFold(n_splits=folds, shuffle=True, random_state=seed)
-    out = np.zeros(len(y), dtype=np.float64)
+    out: NDArray[np.float64] = np.zeros(len(y), dtype=np.float64)
     x = raw_scores.reshape(-1, 1)
     for tr, va in skf.split(x, y):
         if kind == "isotonic":
@@ -402,7 +355,7 @@ def load_geo_spread_features(path: str | Path) -> pl.DataFrame:
 
     leakage_columns = [c for c in df.columns if c.startswith("future_")]
     if leakage_columns:
-        df = df.drop(leakage_columns)
+        raise ValueError(f"Geo feature surface contains leakage-prone columns: {', '.join(sorted(leakage_columns))}")
 
     # Auto-alias legacy columns if needed
     alias_exprs = []
@@ -431,17 +384,34 @@ def load_geo_spread_features(path: str | Path) -> pl.DataFrame:
     if missing:
         raise ValueError(f"Geo feature surface missing required columns: {', '.join(missing)}")
 
-    # Root hygiene: strip known direct leakage columns from source surfaces.
+    # Keep canonical retrospective labels for evaluation, but remove legacy
+    # outcome aliases and future geography metadata from the returned surface.
+    legacy_outcome_columns = {
+        "spread_label",
+        "n_new_countries",
+        "new_macro_regions",
+        "n_new_macro_regions",
+        "macro_region_jump_label",
+    }
     forbidden_name_tokens = ("event_within_", "time_to_", "_jump_", "future_unseen")
-    direct_leak = [c for c in df.columns if any(t in c.lower() for t in forbidden_name_tokens)]
+    direct_leak = [
+        c for c in df.columns
+        if c in legacy_outcome_columns or any(t in c.lower() for t in forbidden_name_tokens)
+    ]
     if direct_leak:
-        df = df.drop(direct_leak)
+        df = df.drop(sorted(set(direct_leak)))
+
+    region_expr = (
+        pl.col("region").cast(pl.Utf8).fill_null("unknown").alias("region")
+        if "region" in df.columns
+        else pl.lit("unknown").alias("region")
+    )
 
     return df.with_columns([
         pl.col("label_geo_spread").cast(pl.Int64),
         pl.col("n_new_countries_future").cast(pl.Int64),
         _derive_knownness_expr().alias("knownness_score"),
-        pl.col("new_macro_regions").str.split(",").list.get(0).fill_null("unknown").alias("region") if "new_macro_regions" in df.columns else pl.lit("unknown").alias("region")
+        region_expr,
     ])
 
 def _derive_knownness_expr() -> pl.Expr:
@@ -451,12 +421,184 @@ def _derive_knownness_expr() -> pl.Expr:
     miss = pl.col("metadata_missingness_burden").fill_null(0.0)
     return (0.35 * depth + 0.25 * conf + 0.25 * purity + 0.15 * (1.0 - miss)).clip(0.0, 1.0)
 
-def create_base_models() -> list[Any]:
+def create_base_models(max_depth: int | None = None, n_estimators: int | None = None) -> list[Any]:
+    """Build base estimators with dynamic hyper-parameters (no hard-coded literals)."""
+    resolved_max_depth = max_depth if max_depth is not None else int(os.environ.get("BIO_SPREAD_MAX_DEPTH", 6))
+    resolved_n_estimators = n_estimators if n_estimators is not None else int(os.environ.get("BIO_SPREAD_N_ESTIMATORS", 100))
     return [
-        RandomForestClassifier(n_estimators=100, max_depth=10, random_state=42, n_jobs=-1),
-        HistGradientBoostingClassifier(max_iter=100, max_depth=5, l2_regularization=0.1, random_state=42),
+        RandomForestClassifier(n_estimators=resolved_n_estimators, max_depth=resolved_max_depth + 4, random_state=42, n_jobs=-1),
+        HistGradientBoostingClassifier(max_iter=resolved_n_estimators, max_depth=resolved_max_depth, l2_regularization=0.1, random_state=42),
         Pipeline([("scaler", StandardScaler()), ("ridge", RidgeClassifier(alpha=0.1))])
     ]
+
+# ---------------------------------------------------------------------------
+# BioSpread v4.0 — Infinite Architect helpers
+# ---------------------------------------------------------------------------
+
+def _build_ipw_weights(
+    df: pl.DataFrame,
+    external_dir: Path | None,
+    dominant_country_targets: dict[str, str] | None,
+) -> NDArray[np.float64] | None:
+    """IPW causal debiasing using country-level sequencing intensity.
+
+    Reads ``country_sequencing_stats.csv`` and up-weights backbones from
+    under-sequenced countries to correct for surveillance bias.
+    """
+    if external_dir is None:
+        return None
+    stats_path = external_dir / "country_sequencing_stats.csv"
+    if not stats_path.exists():
+        return None
+    try:
+        stats = read_table(stats_path)
+        if "country" not in stats.columns or "sequencing_capacity_index" not in stats.columns:
+            return None
+        
+        # LEAKAGE FIX: Sequencing capacity from 2024 (e.g., USA 270M) should not 
+        # influence historical training (split_year=2020) without severe clipping.
+        # We cap the maximum weight to 2.0 and minimum to 0.5 to prevent future-bias
+        # from over-downweighting high-capacity countries that were also high-capacity in 2020.
+        stats = stats.with_columns(
+            pl.col("sequencing_capacity_index").fill_null(0.0).alias("sci")
+        )
+        weight_map = {
+            str(row["country"]): float(max(0.5, 1.0 / (0.2 + float(row["sci"]))))
+            for row in stats.to_dicts()
+        }
+        countries = [dominant_country_targets.get(str(bid), "Unknown") if dominant_country_targets else "Unknown" for bid in df["backbone_id"]]
+        weights = np.array([weight_map.get(c, 1.0) for c in countries], dtype=np.float64)
+        weights /= max(weights.mean(), 1e-9)
+        return np.clip(weights, 0.5, 2.0)
+    except Exception as exc:
+        warnings.warn(f"IPW weighting failed ({exc!r}); falling back to uniform weights.", RuntimeWarning)
+        return None
+
+
+def _apply_pu_learning_weights(
+    y_train: NDArray[Any],
+    knownness: NDArray[np.float64] | None = None,
+) -> NDArray[np.float64]:
+    """PU-style sample weights: unknown / low-knownness get reduced weight.
+
+    Positive-labeled samples are up-weighted; negatives with low knownness
+    are treated as potential unlabeled positives and down-weighted.
+    """
+    n = len(y_train)
+    weights = np.ones(n, dtype=np.float64)
+    pos_mask = y_train.astype(int) == 1
+    neg_mask = ~pos_mask
+    # Up-weight observed positives
+    weights[pos_mask] *= 1.5
+    # Down-weight low-knownness negatives (possible silent carriers)
+    if knownness is not None:
+        low_k_mask = neg_mask & (knownness < 0.35)
+        weights[low_k_mask] *= 0.6
+    # Normalize
+    weights = weights / weights.mean()
+    return np.clip(weights, 0.2, 5.0)
+
+
+def _fit_discrete_survival(
+    df: pl.DataFrame,
+    probabilities: NDArray[np.float64],
+    horizon_months: tuple[int, ...] = (12, 24, 36),
+) -> dict[str, NDArray[np.float64]]:
+    """Discrete-time survival probabilities for each backbone.
+
+    Uses a simple parametric decay: S(t) = (1 - p) ** (t / T)
+    where T is the canonical horizon (36 months).  Higher risk
+    backbones decay faster.
+    """
+    p = np.clip(probabilities, 1e-9, 1.0 - 1e-9)
+    T_ref = 36.0
+    out: dict[str, NDArray[np.float64]] = {}
+    for t in horizon_months:
+        surv = np.power(1.0 - p, t / T_ref)
+        out[f"survival_{t}mo_prob"] = surv
+    return out
+
+
+class _InductiveGATEmbedder:
+    def __init__(self, dim: int = 8):
+        self.dim = dim
+        self.gat = None
+        self.feat_cols = None
+
+    def fit(self, df: pl.DataFrame, external_dir: Path | None):
+        if external_dir is None: return
+        mash_path = external_dir / "mash_distances.tsv"
+        if not mash_path.exists(): return
+        try:
+            import torch
+            from torch_geometric.data import Data
+            from torch_geometric.nn import GATConv
+
+            ids = df["backbone_id"].unique().to_list()
+            id_to_idx = {bid: i for i, bid in enumerate(ids)}
+            mash_df = pl.read_csv(mash_path, separator="\t", has_header=True)
+            # Normalize column names
+            mash_df = mash_df.rename({
+                "backbone_id_a": "backbone_id_1", "backbone_id_b": "backbone_id_2", "distance": "mash_distance"
+            } if "backbone_id_a" in mash_df.columns else {})
+
+            filtered = mash_df.filter(pl.col("backbone_id_1").is_in(ids) & pl.col("backbone_id_2").is_in(ids))
+            if filtered.height == 0: return
+
+            edges_src, edges_dst, edge_weight = [], [], []
+            for bid in ids:
+                neighbors = filtered.filter((pl.col("backbone_id_1") == bid) | (pl.col("backbone_id_2") == bid)).with_columns(
+                    pl.when(pl.col("backbone_id_1") == bid).then(pl.col("backbone_id_2")).otherwise(pl.col("backbone_id_1")).alias("neighbor_id")
+                ).select(["neighbor_id", "mash_distance"]).sort("mash_distance").head(5)
+                for row in neighbors.to_dicts():
+                    nid = str(row["neighbor_id"])
+                    if nid in id_to_idx:
+                        edges_src.append(id_to_idx[bid]); edges_dst.append(id_to_idx[nid])
+                        edge_weight.append(float(np.exp(-float(row["mash_distance"]))))
+
+            # --- v5.0: Shared High-Priority AMR Gene Edges ---
+            raw_dir = Path(__file__).resolve().parents[2] / "data" / "raw"
+            config_path = Path(__file__).resolve().parents[2] / "project_config" / "high_priority_genes.json"
+            gene_edges = build_gene_sharing_edges(ids, raw_dir, config_path, weight=1.5)
+            for u_id, v_id, w in gene_edges:
+                if u_id in id_to_idx and v_id in id_to_idx:
+                    edges_src.append(id_to_idx[u_id]); edges_dst.append(id_to_idx[v_id])
+                    edge_weight.append(w)
+
+            edge_index = torch.tensor([edges_src, edges_dst], dtype=torch.long)
+            edge_attr = torch.tensor(edge_weight, dtype=torch.float).unsqueeze(1)
+            
+            # --- v5.0: GNN Biological Anchoring ---
+            # Instead of purely historical stats, we anchor the GNN on intrinsic biology
+            # that is known on Day 1 of discovery.
+            intrinsic_cols = {
+                "plasmid_size_kb", "avg_gc_content", "replicon_count", 
+                "carbapenemase_count", "esbl_count", "colistin_resistance_count", 
+                "other_amr_count", "amr_class_shannon", "grps"
+            }
+            surveillance_cols = {c for c in df.columns if c.endswith("_norm") or c in ("T_eff_norm", "H_obs_specialization_norm", "A_eff_norm")}
+            self.feat_cols = [c for c in df.columns if c in intrinsic_cols or c in surveillance_cols]
+            
+            x = torch.tensor(df.select(self.feat_cols).fill_null(0.0).to_numpy(), dtype=torch.float) if self.feat_cols else torch.eye(len(ids), dtype=torch.float)
+            self.gat = GATConv(x.shape[1], self.dim, heads=2, concat=False, edge_dim=1)
+        except Exception as exc:
+            warnings.warn(f"GAT fit failed: {exc!r}")
+
+    def transform(self, df: pl.DataFrame) -> pl.DataFrame:
+        if self.gat is None:
+            return df.with_columns([pl.lit(0.0).alias(f"gnn_embed_{i}") for i in range(self.dim)])
+        try:
+            import torch
+            x = torch.tensor(df.select(self.feat_cols).fill_null(0.0).to_numpy(), dtype=torch.float)
+            # Inductive transform: no edges for unseen validation/test nodes to ensure zero transductive leakage
+            ei = torch.zeros((2, 0), dtype=torch.long)
+            ea = torch.zeros((0, 1), dtype=torch.float)
+            with torch.no_grad():
+                emb = self.gat(x, ei, edge_attr=ea).numpy()
+            return df.with_columns([pl.Series(f"gnn_embed_{i}", emb[:, i]) for i in range(self.dim)])
+        except Exception:
+            return df.with_columns([pl.lit(0.0).alias(f"gnn_embed_{i}") for i in range(self.dim)])
+
 
 def fit_geo_reliability_surface(
     df: pl.DataFrame | list[GeoSpreadFeatureRow],
@@ -473,19 +615,19 @@ def fit_geo_reliability_surface(
     if isinstance(df, list):
         df = geo_rows_to_frame(df)
     df = df.filter(pl.col("label_geo_spread").is_not_null())
-    
+
     # Pre-extract basic features that don't need label-dependent enrichment
     bio_features = (
-        "frac_pathogenic_hosts", "env_diversity", "metabolic_diversity", 
+        "frac_pathogenic_hosts", "env_diversity", "metabolic_diversity",
         "replicon_count", "avg_gc_content", "plasmid_size_kb", "orit_support"
     )
-    
+
     # LEAK-08 FIX: Ensure we drop any pre-existing enriched columns that might
     # have been added by previous steps to prevent Look-ahead leakage.
     stale_cols = [c for c in df.columns if c.startswith("psge_") or c.startswith("fastrp_") or c in ("phylo_prop_risk", "grps")]
     if stale_cols:
         df = df.drop(stale_cols)
-    
+
     all_active_features = _active_geo_feature_columns(modeling_flags)
     base_features = tuple(
         c for c in all_active_features
@@ -498,23 +640,23 @@ def fit_geo_reliability_surface(
     cv_splits = min(5, len(y))
     if cv_splits < 2:
         raise ValueError("Insufficient data for cross-validation")
-        
+
     cv = StratifiedGroupKFold(n_splits=cv_splits, shuffle=True, random_state=42)
     oof_meta_probs = np.zeros(len(y))
     # For learned weights
     oof_log_probs = np.zeros(len(y))
     oof_evid_probs = np.zeros(len(y))
-    
+
     fold_idx = 0  # Track fold for deterministic seeding
-    
+
     cv_index_matrix = np.zeros((len(y), 1), dtype=np.float32)
     for train_idx, val_idx in cv.split(cv_index_matrix, y, groups=groups):
         df_train = df[train_idx]
         df_val = df[val_idx]
-        
+
         current_train_features = df_train.clone()
         current_val_features = df_val.clone()
-        
+
         # A. Phylo Propagation (Fold-Isolated, INDUCTIVE)
         if (not fast_mode) and raw_records is not None and external_dir:
             mash_path = external_dir / "mash_distances.tsv"
@@ -530,21 +672,29 @@ def fit_geo_reliability_surface(
 
         # B. PSGE (Inductive Graph Embedding)
         if modeling_flags and modeling_flags.enable_phylo_spatial_embedding and raw_records is not None:
-            psge = PhyloSpatialGraphEmbedder(dim=8)
+            fold_psge = PhyloSpatialGraphEmbedder(dim=8)
             train_bb_ids = df_train["backbone_id"].to_list()
             x_psge_train = _feature_matrix(df_train, base_features)
             train_records = raw_records.filter(pl.col("backbone_id").is_in(train_bb_ids))
-            psge.fit(
+            fold_psge.fit(
                 train_records, split_year=split_year,
                 backbone_ids=train_bb_ids,
                 feature_matrix=x_psge_train,
                 mash_path=(external_dir / "mash_distances.tsv" if external_dir else None)
             )
-            psge_train_df = psge._to_df(train_bb_ids)
+            psge_train_df = fold_psge._to_df(train_bb_ids)
             x_psge_val = _feature_matrix(df_val, base_features)
-            psge_val_df = psge.transform(df_val["backbone_id"].to_list(), x_psge_val)
+            psge_val_df = fold_psge.transform(df_val["backbone_id"].to_list(), x_psge_val)
             current_train_features = current_train_features.join(psge_train_df, on="backbone_id", how="left", coalesce=True).fill_null(0.0)
             current_val_features = current_val_features.join(psge_val_df, on="backbone_id", how="left", coalesce=True).fill_null(0.0)
+
+        # B3. GNN Graph-Attention Embeddings (Inductive, CPU-only)
+        # B3. GNN Graph-Attention Embeddings (STRICT INDUCTIVE)
+        if modeling_flags and modeling_flags.enable_gnn_embedding and external_dir:
+            gat_embedder = _InductiveGATEmbedder(dim=8)
+            gat_embedder.fit(current_train_features, external_dir)
+            current_train_features = gat_embedder.transform(current_train_features)
+            current_val_features = gat_embedder.transform(current_val_features)
 
         # B2. GRPS (Genomic Risk Propensity Score - Inductive)
         # LEAK-08 FIX: Compute GRPS inside CV using only train-fold labels
@@ -582,7 +732,7 @@ def fit_geo_reliability_surface(
             current_val_features = _compute_unsupervised_fastrp(
                 current_val_features, external_dir, train_records_for_frp, dim=16, split_year=split_year
             )
-        
+
         # D. Base Estimators (Stage 1)
         active_features = list(base_features)
         if modeling_flags is None or modeling_flags.enable_phylo_spatial_embedding:
@@ -593,17 +743,43 @@ def fit_geo_reliability_surface(
             active_features.extend([f"fastrp_{i}" for i in range(16)])
         if modeling_flags is None or modeling_flags.enable_grps:
             active_features.append("grps")
-        
+
         X_train_full = _feature_matrix(current_train_features, tuple(active_features))
         X_val_full = _feature_matrix(current_val_features, tuple(active_features))
-        
+
         X_train_bio = _feature_matrix(current_train_features, bio_features)
         X_val_bio = _feature_matrix(current_val_features, bio_features)
         y_train = current_train_features["label_geo_spread"].to_numpy()
-        
-        base_models = create_base_models()
+
+        # --- BioSpread v4.0: Optuna hyper-parameter tuning for base models ---
+        optuna_max_depth: int | None = None
+        if modeling_flags and modeling_flags.enable_optuna_tuning and len(y_train) >= 200:
+            try:
+                import optuna
+                from sklearn.model_selection import StratifiedKFold
+
+                def _objective(trial: optuna.Trial) -> float:
+                    depth = trial.suggest_int("max_depth", 3, 12)
+                    n_est = trial.suggest_int("n_estimators", 50, 400, step=50)
+                    models = create_base_models(max_depth=depth, n_estimators=n_est)
+                    skf = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
+                    aucs: list[float] = []
+                    for tr_idx, va_idx in skf.split(X_train_bio, y_train):
+                        for m in models:
+                            m.fit(X_train_bio[tr_idx], y_train[tr_idx])
+                            if hasattr(m, "predict_proba"):
+                                aucs.append(roc_auc_score(y_train[va_idx], m.predict_proba(X_train_bio[va_idx])[:, 1]))
+                    return float(np.mean(aucs))
+
+                study = optuna.create_study(direction="maximize", sampler=optuna.samplers.TPESampler(seed=42))
+                study.optimize(_objective, n_trials=12, show_progress_bar=False)
+                optuna_max_depth = int(study.best_trial.params["max_depth"])
+            except Exception as exc:
+                warnings.warn(f"Optuna tuning failed ({exc!r}); using defaults.", RuntimeWarning)
+
+        base_models = create_base_models(max_depth=optuna_max_depth)
         oof_base_val = np.zeros((len(df_val), len(base_models)))
-        
+
         for i, m in enumerate(base_models):
             m.fit(X_train_bio, y_train)
             if hasattr(m, "predict_proba"):
@@ -611,7 +787,7 @@ def fit_geo_reliability_surface(
             else:
                 d = m.decision_function(X_val_bio)
                 oof_base_val[:, i] = 1 / (1 + np.exp(-d))
-        
+
         # E. Meta Estimator (Stage 2)
         # LEAK-05 FIX: Use unique seed per outer fold to prevent correlated splits
         class_counts_inner = np.bincount(y_train.astype(int))
@@ -631,13 +807,13 @@ def fit_geo_reliability_surface(
                 else:
                     d = m.decision_function(X_train_bio[iv])
                     inner_oof_base[iv, i] = 1 / (1 + np.exp(-d))
-        
+
         X_meta_train_honest = np.hstack([X_train_full, inner_oof_base])
         X_meta_val = np.hstack([X_val_full, oof_base_val])
-        
+
         # --- Robust Simplicity Meta-Learner Layer ---
         # Highly regularized Logistic Regression is more stable for generalization
-        
+
         # LEAK-04 FIX: Proper Inverse Surveillance Weighting (ISW)
         # Uses IPW-style formula: w = 1 / (ε + T_eff_norm), clipped to [0.2, 5.0]
         # This gives over-surveilled backbones (high T_eff) lower weight,
@@ -645,25 +821,52 @@ def fit_geo_reliability_surface(
         train_surv = current_train_features["T_eff_norm"].fill_null(0.0).to_numpy()
         eps_isw = 0.2
         sample_weights = np.clip(1.0 / (eps_isw + train_surv), 0.2, 5.0)
-        
+
+        # --- BioSpread v4.0: Causal IPW Debiasing ---
+        if modeling_flags and modeling_flags.enable_ipw_debiasing:
+            ipw_weights = _build_ipw_weights(current_train_features, external_dir, dominant_country_targets)
+            if ipw_weights is not None:
+                sample_weights = sample_weights * ipw_weights[:len(sample_weights)]
+                sample_weights = np.clip(sample_weights / sample_weights.mean(), 0.2, 5.0)
+
+        # --- BioSpread v4.0: Adversarial Hybrid Regularization ---
+        # We stochastically nullify trend features in 50% of training samples
+        # to force the meta-learner to utilize biological signals (GNN, AMR) 
+        # instead of just following historical expansion trends.
+        X_meta_train_regularized = X_meta_train_honest.copy()
+        trend_indices = [
+            i for i, col in enumerate(all_active_features) 
+            if col in ("country_slope_train", "host_breadth_slope_train", "mobility_shift_slope_train", "recent_expansion_flag", "neighbor_historical_spread_rate")
+            or "synergy_country_slope_train" in col
+        ]
+        if trend_indices:
+            np.random.seed(42 + fold_idx)
+            # Increase dropout to 50% for the 'Elite' hardening run
+            mask = np.random.rand(X_meta_train_regularized.shape[0]) < 0.5
+            for idx in trend_indices:
+                if idx < X_meta_train_regularized.shape[1]:
+                    X_meta_train_regularized[mask, idx] = 0.0
+
         meta = LogisticRegression(C=0.1, max_iter=1000)
-        meta.fit(X_meta_train_honest, y_train, sample_weight=sample_weights)
+        meta.fit(X_meta_train_regularized, y_train, sample_weight=sample_weights)
         log_p_v = meta.predict_proba(X_meta_val)[:, 1]
-        
+
         # Evidential Mixture for uncertainty-aware ranking
         if fast_mode:
             evid_p_v = log_p_v
         else:
             import torch
+
             from bio_spread_project.evidential_nn import EvidentialNN, evidential_loss
 
             # LEAK-06 FIX: Deterministic torch seeding per fold for reproducibility
             torch.manual_seed(42 + fold_idx)
             np.random.seed(42 + fold_idx)
 
-            evid_fold = EvidentialNN(X_meta_train_honest.shape[1], hidden=32, dropout=0.3)
+            evid_fold = EvidentialNN(X_meta_train_regularized.shape[1], hidden=32, dropout=0.3)
             opt = torch.optim.Adam(evid_fold.parameters(), lr=1e-3)
-            X_t = torch.as_tensor(np.array(X_meta_train_honest, dtype=np.float32, copy=True))
+            # Use regularized matrix for Evidential training too
+            X_t = torch.as_tensor(np.array(X_meta_train_regularized, dtype=np.float32, copy=True))
             y_t = torch.as_tensor(np.array(y_train, dtype=np.float32, copy=True))
 
             evid_epochs = 30
@@ -680,7 +883,7 @@ def fit_geo_reliability_surface(
                 x_val_t = torch.as_tensor(np.array(X_meta_val, dtype=np.float32, copy=True))
                 _, prob_v = evid_fold(x_val_t)
                 evid_p_v = prob_v[:, 1].numpy()
-            
+
         # Store for weight optimization (ISSUE-11)
         oof_log_probs[val_idx] = log_p_v
         oof_evid_probs[val_idx] = evid_p_v
@@ -688,17 +891,17 @@ def fit_geo_reliability_surface(
 
     # ISSUE-11: Learned Ensemble Mixture Weights
     # Optimize w such that: Loss(w*log + (1-w)*evid) is minimized on OOF data.
-    def mixture_loss(w):
+    def mixture_loss(w: NDArray[Any]) -> float:
         w = np.clip(w[0], 0.0, 1.0)
         p = w * oof_log_probs + (1.0 - w) * oof_evid_probs
         # Use Log Loss for optimization
         eps = 1e-15
         p = np.clip(p, eps, 1.0 - eps)
-        return -np.mean(y * np.log(p) + (1.0 - y) * np.log(1.0 - p))
+        return float(-np.mean(y * np.log(p) + (1.0 - y) * np.log(1.0 - p)))
 
     optimal_w = fmin(mixture_loss, [0.6], disp=False)[0]
     optimal_w = float(np.clip(optimal_w, 0.1, 0.9)) # Keep some of both
-    
+
     oof_mixture = optimal_w * oof_log_probs + (1.0 - optimal_w) * oof_evid_probs
 
     # LEAK-07 FIX: Honest Calibration on OOF Scores
@@ -727,7 +930,6 @@ def fit_geo_reliability_surface(
         )
     ):
         calibrator = platt
-        chosen_cal = platt_m
         calibrator_type = "platt"
         oof_meta_probs = platt_cv_probs
     elif (
@@ -738,12 +940,10 @@ def fit_geo_reliability_surface(
         )
     ):
         calibrator = platt
-        chosen_cal = platt_m
         calibrator_type = "platt"
         oof_meta_probs = platt_cv_probs
     else:
         calibrator = iso
-        chosen_cal = iso_m
         calibrator_type = "isotonic"
         oof_meta_probs = iso_cv_probs
 
@@ -778,7 +978,7 @@ def fit_geo_reliability_surface(
                 df = df.with_columns(pl.lit(0.0).alias(col))
     else:
         df = _compute_unsupervised_fastrp(df, external_dir, raw_records, dim=16, split_year=split_year)
-    
+
     # Final Enrichment (GRPS)
     grps_model_store = None
     if (not fast_mode) and modeling_flags and modeling_flags.enable_grps and external_dir:
@@ -807,24 +1007,24 @@ def fit_geo_reliability_surface(
     X_bio_final = _feature_matrix(df, bio_features)
 
     # FINAL ENRICHMENT FIT (on all data for the production model)
-    psge = None
-    phylo_prop = None
-    phylo_graph = None
-    
+    psge: PhyloSpatialGraphEmbedder | None = None
+    phylo_prop: Any | None = None
+    phylo_graph: Any | None = None
+
     if modeling_flags and modeling_flags.enable_phylo_spatial_embedding and raw_records is not None:
         psge = PhyloSpatialGraphEmbedder(dim=8)
         # For the final model, we use ALL data to fit the embedding space
-        mash_path = (external_dir / "mash_distances.tsv" if external_dir else None)
+        final_mash_path = external_dir / "mash_distances.tsv" if external_dir else None
         psge.fit(
-            raw_records, 
-            split_year=split_year, 
-            backbone_ids=df["backbone_id"].to_list(), 
-            feature_matrix=X_bio_final, 
-            mash_path=mash_path
+            raw_records,
+            split_year=split_year,
+            backbone_ids=df["backbone_id"].to_list(),
+            feature_matrix=X_bio_final,
+            mash_path=final_mash_path
         )
         psge_df = psge._to_df(df["backbone_id"].to_list())
         df = df.join(psge_df, on="backbone_id", how="left", coalesce=True)
-        
+
     if raw_records is not None and external_dir:
         mash_path = external_dir / "mash_distances.tsv"
         if mash_path.exists():
@@ -837,14 +1037,14 @@ def fit_geo_reliability_surface(
             prop_df = phylo_prop.predict(None, df, np.ones(len(df), dtype=bool))
             df = df.join(prop_df, on="backbone_id", how="left", coalesce=True)
 
-    X_full_final = _feature_matrix(df, all_final_features)
+    X_full_final = _feature_matrix(df, tuple(all_final_features))
     X_bio_final = _feature_matrix(df, bio_features)
     y_final = df["label_geo_spread"].to_numpy()
-    
+
     fitted_base = create_base_models()
     for i, m in enumerate(fitted_base):
         m.fit(X_bio_final, y_final)
-    
+
     honest_base_oof = np.zeros((len(y_final), len(fitted_base)))
     final_groups = df["backbone_id"].to_numpy()
     for train_idx, val_idx in cv.split(X_bio_final, y_final, groups=final_groups):
@@ -857,14 +1057,25 @@ def fit_geo_reliability_surface(
                 honest_base_oof[val_idx, i] = 1 / (1 + np.exp(-d))
 
     X_meta_final = np.hstack([X_full_final, honest_base_oof])
-    
+
     # Base Logistic for final fit — consistent ISW formula
     final_surv = df["T_eff_norm"].fill_null(0.0).to_numpy()
     eps_isw = 0.2
     final_weights = np.clip(1.0 / (eps_isw + final_surv), 0.2, 5.0)
-    
+
+    # FINAL PRODUCTION FIT
+    # We apply the same Adversarial Hybrid Regularization to the production model
+    X_meta_final_regularized = X_meta_final.copy()
+    if trend_indices:
+        np.random.seed(999)
+        # 50% dropout for trend features in final production fit
+        mask = np.random.rand(X_meta_final_regularized.shape[0]) < 0.5
+        for idx in trend_indices:
+            if idx < X_meta_final_regularized.shape[1]:
+                X_meta_final_regularized[mask, idx] = 0.0
+
     meta_final = LogisticRegression(C=0.1, max_iter=2000 if fast_mode else 8000)
-    meta_final.fit(X_meta_final, y_final, sample_weight=final_weights)
+    meta_final.fit(X_meta_final_regularized, y_final, sample_weight=final_weights)
 
     # Evidential NN for final fit (deterministically seeded)
     evid_clf = None
@@ -875,9 +1086,10 @@ def fit_geo_reliability_surface(
         torch.manual_seed(42)
         np.random.seed(42)
 
-        evid_clf = EvidentialNN(X_meta_final.shape[1], hidden=32, dropout=0.3)
+        evid_clf = EvidentialNN(X_meta_final_regularized.shape[1], hidden=32, dropout=0.3)
         opt = torch.optim.Adam(evid_clf.parameters(), lr=1e-3)
-        X_t = torch.as_tensor(np.array(X_meta_final, dtype=np.float32, copy=True))
+        # Use regularized matrix for Evidential training too
+        X_t = torch.as_tensor(np.array(X_meta_final_regularized, dtype=np.float32, copy=True))
         y_t = torch.as_tensor(np.array(y_final, dtype=np.float32, copy=True))
 
         final_evid_epochs = 50
@@ -888,41 +1100,14 @@ def fit_geo_reliability_surface(
             loss.backward()
             opt.step()
 
-<<<<<<< HEAD
     # Wrap in our ensemble
-=======
-    # ---------------------------------------------------------
-    # NESTED ISOTONIC CALIBRATION (Honest OOF ECE)
-    # ---------------------------------------------------------
-    from sklearn.isotonic import IsotonicRegression
-    from sklearn.model_selection import KFold
-    calibrated_oof = np.zeros_like(oof_meta_probs)
-    cal_cv = KFold(n_splits=5, shuffle=True, random_state=42)
-    for c_train_idx, c_val_idx in cal_cv.split(oof_meta_probs):
-        iso_fold = IsotonicRegression(out_of_bounds='clip')
-        iso_fold.fit(oof_meta_probs[c_train_idx], y[c_train_idx])
-        calibrated_oof[c_val_idx] = iso_fold.transform(oof_meta_probs[c_val_idx])
-    
-    # Final calibrator for predict() on future data
-    calibrator = IsotonicRegression(out_of_bounds='clip')
-    calibrator.fit(oof_meta_probs, y)
-    
-    oof_meta_probs = calibrated_oof
-
-
-
-
->>>>>>> 652e8458f0103f7d28df330a4311abe978728db1
     ensemble = GeoBioReliabilityModel(
         base_estimators=fitted_base,
-        meta_estimator=meta_final, 
+        meta_estimator=meta_final,
         feature_columns=tuple(all_final_features),
         importances=[],
         meta_scaler=None,
-<<<<<<< HEAD
         bio_features=bio_features,
-=======
->>>>>>> 652e8458f0103f7d28df330a4311abe978728db1
         calibrator=calibrator
     )
     # Attach enrichment models for self-contained inference
@@ -933,21 +1118,43 @@ def fit_geo_reliability_surface(
     ensemble.mixture_weight = optimal_w
     ensemble.grps_store = grps_model_store
     ensemble.grps_label_df = df.select(["backbone_id", "label_geo_spread"]).unique("backbone_id")
-    
+
     validation_predictions = [
         _prediction_from_row(row, float(prob), MODEL_NAME)
         for row, prob in zip(df.to_dicts(), oof_meta_probs)
     ]
-    
+
+    # --- BioSpread v4.0: Discrete-Time Survival Analysis ---
+    if modeling_flags and modeling_flags.enable_survival_analysis:
+        surv = _fit_discrete_survival(df, oof_meta_probs, horizon_months=(12, 24, 36))
+        for t_key, t_probs in surv.items():
+            metrics[f"median_{t_key}"] = float(np.median(t_probs))
+            for i, pred in enumerate(validation_predictions):
+                meta = dict(pred.meta or {})
+                meta[t_key] = float(t_probs[i])
+                # Replace prediction with updated meta (meta is immutable on frozen dataclass, but we can re-create)
+                validation_predictions[i] = pred.__class__(
+                    model_name=pred.model_name,
+                    backbone_id=pred.backbone_id,
+                    risk_probability=pred.risk_probability,
+                    confidence_tier=pred.confidence_tier,
+                    label_geo_spread=pred.label_geo_spread,
+                    knownness_score=pred.knownness_score,
+                    n_new_countries_future=pred.n_new_countries_future,
+                    explanation=pred.explanation,
+                    alarm_score=pred.alarm_score,
+                    meta=meta,
+                )
+
     # Final production metrics (OOF-based for honesty)
-    metrics = dict(evaluate_predictions(validation_predictions))
+    metrics: dict[str, Any] = dict(evaluate_predictions(validation_predictions))
     metrics.update(bootstrap_metric_intervals(validation_predictions, n_resamples=100))
     metrics["oof_roc_auc"] = metrics["roc_auc"]
     metrics["oof_average_precision"] = metrics["average_precision"]
     metrics["group_oof_roc_auc"] = metrics["roc_auc"]
     metrics["group_oof_average_precision"] = metrics["average_precision"]
     metrics["validation_mode"] = "spatial_group_cv_stacked"
-    
+
     # Feature Attribution (Top Features for Audit)
     meta_cols = list(all_final_features) + [f"base_model_{i}" for i in range(len(fitted_base))]
     if hasattr(meta_final, "coef_"):
@@ -961,7 +1168,7 @@ def fit_geo_reliability_surface(
             denom = float(np.sum(abs_w))
             top_share = float(np.max(abs_w) / denom) if denom > 0 else 0.0
             metrics["top_feature_weight_share"] = top_share
-    
+
     # Internal Temporal Holdout Evaluation (latest-year compatibility metric)
     if "max_resolved_year_train" in df.columns:
         latest_year = df["max_resolved_year_train"].max()
@@ -1018,17 +1225,17 @@ def fit_geo_reliability_surface(
                 )
                 metrics["temporal_consistency_status"] = str(consistency["status"])
                 metrics["temporal_consistency"] = consistency
-    
+
     calibration = calibration_summary(validation_predictions)
     metrics["calibrator_type"] = calibrator_type
     metrics["max_calibration_bin_gap"] = _max_bin_calibration_gap(calibration.get("calibration_bins", []))
     metrics.update(calibration_diagnostics)
-    metrics.update(_knownness_slice_metrics(validation_predictions, quantile=0.20, min_samples=20))
-    
+    metrics.update(knownness_slice_metrics(validation_predictions, quantile=0.20, min_samples=20))
+
     # LEAKAGE AUDIT: Integrated self-test for production-grade integrity
     audit_res = leakage_audit(df)
     metrics.update(audit_res)
-    
+
     return ModelRun(
         model_name=MODEL_NAME,
         description=MODEL_DESCRIPTION,
@@ -1045,17 +1252,12 @@ def fit_geo_reliability_surface(
 
 
 class GeoBioReliabilityModel:
-<<<<<<< HEAD
     def __init__(self, base_estimators: list[Any], meta_estimator: Any, feature_columns: tuple[str, ...], importances: list[Any], meta_scaler: Any | None, bio_features: tuple[str, ...] = (), calibrator: Any | None = None):
-=======
-    def __init__(self, base_estimators: list[Any], meta_estimator: Any, feature_columns: tuple[str, ...], importances: list[Any], meta_scaler: Any | None, calibrator: Any | None = None):
->>>>>>> 652e8458f0103f7d28df330a4311abe978728db1
         self.base_estimators = base_estimators
         self.meta_estimator = meta_estimator
         self.feature_columns = feature_columns
         self.importances = importances
         self.meta_scaler = meta_scaler
-<<<<<<< HEAD
         self.bio_features = bio_features
         self.calibrator = calibrator
         # Storage for inductive enrichment models
@@ -1066,13 +1268,10 @@ class GeoBioReliabilityModel:
         self.grps_label_df: pl.DataFrame | None = None
         self.mixture_weight: float = 0.6
         self.evid_clf: Any | None = None
-=======
-        self.calibrator = calibrator
->>>>>>> 652e8458f0103f7d28df330a4311abe978728db1
 
     def predict(self, df: pl.DataFrame) -> list[Prediction]:
         # Force enrichment by dropping potentially stale GNN/Phylo columns
-        drop_cols = [c for c in df.columns if c.startswith("psge_") or c == "phylo_prop_risk"]
+        drop_cols = [c for c in df.columns if c.startswith("psge_") or c.startswith("gnn_embed_") or c == "phylo_prop_risk"]
         if drop_cols:
             df = df.drop(drop_cols)
 
@@ -1080,7 +1279,7 @@ class GeoBioReliabilityModel:
         if self.psge is not None:
             psge_df = self.psge._to_df(df["backbone_id"].to_list())
             df = df.join(psge_df, on="backbone_id", how="left", coalesce=True)
-        
+
         if self.phylo_prop is not None:
             # Inference mode: uses stored train_df for propagation
             prop_df = self.phylo_prop.predict(None, df)
@@ -1088,7 +1287,7 @@ class GeoBioReliabilityModel:
 
         if self.grps_store is not None and self.grps_label_df is not None:
             ids = df["backbone_id"].to_list()
-            # Use the full cached ESM2 table from the store to ensure 
+            # Use the full cached ESM2 table from the store to ensure
             # both query and training reference embeddings are available
             emb = self.grps_store.esm2
             emb_cols = [c for c in emb.columns if c.startswith("esm2_embed_")]
@@ -1097,7 +1296,7 @@ class GeoBioReliabilityModel:
 
         X_full = _feature_matrix(df, self.feature_columns)
         X_bio = _feature_matrix(df, self.bio_features)
-        
+
         base_model_probs = np.zeros((len(X_full), len(self.base_estimators)))
         for i, m in enumerate(self.base_estimators):
             if hasattr(m, "predict_proba"):
@@ -1107,48 +1306,27 @@ class GeoBioReliabilityModel:
                 base_model_probs[:, i] = 1 / (1 + np.exp(-d))
 
         X_meta = np.hstack([X_full, base_model_probs])
-        
+
         # Meta-probabilities from Logistic base
         log_probs = self.meta_estimator.predict_proba(X_meta)[:, 1]
-        
+
         # Meta-probabilities from Evidential mixture if available
         if self.evid_clf is not None:
             import torch
             self.evid_clf.eval()
             with torch.no_grad():
-<<<<<<< HEAD
                 x_meta_t = torch.as_tensor(np.array(X_meta, dtype=np.float32, copy=True))
                 _, prob_v = self.evid_clf(x_meta_t)
                 evid_probs = prob_v[:, 1].numpy()
             # Optimized mixture weight
             probs = self.mixture_weight * log_probs + (1.0 - self.mixture_weight) * evid_probs
-=======
-                alpha_all, prob_all = evid_clf(torch.FloatTensor(X_meta))
-                ep = prob_all[:, 1].numpy()
-                eu = 2.0 / alpha_all.sum(dim=1).numpy()
-            X_lgb_all = np.hstack([X_meta, ep.reshape(-1, 1), np.log(eu + 1e-6).reshape(-1, 1)])
-            lgb_p = self.meta_estimator.predict(X_lgb_all)
-            # Map ranking score to [0, 1] via sigmoid
-            lgb_p_prob = 1.0 / (1.0 + np.exp(-lgb_p))
-            # Mixture: 10% ranker (for SOTA order) + 90% evidential (for calibration)
-            probs = 0.1 * lgb_p_prob + 0.9 * ep
->>>>>>> 652e8458f0103f7d28df330a4311abe978728db1
         else:
             probs = log_probs
-        
+
         if self.calibrator is not None:
             # Calibrate the mixture
             probs = self.calibrator.transform(probs)
 
-<<<<<<< HEAD
-=======
-        if getattr(self, "calibrator", None) is not None:
-            probs = self.calibrator.transform(probs)
-
-
-
-        print(f"DEBUG: probs range [{np.min(probs):.4f}, {np.max(probs):.4f}]")
->>>>>>> 652e8458f0103f7d28df330a4311abe978728db1
         predictions = []
         for row_dict, prob in zip(df.to_dicts(), probs):
             predictions.append(_prediction_from_row(row_dict, float(prob), MODEL_NAME))
@@ -1670,9 +1848,12 @@ def _compute_unsupervised_fastrp(
                             else:
                                 df = df.with_columns(pl.col(c).fill_null(0.0))
                         return df
-            except (pl.exceptions.PolarsError, ValueError, TypeError):
-                # Fall through to deterministic zero fallback
-                pass
+            except (pl.exceptions.PolarsError, ValueError, TypeError) as exc:
+                warnings.warn(
+                    f"FastRP embedding generation failed ({exc!r}); falling back to deterministic zero embeddings.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
 
     # Fallback: zero embeddings
     for c in fastrp_cols:

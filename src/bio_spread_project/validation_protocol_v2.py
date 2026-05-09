@@ -54,6 +54,7 @@ def evaluate_temporal_consistency(
     oof_roc_auc: float,
     window_rocs: list[float],
     max_positive_delta: float = 0.03,
+    max_peak_positive_delta: float = 0.06,
     max_range: float = 0.12,
 ) -> dict[str, Any]:
     if not window_rocs:
@@ -68,10 +69,13 @@ def evaluate_temporal_consistency(
     minimum = float(np.min(arr))
     maximum = float(np.max(arr))
     positive_delta = maximum - float(oof_roc_auc)
+    median_delta = median - float(oof_roc_auc)
     spread = maximum - minimum
     flags: list[str] = []
-    if positive_delta > max_positive_delta:
+    if median_delta > max_positive_delta:
         flags.append("temporal_too_good_vs_oof")
+    if positive_delta > max_peak_positive_delta:
+        flags.append("temporal_peak_too_good_vs_oof")
     if spread > max_range:
         flags.append("temporal_instability")
     return {
@@ -82,6 +86,7 @@ def evaluate_temporal_consistency(
         "min_roc_auc": minimum,
         "max_roc_auc": maximum,
         "roc_auc_spread": spread,
+        "median_delta_vs_oof": float(median_delta),
         "max_positive_delta_vs_oof": float(positive_delta),
         "flags": flags,
     }

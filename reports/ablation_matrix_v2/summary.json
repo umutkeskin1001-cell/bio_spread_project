@@ -1,0 +1,51 @@
+{
+  "all_on": {
+    "roc_auc": 0.8890313427969724,
+    "average_precision": 0.8317718578521438,
+    "temporal_holdout_roc_auc": 0.9486020096111839,
+    "temporal_consistency_status": "fail",
+    "feature_lineage_status": "pass"
+  },
+  "no_enable_synergy_interactions": {
+    "roc_auc": 0.9067602456669046,
+    "average_precision": 0.8466469189978119,
+    "temporal_holdout_roc_auc": 0.9477646716178826,
+    "temporal_consistency_status": "pass",
+    "feature_lineage_status": "pass"
+  },
+  "no_enable_phylo_propagation": {
+    "roc_auc": 0.9074387374765391,
+    "average_precision": 0.8473042035506438,
+    "temporal_holdout_roc_auc": 0.9483908548128731,
+    "temporal_consistency_status": "pass",
+    "feature_lineage_status": "pass"
+  },
+  "no_enable_evidential_meta": {
+    "roc_auc": 0.9077735775903848,
+    "average_precision": 0.8483103105277765,
+    "temporal_holdout_roc_auc": 0.9489296636085627,
+    "temporal_consistency_status": "pass",
+    "feature_lineage_status": "pass"
+  },
+  "no_enable_grps": {
+    "roc_auc": 0.907288940583503,
+    "average_precision": 0.8475842748137558,
+    "temporal_holdout_roc_auc": 0.9483544488131644,
+    "temporal_consistency_status": "pass",
+    "feature_lineage_status": "pass"
+  },
+  "no_enable_phylo_spatial_embedding": {
+    "roc_auc": 0.926621551367117,
+    "average_precision": 0.9018115877840865,
+    "temporal_holdout_roc_auc": 0.9418523372651812,
+    "temporal_consistency_status": "pass",
+    "feature_lineage_status": "pass"
+  },
+  "no_enable_conformal": {
+    "roc_auc": 0.907835258663988,
+    "average_precision": 0.8500838309292807,
+    "temporal_holdout_roc_auc": 0.9480704820154361,
+    "temporal_consistency_status": "pass",
+    "feature_lineage_status": "pass"
+  }
+}

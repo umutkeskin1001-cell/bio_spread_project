@@ -1,0 +1,7 @@
+{
+  "input_count": 1,
+  "inputs": {
+    "geo_spread_features": "reports/latest_refresh/features.csv"
+  },
+  "project": "BioSpread"
+}

@@ -23,6 +23,7 @@ from bio_spread_project.geo_reliability import (
     leakage_audit,
     leakage_canary_self_test,
     load_geo_spread_feature_rows,
+    load_geo_spread_features,
     permutation_leakage_sanity_check,
     single_feature_leakage_scan,
     statistical_leakage_alarm,
@@ -250,6 +251,51 @@ def test_geo_surface_never_derives_train_features_from_future_macro_regions(tmp_
     row = load_geo_spread_feature_rows(surface)[0]
 
     assert row.features["geo_dominant_region_share_train"] == pytest.approx(0.25)
+
+
+def test_geo_surface_strips_legacy_outcome_columns_and_future_region_metadata(tmp_path):
+    surface = tmp_path / "surface.tsv"
+    surface.write_text(
+        "\t".join(
+            [
+                "backbone_id",
+                "spread_label",
+                "n_new_countries",
+                "new_macro_regions",
+                "n_new_macro_regions",
+                "macro_region_jump_label",
+                "n_train_macro_regions",
+                "log1p_n_countries_train",
+                "log1p_member_count_train",
+                "metadata_support_depth_norm",
+                "metadata_missingness_burden",
+                "T_eff_norm",
+                "H_obs_specialization_norm",
+                "A_eff_norm",
+                "coherence_score",
+                "backbone_purity_norm",
+                "assignment_confidence_norm",
+                "mash_neighbor_distance_train_norm",
+                "orit_support",
+                "H_external_host_range_norm",
+            ]
+        )
+        + "\n"
+        + "\t".join(["bb_a", "1", "3", "Europe", "2", "1", "4", "1.2", "2.0", "0.8", "0.1", "0.7", "0.3", "0.6", "0.8", "0.9", "0.8", "0.1", "0.7", "0.6"])
+        + "\n",
+        encoding="utf-8",
+    )
+
+    features = load_geo_spread_features(surface)
+
+    assert "label_geo_spread" in features.columns
+    assert "n_new_countries_future" in features.columns
+    assert "spread_label" not in features.columns
+    assert "n_new_countries" not in features.columns
+    assert "new_macro_regions" not in features.columns
+    assert "n_new_macro_regions" not in features.columns
+    assert "macro_region_jump_label" not in features.columns
+    assert features["region"].to_list() == ["unknown"]
 
 
 def test_geo_predictions_expose_honest_attribution_metadata(tmp_path):
@@ -960,7 +1006,7 @@ def test_trend_evaluation_returns_insufficient_data_when_history_is_short():
         thresholds=TrendThresholds(),
     )
     assert report["status"] == "insufficient_data"
-    assert report["all_passed"] is True
+    assert report["all_passed"] is False
     assert report["trend_evidence_sufficient"] is False
 
 
@@ -991,6 +1037,20 @@ def test_invalid_quality_thresholds_raise_validation_error(tmp_path):
     invalid = tmp_path / "invalid_quality.json"
     invalid.write_text(json.dumps({"auc_min": 1.5}), encoding="utf-8")
     with pytest.raises(ValueError, match="auc_min"):
+        load_quality_thresholds(invalid)
+
+
+def test_invalid_quality_threshold_boolean_raises_validation_error(tmp_path):
+    invalid = tmp_path / "invalid_quality_bool.json"
+    invalid.write_text(json.dumps({"external_holdout_required": "false"}), encoding="utf-8")
+    with pytest.raises(ValueError, match="external_holdout_required"):
+        load_quality_thresholds(invalid)
+
+
+def test_fractional_integer_threshold_raises_validation_error(tmp_path):
+    invalid = tmp_path / "invalid_quality_int.json"
+    invalid.write_text(json.dumps({"suspicious_feature_count_max": 0.5}), encoding="utf-8")
+    with pytest.raises(ValueError, match="suspicious_feature_count_max"):
         load_quality_thresholds(invalid)
 
 

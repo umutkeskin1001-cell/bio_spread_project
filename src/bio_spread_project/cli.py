@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import subprocess
+import sys
 from pathlib import Path
 
 from bio_spread_project.config_loader import ProjectPaths
@@ -55,13 +56,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument(
         "--mode",
-        choices=("auto", "raw", "geo", "input"),
+        choices=("auto", "raw", "geo", "input", "active_radar"),
         default="auto",
-        help="auto: prefer geo surface when present; raw: use records/amr; geo: force geo surface; input: force input CSV",
+        help="auto: prefer geo surface when present; raw: use records/amr; geo: force geo surface; input: force input CSV; active_radar: generate threat watchlist for next 3 years",
     )
     run.add_argument("--output-dir", type=Path, default=default_output)
     run.add_argument("--split-year", type=int, default=2020)
     run.add_argument("--horizon-years", type=int, default=3)
+    run.add_argument(
+        "--triage-budget",
+        type=int,
+        default=None,
+        help="Operational surveillance budget (N backbones) for dynamic threshold optimization",
+    )
     run.add_argument(
         "--require-explicit-surface",
         action="store_true",
@@ -105,12 +112,12 @@ def main(argv: list[str] | None = None) -> int:
         exit_code = 0
         if args.check_types:
             print("Running Mypy (Strict Mode)...")
-            completed = subprocess.run(["mypy", "src/bio_spread_project"], check=False)
+            completed = subprocess.run([sys.executable, "-m", "mypy", "src/bio_spread_project"], check=False)
             if completed.returncode != 0:
                 exit_code = completed.returncode
         if args.check_tests:
             print("Running Pytest...")
-            completed = subprocess.run(["pytest", "tests/"], check=False)
+            completed = subprocess.run([sys.executable, "-m", "pytest", "tests/"], check=False)
             if completed.returncode != 0:
                 exit_code = completed.returncode
         print("Health check complete.")
@@ -157,6 +164,7 @@ def main(argv: list[str] | None = None) -> int:
         split_year=args.split_year,
         horizon_years=args.horizon_years,
         policy=policy,
+        triage_budget=args.triage_budget,
     )
     result = run_pipeline(config)
     print(f"Input mode: {result.input_mode}")
@@ -173,6 +181,68 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Release gate: {result.release_gate_path}")
     print(f"Artifact index: {result.artifact_index_path}")
     print(f"ROC AUC: {result.metrics['roc_auc']:.3f}")
+
+    # --- BioSpread v4.0: Active Radar & Threat Watchlist ---
+    if args.mode == "active_radar":
+        from bio_spread_project.reporting import render_llm_json_briefing, build_threat_triage_matrix
+        predictions = []
+        try:
+            import polars as pl
+            pred_df = pl.read_csv(result.predictions_path)
+            for row in pred_df.to_dicts():
+                predictions.append(
+                    __import__("bio_spread_project.model", fromlist=["Prediction"]).Prediction(
+                        model_name="active_radar",
+                        backbone_id=str(row.get("backbone_id", "")),
+                        risk_probability=float(row.get("risk_probability", 0.0)),
+                        confidence_tier=str(row.get("confidence_tier", "review")),
+                        label_geo_spread=int(row.get("label_geo_spread", 0)),
+                        knownness_score=float(row.get("knownness_score", 0.5)),
+                        n_new_countries_future=int(row.get("n_new_countries_future", 0)),
+                        explanation=str(row.get("explanation", "")),
+                    )
+                )
+        except Exception as exc:
+            print(f"Warning: Could not load predictions for active_radar watchlist: {exc}")
+
+        triage = build_threat_triage_matrix(predictions)
+        watchlist_path = Path(args.output_dir) / "THREAT_WATCHLIST.md"
+        briefing_path = Path(args.output_dir) / "llm_briefing.json"
+        watchlist_lines = [
+            "# BioSpread Active Radar — Threat Watchlist",
+            "",
+            f"**Generated:** {__import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat()}Z",
+            f"**Mode:** active_radar | **Horizon:** {args.horizon_years} years",
+            "",
+            "## Triage Matrix (Risk × Uncertainty)",
+            "",
+            f"- 🔴 **RED (Alert):** {triage['counts']['red']} backbones",
+            f"- 🟡 **YELLOW (Watch):** {triage['counts']['yellow']} backbones",
+            f"- 🟢 **GREEN (Monitor):** {triage['counts']['green']} backbones",
+            "",
+            "## Top 20 Priority Surveillance Targets",
+            "",
+        ]
+        sorted_preds = sorted(predictions, key=lambda p: p.risk_probability, reverse=True)[:20]
+        for i, p in enumerate(sorted_preds, 1):
+            watchlist_lines.append(f"{i}. `{p.backbone_id}` — risk={p.risk_probability:.3f}, tier={p.confidence_tier}, knownness={p.knownness_score:.2f}")
+        watchlist_lines.extend([
+            "",
+            "## Operational Notes",
+            "- RED tier requires immediate cross-border notification (IHR compliant).",
+            "- YELLOW tier enters enhanced sentinel surveillance (weekly sequencing).",
+            "- GREEN tier is monitored via routine AMR surveillance.",
+            "",
+            "---",
+            "*BioSpread v4.0 Infinite Architect — Active Radar Module*",
+        ])
+        watchlist_path.write_text("\n".join(watchlist_lines), encoding="utf-8")
+        print(f"Threat watchlist: {watchlist_path}")
+
+        briefing = render_llm_json_briefing(predictions, result.metrics, triage=triage, split_year=args.split_year, horizon_years=args.horizon_years)
+        briefing_path.write_text(briefing, encoding="utf-8")
+        print(f"LLM briefing: {briefing_path}")
+
     return 0
 
 

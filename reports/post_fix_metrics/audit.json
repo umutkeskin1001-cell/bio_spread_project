@@ -1,0 +1,229 @@
+{
+  "all_quality_gates_passed": true,
+  "enrichment_status": {
+    "amr_diversity": "skipped: AMR data not found",
+    "country_indicators": "skipped: external data not found",
+    "grps": "skipped: esm2_embeddings.parquet not found",
+    "host_traits": "skipped: external data not found",
+    "intrinsic_plasmid": "skipped: external data not found",
+    "phylo_proximity": "skipped: external data not found",
+    "temporal_trends": "applied"
+  },
+  "environment": {
+    "git_commit": "0ad13c1fc2424f20a6f223fa92b043efb2acf5db",
+    "numpy": "1.26.4",
+    "polars": "0.20.31",
+    "python": "3.9.6",
+    "scikit_learn": "1.6.1",
+    "ssl_backend": "LibreSSL 2.8.3"
+  },
+  "input_hashes": {
+    "amr": "dea80560f0b6305b425f870437f2e8cd5adda577952500159196b9593a19a841",
+    "geo_spread_features": "80015d8336d4183d76574c497120e0f7945f4ad356debabbb29052aa55fa9376"
+  },
+  "input_mode": "geo_reliability_feature_surface",
+  "leakage_audit": {
+    "max_single_feature_auc": 0.9165146668781446,
+    "status": "pass",
+    "suspicious_feature_count": 0.0
+  },
+  "primary_model": "geobio_reliability_ensemble",
+  "project": "BioSpread",
+  "quality_gate_details": {
+    "adversarial_leakage_scan_passed": {
+      "observed": "count=0, max_auc=0.917",
+      "passed": true,
+      "reason": "",
+      "status": "pass",
+      "threshold": "max_count=0, max_auc=0.95"
+    },
+    "auc_at_least_target": {
+      "observed": 0.8908178910359776,
+      "passed": true,
+      "reason": "",
+      "status": "pass",
+      "threshold": 0.82
+    },
+    "average_precision_above_prevalence": {
+      "observed": 0.822341805877411,
+      "passed": true,
+      "reason": "",
+      "status": "pass",
+      "threshold": 0.3660262891809909
+    },
+    "bootstrap_auc_ci_low_at_least_target": {
+      "observed": 0.877834347171408,
+      "passed": true,
+      "reason": "",
+      "status": "pass",
+      "threshold": 0.78
+    },
+    "bootstrap_average_precision_ci_low_above_prevalence": {
+      "observed": 0.7875441405430497,
+      "passed": true,
+      "reason": "",
+      "status": "pass",
+      "threshold": 0.3660262891809909
+    },
+    "calibration_ece_at_most_target": {
+      "observed": 0.013417662372452451,
+      "passed": true,
+      "reason": "",
+      "status": "pass",
+      "threshold": 0.05
+    },
+    "cross_validated": {
+      "observed": "spatial_group_cv_stacked",
+      "passed": true,
+      "reason": "",
+      "status": "pass",
+      "threshold": "cv_variants"
+    },
+    "external_holdout_auc_at_least_target": {
+      "passed": true,
+      "reason": "skipped",
+      "status": "pass"
+    },
+    "group_auc_at_least_target": {
+      "observed": 0.8908178910359776,
+      "passed": true,
+      "reason": "",
+      "status": "pass",
+      "threshold": 0.8
+    },
+    "leakage_audit_passed": {
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    "temporal_holdout_auc_at_least_target": {
+      "observed": 0.9422037422037423,
+      "passed": true,
+      "reason": "",
+      "status": "pass",
+      "threshold": 0.78
+    }
+  },
+  "quality_gates": {
+    "adversarial_leakage_scan_passed": true,
+    "auc_at_least_target": true,
+    "average_precision_above_prevalence": true,
+    "bootstrap_auc_ci_low_at_least_target": true,
+    "bootstrap_average_precision_ci_low_above_prevalence": true,
+    "calibration_ece_at_most_target": true,
+    "cross_validated": true,
+    "external_holdout_auc_at_least_target": true,
+    "group_auc_at_least_target": true,
+    "leakage_audit_passed": true,
+    "temporal_holdout_auc_at_least_target": true
+  },
+  "quality_thresholds": {
+    "auc_min": 0.82,
+    "average_precision_above_prevalence": true,
+    "bootstrap_auc_ci_low_min": 0.78,
+    "bootstrap_average_precision_ci_low_above_prevalence": true,
+    "calibration_ece_max": 0.05,
+    "external_holdout_auc_min": 0.78,
+    "external_holdout_required": false,
+    "group_auc_min": 0.8,
+    "max_single_feature_auc_max": 0.95,
+    "suspicious_feature_count_max": 0,
+    "temporal_holdout_auc_min": 0.78
+  },
+  "run_id": "f8f13137-0ff9-4a22-ab49-d88283321a86",
+  "timestamp": "2026-05-03T17:32:01.996418",
+  "validation": {
+    "average_precision": 0.822341805877411,
+    "bootstrap_average_precision_ci_high": 0.8520967084257745,
+    "bootstrap_average_precision_ci_low": 0.7875441405430497,
+    "bootstrap_roc_auc_ci_high": 0.9070797242015289,
+    "bootstrap_roc_auc_ci_low": 0.877834347171408,
+    "brier_score": 0.12511009090372974,
+    "calibration_bins": [
+      {
+        "bin_end": 0.2,
+        "bin_start": 0.0,
+        "count": 456,
+        "mean_prediction": 0.06106614853931106,
+        "observed_rate": 0.06798245614035088
+      },
+      {
+        "bin_end": 0.4,
+        "bin_start": 0.2,
+        "count": 134,
+        "mean_prediction": 0.28510466204676926,
+        "observed_rate": 0.2835820895522388
+      },
+      {
+        "bin_end": 0.6000000000000001,
+        "bin_start": 0.4,
+        "count": 98,
+        "mean_prediction": 0.5132232580320034,
+        "observed_rate": 0.5408163265306123
+      },
+      {
+        "bin_end": 0.8,
+        "bin_start": 0.6000000000000001,
+        "count": 112,
+        "mean_prediction": 0.6579292710942228,
+        "observed_rate": 0.6607142857142857
+      },
+      {
+        "bin_end": 1.0,
+        "bin_start": 0.8,
+        "count": 189,
+        "mean_prediction": 0.9147945225169498,
+        "observed_rate": 0.8783068783068783
+      }
+    ],
+    "expected_calibration_error": 0.013417662372452451,
+    "max_single_feature_auc": 0.9165146668781446,
+    "mode": "spatial_group_cv_stacked",
+    "n_backbones": 989,
+    "n_positive": 362,
+    "prevalence": 0.3660262891809909,
+    "roc_auc": 0.8908178910359776,
+    "suspicious_feature_count": 0,
+    "top_features": [
+      {
+        "feature": "intercept",
+        "score": 0.0
+      }
+    ],
+    "tracks": {
+      "adversarial_leakage": {
+        "max_single_feature_auc": 0.9165146668781446,
+        "status": "evaluated",
+        "suspicious_feature_count": 0.0
+      },
+      "external_holdout": {
+        "status": "not_evaluated"
+      },
+      "group_oof": {
+        "average_precision": 0.822341805877411,
+        "roc_auc": 0.8908178910359776,
+        "status": "evaluated"
+      },
+      "oof": {
+        "average_precision": 0.822341805877411,
+        "bootstrap_average_precision_ci_high": 0.8520967084257745,
+        "bootstrap_average_precision_ci_low": 0.7875441405430497,
+        "bootstrap_roc_auc_ci_high": 0.9070797242015289,
+        "bootstrap_roc_auc_ci_low": 0.877834347171408,
+        "brier_score": 0.12511009090372974,
+        "expected_calibration_error": 0.013417662372452451,
+        "n_backbones": 989.0,
+        "n_positive": 362.0,
+        "prevalence": 0.3660262891809909,
+        "roc_auc": 0.8908178910359776,
+        "status": "evaluated"
+      },
+      "temporal_holdout": {
+        "average_precision": 0.7655871594071713,
+        "n_backbones": 198.0,
+        "roc_auc": 0.9422037422037423,
+        "status": "evaluated"
+      }
+    }
+  }
+}

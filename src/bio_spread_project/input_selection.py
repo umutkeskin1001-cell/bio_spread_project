@@ -9,7 +9,7 @@ from pathlib import Path
 from bio_spread_project.config_loader import ProjectPaths
 from bio_spread_project.runtime_policy import PipelineConfig
 
-RUN_MODES = {"auto", "raw", "geo", "input"}
+RUN_MODES = {"auto", "raw", "geo", "input", "active_radar"}
 
 
 @dataclass(frozen=True)
@@ -86,7 +86,7 @@ def select_input_source(
             candidate_inputs=candidate_inputs,
         )
 
-    if run_mode == "geo":
+    if run_mode == "geo" or run_mode == "active_radar":
         source_path = ensure_readable_file(packaged_geo_path, label="geo_spread_features")
         if resolved_records_path is not None:
             resolved_records_path = ensure_readable_file(resolved_records_path, label="records")
@@ -94,11 +94,11 @@ def select_input_source(
             resolved_amr_path = ensure_readable_file(resolved_amr_path, label="amr")
         return InputSelection(
             source_path=source_path,
-            input_mode="geo_reliability_feature_surface",
+            input_mode="geo_reliability_feature_surface" if run_mode == "geo" else "active_radar_feature_surface",
             use_geo_reliability=True,
             resolved_records_path=resolved_records_path,
             resolved_amr_path=resolved_amr_path,
-            selection_reason="explicit_geo_mode",
+            selection_reason="explicit_geo_mode" if run_mode == "geo" else "explicit_active_radar_mode",
             candidate_inputs=candidate_inputs,
         )
 

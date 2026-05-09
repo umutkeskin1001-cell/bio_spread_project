@@ -1,0 +1,173 @@
+{
+  "abstain_rate": 0.016177957532861477,
+  "average_precision": 0.8473042035506438,
+  "blocked_columns": [],
+  "bootstrap_average_precision_ci_high": 0.8785562584050487,
+  "bootstrap_average_precision_ci_low": 0.7959459832009906,
+  "bootstrap_confidence": 0.95,
+  "bootstrap_resamples": 100.0,
+  "bootstrap_roc_auc_ci_high": 0.9257657886916824,
+  "bootstrap_roc_auc_ci_low": 0.8890908413145849,
+  "brier_score": 0.11928065698770848,
+  "calibration_bins": [
+    {
+      "bin_end": 0.2,
+      "bin_start": 0.0,
+      "count": 497,
+      "mean_prediction": 0.09974745043956688,
+      "observed_rate": 0.08048289738430583
+    },
+    {
+      "bin_end": 0.4,
+      "bin_start": 0.2,
+      "count": 146,
+      "mean_prediction": 0.292461075887289,
+      "observed_rate": 0.3013698630136986
+    },
+    {
+      "bin_end": 0.6000000000000001,
+      "bin_start": 0.4,
+      "count": 111,
+      "mean_prediction": 0.49757850116069396,
+      "observed_rate": 0.6756756756756757
+    },
+    {
+      "bin_end": 0.8,
+      "bin_start": 0.6000000000000001,
+      "count": 77,
+      "mean_prediction": 0.7157367531178662,
+      "observed_rate": 0.7792207792207793
+    },
+    {
+      "bin_end": 1.0,
+      "bin_start": 0.8,
+      "count": 158,
+      "mean_prediction": 0.9149402490744061,
+      "observed_rate": 0.9050632911392406
+    }
+  ],
+  "canary_self_test": {
+    "alarm_count": 0,
+    "auc_floor": 0.9,
+    "canary_auc": 1.0,
+    "reason": "",
+    "status": "pass"
+  },
+  "dropped_leakage_columns": [
+    "event_within_1y_label",
+    "event_within_3y_label",
+    "event_within_5y_label",
+    "evolutionary_jump_score_norm",
+    "macro_region_jump_label",
+    "time_to_first_new_country_years",
+    "time_to_third_new_country_years",
+    "training_only_future_unseen_backbone_flag"
+  ],
+  "expected_calibration_error": 0.03750534026669765,
+  "feature_lineage_status": "pass",
+  "feature_lineage_unknown_count": 0.0,
+  "group_oof_average_precision": 0.8473042035506438,
+  "group_oof_roc_auc": 0.9074387374765391,
+  "leakage_alarm_count": 0.0,
+  "leakage_alarm_features": [],
+  "max_single_feature_auc": 0.9165146668781446,
+  "n_backbones": 989.0,
+  "n_bins": 5.0,
+  "n_positive": 362.0,
+  "oof_average_precision": 0.8473042035506438,
+  "oof_roc_auc": 0.9074387374765391,
+  "permutation_sanity": {
+    "alarm_count": 0,
+    "auc_ceiling": 0.6,
+    "n_trials": 8,
+    "permutation_auc_max": 0.522469533955431,
+    "permutation_auc_mean": 0.48783506040339425,
+    "permutation_auc_values": [
+      0.48159701111140485,
+      0.5029452712645501,
+      0.5195969582419131,
+      0.45365989056015227,
+      0.47365336998951424,
+      0.4991937402521875,
+      0.4495647078520007,
+      0.522469533955431
+    ],
+    "reason": "",
+    "status": "pass"
+  },
+  "prevalence": 0.3660262891809909,
+  "primary_model": "geobio_reliability_ensemble",
+  "roc_auc": 0.9074387374765391,
+  "single_feature_scan_error_count": 0.0,
+  "single_feature_scan_errors": [],
+  "status": "pass",
+  "suspicious_feature_count": 0.0,
+  "temporal_consistency": {
+    "flags": [],
+    "max_positive_delta_vs_oof": 0.024553599688211913,
+    "max_roc_auc": 0.931992337164751,
+    "median_roc_auc": 0.9142985007831731,
+    "min_roc_auc": 0.8307210031347962,
+    "reason": "",
+    "roc_auc_spread": 0.10127133402995481,
+    "status": "pass",
+    "window_count": 7
+  },
+  "temporal_consistency_status": "pass",
+  "temporal_holdout_abstain_rate": 0.01125703564727955,
+  "temporal_holdout_average_precision": 0.9333562938689932,
+  "temporal_holdout_n_backbones": 533.0,
+  "temporal_holdout_n_positive": 218.0,
+  "temporal_holdout_prevalence": 0.4090056285178236,
+  "temporal_holdout_roc_auc": 0.9483908548128731,
+  "temporal_holdout_top_k_precision": 1.0,
+  "temporal_rolling_average_precision_median": 0.746221700234156,
+  "temporal_rolling_n_backbones_median": 65.0,
+  "temporal_rolling_n_positive_median": 27.0,
+  "temporal_rolling_roc_auc_median": 0.9142985007831731,
+  "temporal_rolling_window_count": 7.0,
+  "top_features": [
+    {
+      "feature": "country_slope_train",
+      "score": 1.9501069877665413
+    },
+    {
+      "feature": "synergy_coherence_score__country_slope_train",
+      "score": 1.7317655979859499
+    },
+    {
+      "feature": "psge_1",
+      "score": 1.055409039221749
+    },
+    {
+      "feature": "recent_expansion_flag",
+      "score": 1.0200345942702247
+    },
+    {
+      "feature": "psge_4",
+      "score": 0.950550340215704
+    },
+    {
+      "feature": "psge_7",
+      "score": 0.7200056233915342
+    },
+    {
+      "feature": "psge_0",
+      "score": 0.6944496403631375
+    },
+    {
+      "feature": "synergy_T_eff_norm__H_obs_specialization_norm",
+      "score": 0.46787193969532914
+    },
+    {
+      "feature": "psge_2",
+      "score": 0.4676812462807675
+    },
+    {
+      "feature": "orit_support",
+      "score": 0.41880770431509257
+    }
+  ],
+  "top_k_precision": 1.0,
+  "validation_mode": "spatial_group_cv_stacked"
+}

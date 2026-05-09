@@ -1,0 +1,1 @@
+{"all_quality_gates_passed": false, "average_precision": 0.8235335284405332, "external_holdout_roc_auc": 0.5, "input_mode": "geo_reliability_feature_surface", "model_name": "geobio_reliability_ensemble", "roc_auc": 0.8967182854174267, "timestamp_utc": "2026-05-04T20:10:49.890736+00:00"}

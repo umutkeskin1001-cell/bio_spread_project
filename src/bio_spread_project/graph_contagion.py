@@ -1,6 +1,7 @@
 import numpy as np
 import polars as pl
-from scipy.sparse import coo_matrix, eye, diags
+from scipy.sparse import coo_matrix, diags, eye
+
 
 def build_fastrp_embeddings(records: pl.DataFrame, mash_df: pl.DataFrame, split_year: int) -> pl.DataFrame:
     """
@@ -13,7 +14,7 @@ def build_fastrp_embeddings(records: pl.DataFrame, mash_df: pl.DataFrame, split_
     if n == 0:
         return pl.DataFrame({'backbone_id': []}).with_columns(
             [pl.lit(0.0).alias(f'fastrp_{i}') for i in range(16)])
-    
+
     id_to_idx = {bb: i for i, bb in enumerate(backbone_ids)}
 
     # 1. Genomic adjacency (Mash distance < 0.1)
@@ -27,7 +28,9 @@ def build_fastrp_embeddings(records: pl.DataFrame, mash_df: pl.DataFrame, split_
         a, b, d = row['backbone_id_1'], row['backbone_id_2'], row['mash_distance']
         i, j = id_to_idx[a], id_to_idx[b]
         w = np.exp(-d/0.01)
-        rows.extend([i, j]); cols.extend([j, i]); data.extend([w, w])
+        rows.extend([i, j])
+        cols.extend([j, i])
+        data.extend([w, w])
     A = coo_matrix((data, (rows, cols)), shape=(n, n)).tocsr()
 
     # 2. Geographic adjacency (Shared country ratio)
@@ -57,15 +60,15 @@ def build_fastrp_embeddings(records: pl.DataFrame, mash_df: pl.DataFrame, split_
         if maxs <= 0:
             continue
         ratio = float(inter) / float(maxs)
-        i = id_to_idx.get(bb_a)
-        j = id_to_idx.get(bb_b)
-        if i is None or j is None or i == j:
+        idx_a = id_to_idx.get(bb_a)
+        idx_b = id_to_idx.get(bb_b)
+        if idx_a is None or idx_b is None or idx_a == idx_b:
             continue
         w = ratio * 0.5
-        rows_g.extend([i, j])
-        cols_g.extend([j, i])
+        rows_g.extend([idx_a, idx_b])
+        cols_g.extend([idx_b, idx_a])
         data_g.extend([w, w])
-    
+
     B = coo_matrix((data_g, (rows_g, cols_g)), shape=(n, n)).tocsr()
     C = 0.7 * A + 0.3 * B + eye(n)  # self-loops for connectivity
 
@@ -83,7 +86,7 @@ def build_fastrp_embeddings(records: pl.DataFrame, mash_df: pl.DataFrame, split_
         embeddings += w * current
         if k < 3:
             current = C_norm @ current
-            
+
     # Unit normalization
     norm = np.linalg.norm(embeddings, axis=1, keepdims=True)
     norm[norm == 0] = 1.0

@@ -1,8 +1,6 @@
 import json
 from pathlib import Path
 
-import pytest
-
 from bio_spread_project.governance import build_release_gate_report
 from bio_spread_project.orchestrator import run_pipeline
 
@@ -48,15 +46,31 @@ def test_pipeline_release_gate_is_conditional_go_for_fresh_output_dir(tmp_path):
     assert payload["trend_status"] == "insufficient_data"
 
 
-def test_pipeline_fails_when_drift_policy_is_enabled_and_drift_fails(tmp_path):
+def test_pipeline_does_not_fail_when_drift_evidence_is_not_evaluated(tmp_path):
     bad_baseline = tmp_path / "baseline.json"
-    bad_baseline.write_text(json.dumps({"validation_summary": {"roc_auc": 1.0}}), encoding="utf-8")
+    bad_baseline.write_text(
+        json.dumps(
+            {
+                "validation_summary": {
+                    "roc_auc": 0.999,
+                    "average_precision": 0.999,
+                    "group_oof_roc_auc": 0.999,
+                    "temporal_holdout_roc_auc": 0.999,
+                    "external_holdout_roc_auc": 0.999,
+                    "max_single_feature_auc": 0.10,
+                    "suspicious_feature_count": 0.0,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
 
-    with pytest.raises(RuntimeError, match="drift_checks"):
-        run_pipeline(
-            run_mode="geo",
-            geo_spread_features_path=GEO_SPREAD_FEATURES,
-            baseline_benchmark_path=bad_baseline,
-            output_dir=tmp_path / "drift_fail",
-            fail_on_drift_fail=True,
-        )
+    result = run_pipeline(
+        run_mode="geo",
+        geo_spread_features_path=GEO_SPREAD_FEATURES,
+        baseline_benchmark_path=bad_baseline,
+        output_dir=tmp_path / "drift_fail",
+        fail_on_drift_fail=True,
+    )
+    drift_report = json.loads(result.drift_report_path.read_text(encoding="utf-8"))
+    assert drift_report["status"] == "not_evaluated"

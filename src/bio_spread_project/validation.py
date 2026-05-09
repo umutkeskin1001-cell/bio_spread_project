@@ -13,11 +13,21 @@ def to_float(name: str, value: Any) -> float:
 
 
 def to_int(name: str, value: int | float | str) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be an integer, got {value!r}")
+    if isinstance(value, float) and not value.is_integer():
+        raise ValueError(f"{name} must be an integer, got {value!r}")
     try:
         parsed = int(value)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{name} must be an integer, got {value!r}") from exc
     return parsed
+
+
+def to_bool(name: str, value: Any) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"{name} must be a boolean, got {value!r}")
+    return value
 
 
 def require_range(name: str, value: float, *, minimum: float, maximum: float) -> float:

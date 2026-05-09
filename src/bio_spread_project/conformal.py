@@ -7,7 +7,7 @@ from numpy.typing import NDArray
 
 
 class ConformalPredictor:
-    def __init__(self, model: Any, calib_df: np.ndarray, calib_labels: np.ndarray, alpha: float = 0.1):
+    def __init__(self, model: Any, calib_df: NDArray[Any], calib_labels: NDArray[Any], alpha: float = 0.1):
         self.model = model
         self.alpha = alpha
         labels = np.asarray(calib_labels)
@@ -19,7 +19,7 @@ class ConformalPredictor:
         nonconformity = np.where(labels == 1, 1 - calib_scores, calib_scores)
         self.qhat = float(np.quantile(nonconformity, 1 - alpha)) if len(nonconformity) else 0.5
 
-    def predict_with_set(self, X: np.ndarray) -> dict[str, np.ndarray]:
+    def predict_with_set(self, X: NDArray[Any]) -> dict[str, NDArray[Any]]:
         if hasattr(self.model, "predict_proba"):
             proba = self.model.predict_proba(X)[:, 1]
         else:
@@ -30,7 +30,7 @@ class ConformalPredictor:
         return {"risk_probability": proba, "lower": lower, "upper": upper}
 
 
-def compute_alarm_score(prob: np.ndarray, interval_width: np.ndarray, knownness: np.ndarray) -> NDArray[np.float64]:
+def compute_alarm_score(prob: NDArray[Any], interval_width: NDArray[Any], knownness: NDArray[Any]) -> NDArray[np.float64]:
     known = np.clip(np.asarray(knownness, dtype=float), 0.0, 1.0)
     out = np.asarray(prob, dtype=float) * (1.0 + np.asarray(interval_width, dtype=float)) * (1.0 + (1.0 - known))
     return np.asarray(out, dtype=np.float64)

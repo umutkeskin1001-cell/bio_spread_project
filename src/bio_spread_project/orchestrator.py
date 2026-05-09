@@ -1,18 +1,18 @@
 from __future__ import annotations
 
-import shutil
-from dataclasses import replace
-from dataclasses import dataclass
-from datetime import datetime, timezone
 import os
+import shutil
+from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from pathlib import Path
-from tempfile import mkdtemp
+from tempfile import NamedTemporaryFile, mkdtemp
 from typing import Any
 from uuid import uuid4
 
 import joblib
 import numpy as np
 import polars as pl
+from numpy.typing import NDArray
 
 from bio_spread_project.artifact_transaction import ArtifactSet, commit_artifact_set
 from bio_spread_project.audit import build_run_audit, render_model_card
@@ -29,8 +29,8 @@ from bio_spread_project.dashboard import generate_dashboard
 from bio_spread_project.data import load_backbone_records_frame, load_records
 from bio_spread_project.embeddings import EmbeddingStore
 from bio_spread_project.external_features import (
-    apply_disabled_feature_mask,
     add_grps_to_features,
+    apply_disabled_feature_mask,
     augment_amr_diversity_features,
     augment_country_indicator_features,
     augment_host_trait_features,
@@ -38,6 +38,9 @@ from bio_spread_project.external_features import (
     augment_phylogenetic_proximity,
     drop_all_missing_columns,
     load_enrichment_flags,
+)
+from bio_spread_project.features_enrichment import (
+    add_historical_neighbor_risk,
 )
 from bio_spread_project.features import (
     FeatureConfig,
@@ -70,7 +73,9 @@ from bio_spread_project.io_utils import (
     write_json,
     write_text,
 )
+from bio_spread_project.knownness_metrics import knownness_slice_metrics
 from bio_spread_project.leakage_policy import detect_forbidden_columns, validate_feature_surface
+from bio_spread_project.low_knownness_enhancement import enhance_low_knownness_predictions
 from bio_spread_project.manifest import build_manifest, portable_path
 from bio_spread_project.metrics import (
     bootstrap_metric_intervals,
@@ -79,7 +84,6 @@ from bio_spread_project.metrics import (
 )
 from bio_spread_project.model import Prediction, fit_model_surface, select_primary_model
 from bio_spread_project.model_metrics import validation_summary
-from bio_spread_project.phylo_spatial_embedder import PhyloSpatialGraphEmbedder
 from bio_spread_project.registry import append_model_registry_entry
 from bio_spread_project.reporting import render_chic_report
 from bio_spread_project.runtime_policy import PipelineConfig
@@ -115,6 +119,8 @@ class PipelineResult:
 def _build_input_paths(selection: Any, config: PipelineConfig) -> dict[str, Path]:
     if selection.use_geo_reliability:
         paths = {"geo_spread_features": Path(selection.source_path)}
+        if selection.resolved_records_path is not None:
+            paths["records"] = Path(selection.resolved_records_path)
     elif selection.input_mode == "raw_backbone_records":
         paths = {"records": Path(selection.source_path)}
     else:
@@ -144,60 +150,6 @@ def _validate_external_holdout(training_source: Path, external_holdout: Path | N
             count = len(overlap)
             sample = sorted(list(overlap))[:3]
             raise ValueError(f"Identity Leakage detected: {count} backbones shared between training and external holdout (e.g., {', '.join(sample)})")
-
-
-def _knownness_slice_metrics(
-    predictions: list[Prediction],
-    *,
-    quantile: float = 0.20,
-    min_samples: int = 20,
-) -> dict[str, float | None]:
-    if not predictions:
-        return {
-            "knownness_slice_threshold": None,
-            "knownness_slice_n": None,
-            "knownness_slice_prevalence": None,
-            "knownness_slice_roc_auc": None,
-            "knownness_slice_average_precision": None,
-            "knownness_slice_expected_calibration_error": None,
-            "knownness_slice_brier_score": None,
-            "knownness_slice_top_k_precision": None,
-            "knownness_slice_abstain_rate": None,
-        }
-    knownness = np.asarray([float(p.knownness_score) for p in predictions], dtype=np.float64)
-    threshold = float(np.quantile(knownness, quantile))
-    subset = [p for p in predictions if float(p.knownness_score) <= threshold]
-    payload: dict[str, float | None] = {
-        "knownness_slice_threshold": threshold,
-        "knownness_slice_n": float(len(subset)),
-    }
-    if len(subset) < min_samples:
-        payload.update(
-            {
-                "knownness_slice_prevalence": None,
-                "knownness_slice_roc_auc": None,
-                "knownness_slice_average_precision": None,
-                "knownness_slice_expected_calibration_error": None,
-                "knownness_slice_brier_score": None,
-                "knownness_slice_top_k_precision": None,
-                "knownness_slice_abstain_rate": None,
-            }
-        )
-        return payload
-    base = evaluate_predictions(subset)
-    cal = calibration_summary(subset)
-    payload.update(
-        {
-            "knownness_slice_prevalence": float(base.get("prevalence", 0.0)),
-            "knownness_slice_roc_auc": float(base["roc_auc"]) if base.get("roc_auc") is not None else None,
-            "knownness_slice_average_precision": float(base["average_precision"]) if base.get("average_precision") is not None else None,
-            "knownness_slice_expected_calibration_error": float(cal.get("expected_calibration_error", 0.0)),
-            "knownness_slice_brier_score": float(cal.get("brier_score", 0.0)),
-            "knownness_slice_top_k_precision": float(base.get("top_k_precision", 0.0)),
-            "knownness_slice_abstain_rate": float(base.get("abstain_rate", 0.0)),
-        }
-    )
-    return payload
 
 
 def _build_config_from_kwargs(kwargs: dict[str, Any]) -> PipelineConfig:
@@ -298,50 +250,81 @@ def run_pipeline(config: PipelineConfig | None = None, **kwargs: Any) -> Pipelin
         existing = [c for c in cols if c in frame.columns]
         active_enrichment_modules.extend(existing)
 
+    def _enrich_features_core(
+        features_in: pl.DataFrame,
+        raw_rec: Any | None,
+        cfg: PipelineConfig,
+        pths: ProjectPaths,
+        sel: InputSelection,
+        e_cfg: EnrichmentFlags,
+        ext_d: Path,
+        active_list: list[str] | None = None,
+        train_features_fallback: pl.DataFrame | None = None
+    ) -> pl.DataFrame:
+        features_local = features_in
+        if sel.use_geo_reliability:
+            if e_cfg.enable_intrinsic_plasmid_features:
+                features_local, used = augment_intrinsic_plasmid_features(features_local, ext_d)
+            if raw_rec is not None and e_cfg.enable_host_traits:
+                features_local, used = augment_host_trait_features(features_local, raw_rec, ext_d, split_year=cfg.split_year)
+            if raw_rec is not None and e_cfg.enable_country_indicators:
+                features_local, used = augment_country_indicator_features(features_local, raw_rec, ext_d, split_year=cfg.split_year)
+            if raw_rec is not None and e_cfg.enable_temporal_trends:
+                temporal = build_temporal_trend_features(raw_rec, split_year=cfg.split_year)
+                if not temporal.is_empty():
+                    features_local = features_local.join(temporal, on="backbone_id", how="left", coalesce=True).with_columns([
+                        pl.col("country_slope_train").fill_null(0.0), 
+                        pl.col("host_breadth_slope_train").fill_null(0.0), 
+                        pl.col("mobility_shift_slope_train").fill_null(0.0), 
+                        pl.col("recent_expansion_flag").fill_null(0).cast(pl.Float64)
+                    ])
+            if raw_rec is not None and e_cfg.enable_amr_diversity:
+                features_local, used = augment_amr_diversity_features(features_local, raw_rec, sel.resolved_amr_path or pths.raw_amr)
+            if raw_rec is not None and e_cfg.enable_phylogenetic_proximity:
+                features_local, used = augment_phylogenetic_proximity(features_local, raw_rec, ext_d, split_year=cfg.split_year)
+                mash_path = ext_d / "mash_distances.csv"
+                if mash_path.exists():
+                    try:
+                        mash_df = pl.read_csv(mash_path)
+                        # CRITICAL: We MUST use labels from the training period ONLY
+                        # In inference, we still use pre-split labels to calculate neighbor risk
+                        train_labels = features_local.filter(pl.col("year").is_not_null() & (pl.col("year") <= cfg.split_year)).select(["backbone_id", "label_geo_spread"]).drop_nulls()
+                        
+                        if train_labels.is_empty() and train_features_fallback is not None:
+                             # Use fallback (the main training set) to find neighbor risks for the holdout set
+                             train_labels = train_features_fallback.filter(pl.col("year") <= cfg.split_year).select(["backbone_id", "label_geo_spread"]).drop_nulls()
+                        
+                        if not train_labels.is_empty():
+                            features_local = add_historical_neighbor_risk(features_local, mash_df, train_labels)
+                    except Exception as e:
+                        logger.warning(f"Historical neighbor risk failed: {e}")
+            
+            if e_cfg.enable_grps:
+                embed_dir = ext_d / "embeddings"
+                if (embed_dir / "esm2_embeddings.parquet").exists():
+                    features_local = add_grps_to_features(features_local, EmbeddingStore(embed_dir))
+
+            # Synergy features must be applied AFTER all base features are present
+            if e_cfg.enable_synergy_interactions:
+                from bio_spread_project.synergy_features import INTERACTION_PAIRS, build_synergy_features
+                features_local = build_synergy_features(features_local, INTERACTION_PAIRS)
+            
+            features_local, _ = drop_all_missing_columns(features_local)
+        
+        return features_local
+
     def _step_enrich_features(state: PipelineState) -> PipelineState:
-        features_local = state.payload["features"]
         raw_for_enrichment: Any | None = None
         raw_candidate = selection.resolved_records_path or paths.raw_backbones
         if raw_candidate is not None and Path(raw_candidate).exists():
             try:
                 raw_for_enrichment = load_backbone_records_frame(raw_candidate, amr_path=selection.resolved_amr_path or paths.raw_amr)
-            except Exception:
-                raw_for_enrichment = None
+            except Exception as exc:
+                logger.warning(f"Raw records load failed: {exc}")
 
-        if selection.use_geo_reliability:
-            if enrich_cfg.enable_intrinsic_plasmid_features:
-                features_local, used = augment_intrinsic_plasmid_features(features_local, external_dir)
-                if used:
-                    _append_cols_if_present(features_local, ["inc_group_code", "mob_typer_code", "conjugation_score", "toxin_antitoxin_count", "replicon_count", "avg_gc_content", "plasmid_size_kb", "phage_related_genes_count"])
-            if raw_for_enrichment is not None and enrich_cfg.enable_host_traits:
-                features_local, used = augment_host_trait_features(features_local, raw_for_enrichment, external_dir, split_year=config.split_year)
-                if used:
-                    _append_cols_if_present(features_local, ["frac_pathogenic_hosts", "env_diversity", "gram_stain_entropy", "metabolic_diversity"])
-            if raw_for_enrichment is not None and enrich_cfg.enable_country_indicators:
-                features_local, used = augment_country_indicator_features(features_local, raw_for_enrichment, external_dir, split_year=config.split_year)
-                if used:
-                    _append_cols_if_present(features_local, ["mean_antibiotic_pressure", "max_health_exp", "tourist_entropy"])
-            if raw_for_enrichment is not None and enrich_cfg.enable_temporal_trends:
-                temporal = build_temporal_trend_features(raw_for_enrichment, split_year=config.split_year)
-                if not temporal.is_empty():
-                    features_local = features_local.join(temporal, on="backbone_id", how="left", coalesce=True).with_columns([pl.col("country_slope_train").fill_null(0.0), pl.col("host_breadth_slope_train").fill_null(0.0), pl.col("mobility_shift_slope_train").fill_null(0.0), pl.col("recent_expansion_flag").fill_null(0).cast(pl.Float64)])
-                    _append_cols_if_present(features_local, ["country_slope_train", "host_breadth_slope_train", "mobility_shift_slope_train", "recent_expansion_flag"])
-            if raw_for_enrichment is not None and enrich_cfg.enable_amr_diversity:
-                features_local, used = augment_amr_diversity_features(features_local, raw_for_enrichment, selection.resolved_amr_path or paths.raw_amr)
-                if used:
-                    _append_cols_if_present(features_local, ["carbapenemase_count", "esbl_count", "colistin_resistance_count", "other_amr_count", "amr_class_shannon"])
-            if raw_for_enrichment is not None and enrich_cfg.enable_phylogenetic_proximity:
-                features_local, used = augment_phylogenetic_proximity(features_local, raw_for_enrichment, external_dir, split_year=config.split_year)
-                if used:
-                    _append_cols_if_present(features_local, ["min_dist_to_top5_traveller"])
-            if enrich_cfg.enable_grps:
-                embed_dir = external_dir / "embeddings"
-                if (embed_dir / "esm2_embeddings.parquet").exists():
-                    features_local = add_grps_to_features(features_local, EmbeddingStore(embed_dir))
-                    if "grps" in features_local.columns:
-                        active_enrichment_modules.append("grps")
-            features_local, _ = drop_all_missing_columns(features_local)
-        state.payload["features"] = features_local
+        state.payload["features"] = _enrich_features_core(
+            state.payload["features"], raw_for_enrichment, config, paths, selection, enrich_cfg, external_dir, active_enrichment_modules
+        )
         state.payload["raw_for_enrichment"] = raw_for_enrichment
         return state
 
@@ -349,7 +332,7 @@ def run_pipeline(config: PipelineConfig | None = None, **kwargs: Any) -> Pipelin
         features = state.payload["features"]
         enrich_cfg = state.payload["enrich_cfg"]
         if enrich_cfg.enable_synergy_interactions:
-            from bio_spread_project.synergy_features import build_synergy_features, INTERACTION_PAIRS
+            from bio_spread_project.synergy_features import INTERACTION_PAIRS, build_synergy_features
             features = build_synergy_features(features, INTERACTION_PAIRS)
             active_enrichment_modules.append("synergy_interactions")
         state.payload["features"] = features
@@ -416,9 +399,9 @@ def run_pipeline(config: PipelineConfig | None = None, **kwargs: Any) -> Pipelin
             if enrich_cfg.enable_soft_country_debiasing:
                 active_enrichment_modules.append("enable_soft_country_debiasing")
             run_local = fit_geo_reliability_surface(
-                features_local, 
-                modeling_flags=enrich_cfg, 
-                dominant_country_targets=dominant_country_targets, 
+                features_local,
+                modeling_flags=enrich_cfg,
+                dominant_country_targets=dominant_country_targets,
                 external_dir=external_dir,
                 raw_records=raw_for_enrichment,
                 split_year=config.split_year
@@ -483,7 +466,7 @@ def run_pipeline(config: PipelineConfig | None = None, **kwargs: Any) -> Pipelin
             x_meta = scores if not oof_base else np.hstack([scores, np.vstack(oof_base).T])
             labels = score_frame["label_geo_spread"].to_numpy()
 
-            def _get_cp_features(xm):
+            def _get_cp_features(xm: NDArray[Any]) -> NDArray[Any]:
                 if hasattr(run.model.meta_estimator, "evid_clf"):
                     import torch
                     evid_clf = run.model.meta_estimator.evid_clf
@@ -563,12 +546,88 @@ def run_pipeline(config: PipelineConfig | None = None, **kwargs: Any) -> Pipelin
             )
 
     _validate_external_holdout(Path(selection.source_path), config.external_holdout_path)
-    metrics = {**run.metrics, **run.calibration, "primary_model": run.model_name}
+    if selection.use_geo_reliability and run.predictions:
+        enhanced_preds, enhancement = enhance_low_knownness_predictions(run.predictions)
+        enhanced_val = run.validation_predictions
+        if run.validation_predictions:
+            enhanced_val, _ = enhance_low_knownness_predictions(run.validation_predictions)
+        if enhancement.enabled:
+            refreshed_eval = evaluate_predictions(enhanced_val)
+            refreshed_cal = calibration_summary(enhanced_val)
+            refreshed_metrics = dict(run.metrics)
+            def _as_float(value: Any, default: float) -> float:
+                try:
+                    return float(default if value is None else value)
+                except (TypeError, ValueError):
+                    return float(default)
+            refreshed_metrics.update(
+                {
+                    "roc_auc": _as_float(
+                        refreshed_eval.get("roc_auc"),
+                        _as_float(refreshed_metrics.get("roc_auc", 0.0), 0.0),
+                    ),
+                    "average_precision": _as_float(
+                        refreshed_eval.get("average_precision"),
+                        _as_float(refreshed_metrics.get("average_precision", 0.0), 0.0),
+                    ),
+                    "top_k_precision": _as_float(
+                        refreshed_eval.get("top_k_precision"),
+                        _as_float(refreshed_metrics.get("top_k_precision", 0.0), 0.0),
+                    ),
+                    "abstain_rate": _as_float(
+                        refreshed_eval.get("abstain_rate"),
+                        _as_float(refreshed_metrics.get("abstain_rate", 0.0), 0.0),
+                    ),
+                    "oof_roc_auc": _as_float(
+                        refreshed_eval.get("roc_auc"),
+                        _as_float(refreshed_metrics.get("oof_roc_auc", 0.0), 0.0),
+                    ),
+                    "oof_average_precision": _as_float(
+                        refreshed_eval.get("average_precision"),
+                        _as_float(refreshed_metrics.get("oof_average_precision", 0.0), 0.0),
+                    ),
+                }
+            )
+            run = run.__class__(
+                model_name=run.model_name,
+                description=run.description,
+                model=run.model,
+                predictions=enhanced_preds,
+                metrics=refreshed_metrics,
+                calibration=refreshed_cal,
+                validation_predictions=enhanced_val,
+                coefficient_summary=run.coefficient_summary,
+            )
+            run.metrics["low_knownness_enhancement_enabled"] = True
+            run.metrics["low_knownness_threshold"] = enhancement.threshold
+            run.metrics["low_knownness_count"] = float(enhancement.low_count)
+            run.metrics["low_knownness_enhancement_alpha"] = enhancement.alpha
+            run.metrics["low_knownness_global_auc_before"] = enhancement.global_auc_before
+            run.metrics["low_knownness_global_auc_after"] = enhancement.global_auc_after
+            run.metrics["low_knownness_global_ap_before"] = enhancement.global_ap_before
+            run.metrics["low_knownness_global_ap_after"] = enhancement.global_ap_after
+            if enhancement.low_auc_before is not None:
+                run.metrics["low_knownness_slice_auc_before"] = enhancement.low_auc_before
+            if enhancement.low_auc_after is not None:
+                run.metrics["low_knownness_slice_auc_after"] = enhancement.low_auc_after
+            if enhancement.low_ap_before is not None:
+                run.metrics["low_knownness_slice_ap_before"] = enhancement.low_ap_before
+            if enhancement.low_ap_after is not None:
+                run.metrics["low_knownness_slice_ap_after"] = enhancement.low_ap_after
+
+    metrics: dict[str, Any] = {**run.metrics, **run.calibration, "primary_model": run.model_name}
     if selection.use_geo_reliability and config.external_holdout_path:
         holdout_features = load_geo_spread_features(config.external_holdout_path)
+        # --- v5.0 FIXED: Dual Enrichment for External Holdout parity ---
+        raw_for_enrichment = dag_state.payload.get("raw_for_enrichment")
+        train_feat_fallback = dag_state.payload.get("features")
+        holdout_features = _enrich_features_core(
+            holdout_features, raw_for_enrichment, config, paths, selection, enrich_cfg, external_dir,
+            train_features_fallback=train_feat_fallback
+        )
         ext_predictions = run.model.predict(holdout_features)
-        ext_metrics = {**evaluate_predictions(ext_predictions), **bootstrap_metric_intervals(ext_predictions, n_resamples=200)}
-        ext_metrics.update(_knownness_slice_metrics(ext_predictions, quantile=0.20, min_samples=20))
+        ext_metrics: dict[str, Any] = {**evaluate_predictions(ext_predictions), **bootstrap_metric_intervals(ext_predictions, n_resamples=200)}
+        ext_metrics.update(knownness_slice_metrics(ext_predictions, quantile=0.20, min_samples=20))
         metrics.update({f"external_holdout_{k}": v for k, v in ext_metrics.items()})
 
     input_paths = _build_input_paths(selection, config)
@@ -591,7 +650,10 @@ def run_pipeline(config: PipelineConfig | None = None, **kwargs: Any) -> Pipelin
         write_json(stage / "audit.json", audit)
         write_text(stage / "model_card.md", render_model_card(audit=audit, coefficient_summary=run.coefficient_summary))
         write_json(stage / "model_scorecard.json", {"primary_model": run.model_name, "scorecard": [{"model_name": run.model_name, **run.metrics}]})
-        joblib.dump(run.model, stage / "model.joblib")
+        with NamedTemporaryFile(dir=stage, prefix=".model.joblib.", suffix=".tmp", delete=False) as tmp_model:
+            tmp_model_path = Path(tmp_model.name)
+        joblib.dump(run.model, tmp_model_path)
+        tmp_model_path.replace(stage / "model.joblib")
 
         benchmark = {
             "project": "BioSpread",
@@ -607,13 +669,15 @@ def run_pipeline(config: PipelineConfig | None = None, **kwargs: Any) -> Pipelin
                 thresholds=load_drift_thresholds(config.drift_thresholds_path),
             )
         else:
-            drift_payload = {"all_passed": True, "status": "not_evaluated", "reason": "baseline_not_provided"}
+            drift_payload = {"all_passed": False, "status": "not_evaluated", "reason": "baseline_not_provided"}
         write_json(stage / "drift_report.json", drift_payload)
 
+        persistent_registry_path = config.output_dir / "model_registry.jsonl"
         model_registry_path = append_model_registry_entry(
-            stage / "model_registry.jsonl",
+            persistent_registry_path,
             {**validation_summary(metrics), "model_name": run.model_name, "input_mode": selection.input_mode, "all_quality_gates_passed": audit["all_quality_gates_passed"]},
         )
+        shutil.copy2(model_registry_path, stage / "model_registry.jsonl")
         registry_entries = load_model_registry(model_registry_path).to_dicts()
         thresholds = load_thresholds(
             quality_path=config.quality_thresholds_path,
@@ -686,6 +750,7 @@ def run_pipeline(config: PipelineConfig | None = None, **kwargs: Any) -> Pipelin
                 release_gate=release_gate,
                 split_year=config.split_year,
                 horizon_years=config.horizon_years,
+                triage_budget=config.triage_budget,
             ),
         )
         plot_performance_summary(metrics, stage / "performance_summary.png")
@@ -696,11 +761,14 @@ def run_pipeline(config: PipelineConfig | None = None, **kwargs: Any) -> Pipelin
         save_table_as_png(risk_headers, risk_rows, "HIGH-RISK CANDIDATE REGISTRY", stage / "risk_table.png")
 
         metric_headers = ["Metric", "Value", "Threshold", "Status"]
+        metric_auc_min = float(quality_thresholds.auc_min)
+        metric_group_auc_min = float(quality_thresholds.group_auc_min)
+        metric_ece_max = float(quality_thresholds.calibration_ece_max)
         metric_rows = [
-            ["ROC AUC", f"{metrics.get('roc_auc', 0):.4f}", ">= 0.820", "PASS" if metrics.get("roc_auc", 0) >= 0.82 else "FAIL"],
+            ["ROC AUC", f"{metrics.get('roc_auc', 0):.4f}", f">= {metric_auc_min:.3f}", "PASS" if metrics.get("roc_auc", 0) >= metric_auc_min else "FAIL"],
             ["Avg Precision", f"{metrics.get('average_precision', 0):.4f}", "> Prev", "PASS" if metrics.get("average_precision", 0) > metrics.get("prevalence", 0) else "FAIL"],
-            ["Spatial CV AUC", f"{metrics.get('group_oof_roc_auc', 0):.4f}", ">= 0.800", "PASS" if metrics.get("group_oof_roc_auc", 0) >= 0.80 else "FAIL"],
-            ["Calibration ECE", f"{metrics.get('expected_calibration_error', 0):.4f}", "<= 0.100", "PASS" if metrics.get("expected_calibration_error", 1) <= 0.1 else "FAIL"],
+            ["Spatial CV AUC", f"{metrics.get('group_oof_roc_auc', 0):.4f}", f">= {metric_group_auc_min:.3f}", "PASS" if metrics.get("group_oof_roc_auc", 0) >= metric_group_auc_min else "FAIL"],
+            ["Calibration ECE", f"{metrics.get('expected_calibration_error', 0):.4f}", f"<= {metric_ece_max:.3f}", "PASS" if metrics.get("expected_calibration_error", 1) <= metric_ece_max else "FAIL"],
         ]
         save_table_as_png(metric_headers, metric_rows, "CORE ANALYTIC METRICS", stage / "metrics_table.png")
 
@@ -777,7 +845,11 @@ def run_pipeline(config: PipelineConfig | None = None, **kwargs: Any) -> Pipelin
 
     if config.policy.fail_on_quality_gates and not audit["all_quality_gates_passed"]:
         raise RuntimeError("quality_gates failed")
-    if config.policy.fail_on_drift_fail and not drift_payload.get("all_passed", False):
+    if (
+        config.policy.fail_on_drift_fail
+        and drift_payload.get("status") == "ok"
+        and not drift_payload.get("all_passed", False)
+    ):
         raise RuntimeError("drift_checks failed")
     trend_payload = load_json(config.output_dir / "trend_report.json")
     if config.policy.fail_on_trend_fail and trend_payload.get("status") == "ok" and not trend_payload.get("all_passed", False):

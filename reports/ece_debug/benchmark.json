@@ -1,0 +1,31 @@
+{
+  "all_quality_gates_passed": false,
+  "project": "BioSpread",
+  "quality_gates": {
+    "adversarial_leakage_scan_passed": true,
+    "auc_at_least_target": true,
+    "average_precision_above_prevalence": true,
+    "bootstrap_auc_ci_low_at_least_target": false,
+    "bootstrap_average_precision_ci_low_above_prevalence": true,
+    "calibration_ece_at_most_target": true,
+    "cross_validated": true,
+    "external_holdout_auc_at_least_target": true,
+    "group_auc_at_least_target": true,
+    "leakage_audit_passed": true,
+    "temporal_holdout_auc_at_least_target": true,
+    "temporal_holdout_ece_at_most_target": true
+  },
+  "validation_summary": {
+    "average_precision": 0.7179240636714012,
+    "bootstrap_roc_auc_ci_high": 0.8423823937325915,
+    "bootstrap_roc_auc_ci_low": 0.7783703662251957,
+    "external_holdout_roc_auc": 0.8514890282131662,
+    "group_oof_roc_auc": 0.8064241580174863,
+    "max_single_feature_auc": 0.7378496976931834,
+    "roc_auc": 0.8064241580174863,
+    "suspicious_feature_count": 0.0,
+    "temporal_holdout_expected_calibration_error": 0.0390748323818953,
+    "temporal_holdout_roc_auc": 0.8099804305283758,
+    "temporal_holdout_train_oof_ece": 0.10062031046967634
+  }
+}

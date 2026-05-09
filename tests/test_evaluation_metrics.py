@@ -47,6 +47,14 @@ def test_evaluate_predictions_uses_vectorized_metric_path_for_large_inputs():
     assert metrics["average_precision"] == pytest.approx(float(average_precision_score(labels, scores)))
 
 
+@pytest.mark.parametrize("score", [float("nan"), -0.1, 1.1])
+def test_evaluate_predictions_rejects_invalid_probabilities(score: float) -> None:
+    predictions = [_prediction(0, 0, 0.2), _prediction(1, 1, score)]
+
+    with pytest.raises(ValueError, match="probabilities"):
+        evaluate_predictions(predictions)
+
+
 def test_bootstrap_metrics_use_fast_rank_kernels():
     rng = np.random.default_rng(7)
     labels = rng.integers(0, 2, size=1_000, dtype=np.int64)

@@ -1,0 +1,175 @@
+{
+  "primary_model": "geobio_reliability_ensemble",
+  "scorecard": [
+    {
+      "abstain_rate": 0.014656144306651634,
+      "average_precision": 0.7991347507350055,
+      "blocked_columns": [],
+      "bootstrap_average_precision_ci_high": 0.834373512306139,
+      "bootstrap_average_precision_ci_low": 0.7482834848326628,
+      "bootstrap_confidence": 0.95,
+      "bootstrap_resamples": 100.0,
+      "bootstrap_roc_auc_ci_high": 0.8997364533369547,
+      "bootstrap_roc_auc_ci_low": 0.8592842115793793,
+      "calibrator_type": "isotonic",
+      "canary_self_test": {
+        "alarm_count": 0,
+        "auc_floor": 0.9,
+        "canary_auc": 1.0,
+        "reason": "",
+        "status": "pass"
+      },
+      "disabled_feature_leak_count": 0.0,
+      "dropped_disabled_columns": [],
+      "dropped_leakage_columns": [
+        "n_new_countries_recomputed",
+        "n_test_macro_regions",
+        "n_test_records_seen_in_training",
+        "test_seen_in_training_fraction",
+        "test_year_end",
+        "three_countries_within_3y_label",
+        "three_countries_within_5y_label",
+        "visibility_expansion_label"
+      ],
+      "feature_lineage_status": "pass",
+      "feature_lineage_unknown_count": 0.0,
+      "group_oof_average_precision": 0.7967303198376108,
+      "group_oof_roc_auc": 0.8785605332095368,
+      "isotonic_crossfit_brier": 0.12921564202339317,
+      "isotonic_crossfit_ece": 0.025980914649542632,
+      "isotonic_in_sample_brier": 0.12169779297857763,
+      "isotonic_in_sample_ece": 3.729948831322397e-17,
+      "knownness_slice_abstain_rate": 0.07142857142857142,
+      "knownness_slice_average_precision": 0.5870219366789355,
+      "knownness_slice_brier_score": 0.10573261113877139,
+      "knownness_slice_expected_calibration_error": 0.03704150961165693,
+      "knownness_slice_n": 182.0,
+      "knownness_slice_prevalence": 0.17582417582417584,
+      "knownness_slice_roc_auc": 0.8319791666666667,
+      "knownness_slice_threshold": 0.5485644937586686,
+      "knownness_slice_top_k_precision": 0.8,
+      "leakage_alarm_count": 0.0,
+      "leakage_alarm_features": [],
+      "low_knownness_count": 182.0,
+      "low_knownness_enhancement_alpha": 0.85,
+      "low_knownness_enhancement_enabled": true,
+      "low_knownness_global_ap_after": 0.8871691513125545,
+      "low_knownness_global_ap_before": 0.8812235419275177,
+      "low_knownness_global_auc_after": 0.9268025113019641,
+      "low_knownness_global_auc_before": 0.9259044334648672,
+      "low_knownness_slice_ap_after": 0.7421042717962191,
+      "low_knownness_slice_ap_before": 0.6861567577084252,
+      "low_knownness_slice_auc_after": 0.8752083333333334,
+      "low_knownness_slice_auc_before": 0.8594791666666667,
+      "low_knownness_threshold": 0.5485644937586686,
+      "max_calibration_bin_gap": 0.05743726954179584,
+      "max_single_feature_auc": 0.9147876114998177,
+      "model_name": "geobio_reliability_ensemble",
+      "n_backbones": 887.0,
+      "n_positive": 318.0,
+      "oof_average_precision": 0.7991347507350055,
+      "oof_roc_auc": 0.8792707055299488,
+      "permutation_sanity": {
+        "alarm_count": 0,
+        "auc_ceiling": 0.6,
+        "n_trials": 8,
+        "permutation_auc_max": 0.5202357661571111,
+        "permutation_auc_mean": 0.4953724812370815,
+        "permutation_auc_values": [
+          0.493141448641001,
+          0.5058637574471376,
+          0.4882476152579279,
+          0.4985796553591759,
+          0.4387980678891579,
+          0.5068226282455152,
+          0.5112909108996253,
+          0.5202357661571111
+        ],
+        "reason": "",
+        "status": "pass"
+      },
+      "platt_crossfit_brier": 0.13138430706558699,
+      "platt_crossfit_ece": 0.05355658032566183,
+      "platt_in_sample_brier": 0.13084967315624296,
+      "platt_in_sample_ece": 0.051740183156184706,
+      "prevalence": 0.35851183765501693,
+      "roc_auc": 0.8792707055299488,
+      "single_feature_scan_error_count": 0.0,
+      "single_feature_scan_errors": [],
+      "status": "pass",
+      "suspicious_feature_count": 0.0,
+      "temporal_consistency": {
+        "flags": [
+          "temporal_instability"
+        ],
+        "max_positive_delta_vs_oof": 0.03482058984900571,
+        "max_roc_auc": 0.9133811230585425,
+        "median_delta_vs_oof": 0.004967163583466161,
+        "median_roc_auc": 0.8835276967930029,
+        "min_roc_auc": 0.7777777777777778,
+        "reason": "temporal_instability",
+        "roc_auc_spread": 0.13560334528076468,
+        "status": "fail",
+        "window_count": 7
+      },
+      "temporal_consistency_status": "fail",
+      "temporal_holdout_abstain_rate": 0.0125,
+      "temporal_holdout_average_precision": 0.9202073459157175,
+      "temporal_holdout_n_backbones": 480.0,
+      "temporal_holdout_n_positive": 193.0,
+      "temporal_holdout_prevalence": 0.40208333333333335,
+      "temporal_holdout_roc_auc": 0.94174143813977,
+      "temporal_holdout_top_k_precision": 1.0,
+      "temporal_rolling_average_precision_median": 0.7228874205384698,
+      "temporal_rolling_n_backbones_median": 58.0,
+      "temporal_rolling_n_positive_median": 24.0,
+      "temporal_rolling_roc_auc_median": 0.8835276967930029,
+      "temporal_rolling_window_count": 7.0,
+      "top_feature_weight_share": 0.1538681548077055,
+      "top_features": [
+        {
+          "feature": "synergy_coherence_score__country_slope_train",
+          "score": 2.581428031565037
+        },
+        {
+          "feature": "psge_2",
+          "score": 1.328214313477988
+        },
+        {
+          "feature": "psge_6",
+          "score": 1.2758097926450216
+        },
+        {
+          "feature": "psge_4",
+          "score": 0.9755159009878175
+        },
+        {
+          "feature": "psge_0",
+          "score": 0.7897578725675168
+        },
+        {
+          "feature": "recent_expansion_flag",
+          "score": 0.71881750513708
+        },
+        {
+          "feature": "country_slope_train",
+          "score": 0.7041180459946133
+        },
+        {
+          "feature": "psge_3",
+          "score": 0.6708888825439888
+        },
+        {
+          "feature": "psge_7",
+          "score": 0.5923562995891397
+        },
+        {
+          "feature": "psge_5",
+          "score": 0.5313187519767709
+        }
+      ],
+      "top_k_precision": 0.9,
+      "validation_mode": "spatial_group_cv_stacked"
+    }
+  ]
+}

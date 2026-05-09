@@ -1,0 +1,63 @@
+{
+  "abstain_rate": 0.014656144306651634,
+  "average_precision": 0.8742768700794221,
+  "brier_score": 0.17008460360156852,
+  "calibration_bins": [
+    {
+      "bin_end": 0.2,
+      "bin_start": 0.0,
+      "count": 430,
+      "mean_prediction": 0.16503907058724232,
+      "observed_rate": 0.06976744186046512
+    },
+    {
+      "bin_end": 0.4,
+      "bin_start": 0.2,
+      "count": 332,
+      "mean_prediction": 0.26727818126992214,
+      "observed_rate": 0.5150602409638554
+    },
+    {
+      "bin_end": 0.6000000000000001,
+      "bin_start": 0.4,
+      "count": 70,
+      "mean_prediction": 0.46796449454661226,
+      "observed_rate": 0.9
+    },
+    {
+      "bin_end": 0.8,
+      "bin_start": 0.6000000000000001,
+      "count": 43,
+      "mean_prediction": 0.6850031496792072,
+      "observed_rate": 0.9767441860465116
+    },
+    {
+      "bin_end": 1.0,
+      "bin_start": 0.8,
+      "count": 12,
+      "mean_prediction": 0.8569211739699054,
+      "observed_rate": 1.0
+    }
+  ],
+  "expected_calibration_error": 0.18910342731543675,
+  "external_holdout_abstain_rate": 0.029411764705882353,
+  "external_holdout_average_precision": 0.7366381882562356,
+  "external_holdout_bootstrap_average_precision_ci_high": 0.8329775272941865,
+  "external_holdout_bootstrap_average_precision_ci_low": 0.6129929087095138,
+  "external_holdout_bootstrap_confidence": 0.95,
+  "external_holdout_bootstrap_resamples": 200.0,
+  "external_holdout_bootstrap_roc_auc_ci_high": 0.856030404516265,
+  "external_holdout_bootstrap_roc_auc_ci_low": 0.6763283623197707,
+  "external_holdout_n_backbones": 102.0,
+  "external_holdout_n_positive": 44.0,
+  "external_holdout_prevalence": 0.43137254901960786,
+  "external_holdout_roc_auc": 0.7731191222570533,
+  "external_holdout_top_k_precision": 1.0,
+  "n_backbones": 887.0,
+  "n_bins": 5.0,
+  "n_positive": 318.0,
+  "prevalence": 0.35851183765501693,
+  "primary_model": "geobio_reliability_ensemble",
+  "roc_auc": 0.915155132583922,
+  "top_k_precision": 1.0
+}

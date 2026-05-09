@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -12,7 +13,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import StratifiedKFold
 from sklearn.preprocessing import StandardScaler
 
-from bio_spread_project.config_loader import ModelSpec, load_project_config
+from bio_spread_project.config_loader import ModelSpec, load_project_config, project_root
 from bio_spread_project.features import feature_rows_to_frame
 from bio_spread_project.metrics import calibration_summary, evaluate_predictions
 
@@ -120,7 +121,17 @@ class BioSpreadRiskModel:
 
     @staticmethod
     def load(path: str | Path) -> BioSpreadRiskModel:
-        return cast(BioSpreadRiskModel, joblib.load(path))
+        model_path = Path(path).expanduser().resolve()
+        if not model_path.exists():
+            raise FileNotFoundError(f"Model file does not exist: {model_path}")
+        if model_path.suffix.lower() not in {".joblib", ".pkl", ".pickle"}:
+            raise ValueError(f"Unsupported model extension for deserialization: {model_path.suffix}")
+        if not _is_trusted_model_path(model_path):
+            raise ValueError(
+                "Refusing to load untrusted model artifact. "
+                "Set BIO_SPREAD_ALLOW_UNTRUSTED_MODEL_LOAD=1 to override explicitly."
+            )
+        return cast(BioSpreadRiskModel, joblib.load(model_path))
 
     @staticmethod
     def _confidence_tier(probability: float, knownness: float) -> str:
@@ -258,5 +269,13 @@ def select_primary_model(surface: dict[str, ModelRun]) -> tuple[str, list[dict[s
     rows.sort(key=lambda x: float(x["selection_score"]), reverse=True)
     for i, r in enumerate(rows, 1):
         r["selection_rank"] = float(i)
-
     return str(rows[0]["model_name"]), rows
+
+
+def _is_trusted_model_path(path: Path) -> bool:
+    override = os.environ.get("BIO_SPREAD_ALLOW_UNTRUSTED_MODEL_LOAD", "").strip().lower()
+    if override in {"1", "true", "yes"}:
+        return True
+    root = project_root().resolve()
+    trusted_roots = (root / "reports", root / "output")
+    return any(trusted_root == path or trusted_root in path.parents for trusted_root in trusted_roots)

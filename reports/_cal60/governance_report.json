@@ -1,0 +1,249 @@
+{
+  "blocked_by": [
+    "drift_evidence_missing"
+  ],
+  "drift_checks": [
+    {
+      "detail": {
+        "status": "not_available"
+      },
+      "name": "drift_roc_auc",
+      "passed": false,
+      "reason": "missing_metric",
+      "status": "blocked"
+    },
+    {
+      "detail": {
+        "status": "not_available"
+      },
+      "name": "drift_average_precision",
+      "passed": false,
+      "reason": "missing_metric",
+      "status": "blocked"
+    },
+    {
+      "detail": {
+        "status": "not_available"
+      },
+      "name": "drift_group_oof_roc_auc",
+      "passed": false,
+      "reason": "missing_metric",
+      "status": "blocked"
+    },
+    {
+      "detail": {
+        "status": "not_available"
+      },
+      "name": "drift_temporal_holdout_roc_auc",
+      "passed": false,
+      "reason": "missing_metric",
+      "status": "blocked"
+    },
+    {
+      "detail": {
+        "reason": "absent_from_current_and_baseline",
+        "status": "not_evaluated"
+      },
+      "name": "drift_external_holdout_roc_auc",
+      "passed": true,
+      "reason": "absent_from_current_and_baseline",
+      "status": "not_evaluated"
+    },
+    {
+      "detail": {
+        "status": "not_available"
+      },
+      "name": "drift_max_single_feature_auc",
+      "passed": false,
+      "reason": "missing_metric",
+      "status": "blocked"
+    },
+    {
+      "detail": {
+        "status": "not_available"
+      },
+      "name": "drift_suspicious_feature_count",
+      "passed": false,
+      "reason": "missing_metric",
+      "status": "blocked"
+    }
+  ],
+  "policy_flags": {
+    "allow_conditional_release": true,
+    "fail_on_drift_fail": false,
+    "fail_on_quality_gates": false,
+    "fail_on_trend_fail": false,
+    "require_trend_evidence": false
+  },
+  "quality_checks": [
+    {
+      "detail": {
+        "observed": "spatial_group_cv_stacked",
+        "passed": true,
+        "reason": "",
+        "status": "pass",
+        "threshold": "cv_variants"
+      },
+      "name": "cross_validated",
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    {
+      "detail": {
+        "observed": 0.9278926220624388,
+        "passed": true,
+        "reason": "",
+        "status": "pass",
+        "threshold": 0.9
+      },
+      "name": "auc_at_least_target",
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    {
+      "detail": {
+        "observed": 0.9048039046551068,
+        "passed": true,
+        "reason": "",
+        "status": "pass",
+        "threshold": 0.3660262891809909
+      },
+      "name": "average_precision_above_prevalence",
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    {
+      "detail": {
+        "observed": 0.010130750607810624,
+        "passed": true,
+        "reason": "",
+        "status": "pass",
+        "threshold": 0.03
+      },
+      "name": "calibration_ece_at_most_target",
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    {
+      "detail": {
+        "observed": 0.9110467415942443,
+        "passed": true,
+        "reason": "",
+        "status": "pass",
+        "threshold": 0.88
+      },
+      "name": "bootstrap_auc_ci_low_at_least_target",
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    {
+      "detail": {
+        "observed": 0.8813124496849107,
+        "passed": true,
+        "reason": "",
+        "status": "pass",
+        "threshold": 0.3660262891809909
+      },
+      "name": "bootstrap_average_precision_ci_low_above_prevalence",
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    {
+      "detail": {
+        "observed": 0.9278926220624388,
+        "passed": true,
+        "reason": "",
+        "status": "pass",
+        "threshold": 0.9
+      },
+      "name": "group_auc_at_least_target",
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    {
+      "detail": {
+        "observed": 0.9580041580041581,
+        "passed": true,
+        "reason": "",
+        "status": "pass",
+        "threshold": 0.9
+      },
+      "name": "temporal_holdout_auc_at_least_target",
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    {
+      "detail": {
+        "observed": 0.1411271602271179,
+        "passed": true,
+        "reason": "",
+        "status": "pass",
+        "threshold": 0.15
+      },
+      "name": "temporal_holdout_ece_at_most_target",
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    {
+      "detail": {
+        "passed": true,
+        "reason": "skipped",
+        "status": "pass"
+      },
+      "name": "external_holdout_auc_at_least_target",
+      "passed": true,
+      "reason": "skipped",
+      "status": "pass"
+    },
+    {
+      "detail": {
+        "passed": true,
+        "reason": "",
+        "status": "pass"
+      },
+      "name": "leakage_audit_passed",
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    {
+      "detail": {
+        "observed": "count=0, max_auc=0.917",
+        "passed": true,
+        "reason": "",
+        "status": "pass",
+        "threshold": "max_count=0, max_auc=0.95"
+      },
+      "name": "adversarial_leakage_scan_passed",
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    }
+  ],
+  "readiness": "no_go",
+  "trend_checks": [
+    {
+      "detail": {
+        "all_passed": true,
+        "available_entries": 1,
+        "required_entries": 20,
+        "status": "insufficient_data",
+        "trend_evidence_sufficient": false,
+        "window_size": 10
+      },
+      "name": "trend_evidence",
+      "passed": false,
+      "reason": "insufficient_data",
+      "status": "not_evaluated"
+    }
+  ]
+}

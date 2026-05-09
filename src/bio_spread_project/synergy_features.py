@@ -11,6 +11,7 @@ INTERACTION_PAIRS = [
     ("geo_country_entropy_train", "host_breadth_slope_train"),
     ("country_slope_train", "mobility_shift_slope_train"),
     ("mean_antibiotic_pressure", "frac_pathogenic_hosts"),
+    ("grps", "amr_burden_saturation_norm"),
 ]
 
 def build_synergy_features(

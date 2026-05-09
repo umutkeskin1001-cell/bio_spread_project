@@ -1,0 +1,138 @@
+{
+  "primary_model": "geobio_reliability_ensemble",
+  "scorecard": [
+    {
+      "abstain_rate": 0.016177957532861477,
+      "average_precision": 0.8466469189978119,
+      "blocked_columns": [],
+      "bootstrap_average_precision_ci_high": 0.878718457075809,
+      "bootstrap_average_precision_ci_low": 0.7950449929187002,
+      "bootstrap_confidence": 0.95,
+      "bootstrap_resamples": 100.0,
+      "bootstrap_roc_auc_ci_high": 0.9259530746382519,
+      "bootstrap_roc_auc_ci_low": 0.8879213547072383,
+      "canary_self_test": {
+        "alarm_count": 0,
+        "auc_floor": 0.9,
+        "canary_auc": 1.0,
+        "reason": "",
+        "status": "pass"
+      },
+      "dropped_leakage_columns": [
+        "event_within_1y_label",
+        "event_within_3y_label",
+        "event_within_5y_label",
+        "evolutionary_jump_score_norm",
+        "macro_region_jump_label",
+        "time_to_first_new_country_years",
+        "time_to_third_new_country_years",
+        "training_only_future_unseen_backbone_flag"
+      ],
+      "feature_lineage_status": "pass",
+      "feature_lineage_unknown_count": 0.0,
+      "group_oof_average_precision": 0.8466469189978119,
+      "group_oof_roc_auc": 0.9067602456669046,
+      "leakage_alarm_count": 0.0,
+      "leakage_alarm_features": [],
+      "max_single_feature_auc": 0.9165146668781446,
+      "model_name": "geobio_reliability_ensemble",
+      "n_backbones": 989.0,
+      "n_positive": 362.0,
+      "oof_average_precision": 0.8466469189978119,
+      "oof_roc_auc": 0.9067602456669046,
+      "permutation_sanity": {
+        "alarm_count": 0,
+        "auc_ceiling": 0.6,
+        "n_trials": 8,
+        "permutation_auc_max": 0.5219452448298043,
+        "permutation_auc_mean": 0.4877813648259272,
+        "permutation_auc_values": [
+          0.4816344603346639,
+          0.5032360534686793,
+          0.5193260020971565,
+          0.453675310828553,
+          0.47339783411315833,
+          0.4995395948434622,
+          0.4494964180919401,
+          0.5219452448298043
+        ],
+        "reason": "",
+        "status": "pass"
+      },
+      "prevalence": 0.3660262891809909,
+      "roc_auc": 0.9067602456669046,
+      "single_feature_scan_error_count": 0.0,
+      "single_feature_scan_errors": [],
+      "status": "pass",
+      "suspicious_feature_count": 0.0,
+      "temporal_consistency": {
+        "flags": [],
+        "max_positive_delta_vs_oof": 0.02331638268558578,
+        "max_roc_auc": 0.9300766283524904,
+        "median_roc_auc": 0.9140747370776461,
+        "min_roc_auc": 0.8307210031347962,
+        "reason": "",
+        "roc_auc_spread": 0.09935562521769414,
+        "status": "pass",
+        "window_count": 7
+      },
+      "temporal_consistency_status": "pass",
+      "temporal_holdout_abstain_rate": 0.01125703564727955,
+      "temporal_holdout_average_precision": 0.9298717202370668,
+      "temporal_holdout_n_backbones": 533.0,
+      "temporal_holdout_n_positive": 218.0,
+      "temporal_holdout_prevalence": 0.4090056285178236,
+      "temporal_holdout_roc_auc": 0.9477646716178826,
+      "temporal_holdout_top_k_precision": 1.0,
+      "temporal_rolling_average_precision_median": 0.7457282729710567,
+      "temporal_rolling_n_backbones_median": 65.0,
+      "temporal_rolling_n_positive_median": 27.0,
+      "temporal_rolling_roc_auc_median": 0.9140747370776461,
+      "temporal_rolling_window_count": 7.0,
+      "top_features": [
+        {
+          "feature": "country_slope_train",
+          "score": 1.943645840002652
+        },
+        {
+          "feature": "synergy_coherence_score__country_slope_train",
+          "score": 1.7266531094200794
+        },
+        {
+          "feature": "psge_1",
+          "score": 1.0530641913633587
+        },
+        {
+          "feature": "recent_expansion_flag",
+          "score": 1.0133671725732043
+        },
+        {
+          "feature": "psge_4",
+          "score": 0.9485229633173461
+        },
+        {
+          "feature": "psge_7",
+          "score": 0.7192176623696763
+        },
+        {
+          "feature": "psge_0",
+          "score": 0.6940194480202788
+        },
+        {
+          "feature": "synergy_T_eff_norm__H_obs_specialization_norm",
+          "score": 0.4733151941862092
+        },
+        {
+          "feature": "psge_2",
+          "score": 0.4688587646050595
+        },
+        {
+          "feature": "orit_support",
+          "score": 0.41754351116578997
+        }
+      ],
+      "top_k_precision": 1.0,
+      "validation_mode": "spatial_group_cv_stacked"
+    }
+  ]
+}

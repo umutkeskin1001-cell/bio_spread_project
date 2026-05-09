@@ -1,16 +1,14 @@
-from __future__ import annotations
-
-from pathlib import Path
-from typing import Any
-
 import numpy as np
 import polars as pl
+from numpy.typing import NDArray
+
+from bio_spread_project.gene_graph_utils import build_gene_sharing_edges
 
 
 class PhyloSpatialGraphEmbedder:
     def __init__(self) -> None:
         self.backbone_map: dict[str, int] = {}
-        self.embeddings: np.ndarray | None = None
+        self.embeddings: NDArray[np.float32] | None = None
 
     def fit_transform(
         self,
@@ -18,7 +16,7 @@ class PhyloSpatialGraphEmbedder:
         *,
         split_year: int,
         backbone_ids: list[str],
-        feature_matrix: np.ndarray,
+        feature_matrix: NDArray[Any],
         mash_path: Path | None = None,
         save_path: Path | None = None,
     ) -> pl.DataFrame:
@@ -65,6 +63,14 @@ class PhyloSpatialGraphEmbedder:
                     if a in self.backbone_map and b in self.backbone_map:
                         w = float(np.exp(-float(row["mash_distance"])))
                         edges.append((self.backbone_map[a], self.backbone_map[b], w))
+
+        # --- v5.0: Shared High-Priority AMR Gene Edges ---
+        raw_dir = Path(__file__).resolve().parents[2] / "data" / "raw"
+        config_path = Path(__file__).resolve().parents[2] / "project_config" / "high_priority_genes.json"
+        gene_edges = build_gene_sharing_edges(backbone_ids, raw_dir, config_path, weight=1.5)
+        for u_id, v_id, w in gene_edges:
+            if u_id in self.backbone_map and v_id in self.backbone_map:
+                edges.append((self.backbone_map[u_id], self.backbone_map[v_id], w))
 
         if not edges:
             # disconnected fallback

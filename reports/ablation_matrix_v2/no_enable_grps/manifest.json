@@ -1,0 +1,111 @@
+{
+  "artifacts": {
+    "artifact_index": "artifact_index.json",
+    "audit": "audit.json",
+    "data_registry": "data_registry.json",
+    "drift_report": "drift_report.json",
+    "features": "features.csv",
+    "features_parquet": "features.parquet",
+    "governance_report": "governance_report.json",
+    "manifest": "manifest.json",
+    "metrics": "metrics.json",
+    "model_card": "model_card.md",
+    "model_registry": "model_registry.jsonl",
+    "model_scorecard": "model_scorecard.json",
+    "predictions": "predictions.csv",
+    "predictions_parquet": "predictions.parquet",
+    "release_gate": "release_gate.json",
+    "report": "report.md",
+    "trend_report": "trend_report.json"
+  },
+  "config_fingerprint": "ebba4d65be56f2452478782aa4cbaba352f5778e925566da414ed90fe9620db8",
+  "created_at_utc": "2026-05-05T17:50:30.126495+00:00",
+  "dag_trace": [
+    "select_input_source",
+    "load_or_build_features",
+    "enrich_features",
+    "add_synergy_features",
+    "adversarial_audit",
+    "train_model",
+    "evaluate_gates"
+  ],
+  "dependency_fingerprint": "d273e729fcf3af7fc5f4027da88ab44aa93c9f2f750c41b9d78b295a437947a7",
+  "enrichment_modules": [
+    "adversarial_phantom_gate",
+    "country_slope_train",
+    "enable_rank_focal_loss",
+    "enable_soft_country_debiasing",
+    "host_breadth_slope_train",
+    "max_health_exp",
+    "mean_antibiotic_pressure",
+    "mobility_shift_slope_train",
+    "recent_expansion_flag",
+    "synergy_interactions",
+    "tourist_entropy"
+  ],
+  "environment": {
+    "git_commit": "f6daf02d33aeafeeeabb2213d88162d67ba77770",
+    "numpy": "1.26.4",
+    "polars": "0.20.31",
+    "python": "3.9.6",
+    "scikit_learn": "1.6.1",
+    "ssl_backend": "LibreSSL 2.8.3"
+  },
+  "git_commit": "f6daf02d33aeafeeeabb2213d88162d67ba77770",
+  "horizon_years": 3,
+  "input_candidates": {
+    "geo_spread_features": "reports/latest_refresh/features.csv"
+  },
+  "input_hashes": {
+    "geo_spread_features": "5d0b631336fd67cba06d6b3cecf2deec433dcbe22152d126f6d7334f55b2e6b4"
+  },
+  "input_mode": "geo_reliability_feature_surface",
+  "inputs": {
+    "geo_spread_features": "reports/latest_refresh/features.csv"
+  },
+  "policy": {
+    "fail_on_drift_fail": false,
+    "fail_on_quality_gates": false,
+    "fail_on_trend_fail": false,
+    "require_explicit_surface": false,
+    "require_strict_lineage": false,
+    "require_trend_evidence": false
+  },
+  "primary_model": "geobio_reliability_ensemble",
+  "project": "BioSpread",
+  "quality_gates": {
+    "adversarial_leakage_scan_passed": true,
+    "auc_at_least_target": true,
+    "average_precision_above_prevalence": true,
+    "bootstrap_auc_ci_low_at_least_target": true,
+    "bootstrap_average_precision_ci_low_above_prevalence": true,
+    "calibration_ece_at_most_target": true,
+    "cross_validated": true,
+    "external_holdout_auc_at_least_target": true,
+    "feature_lineage_passed": true,
+    "group_auc_at_least_target": true,
+    "leakage_audit_passed": true,
+    "temporal_consistency_passed": true,
+    "temporal_holdout_auc_at_least_target": true
+  },
+  "random_seed_policy": {
+    "bootstrap_seed": 7,
+    "cv_random_state": 7,
+    "model_random_state": 42,
+    "permutation_importance_seed": 7
+  },
+  "run_id": "649b631de9424edf8c36f735be03e0c5",
+  "run_mode": "geo",
+  "selection_reason": "explicit_geo_mode",
+  "semantic_input_hashes": {
+    "geo_spread_features": "094243ba8c725adae3c8ec2ba9b613b3b20142e1ce030995ec6e6216decb87f0"
+  },
+  "source_fingerprint": "9094733bde740e88b28694e0806fc3c473e2fc453a1901e847e5c96f8e41e9fe",
+  "split_year": 2020,
+  "threshold_sources": {
+    "baseline": "project_config/baseline_benchmark.json",
+    "drift": "project_config/drift_thresholds.json",
+    "quality": "project_config/quality_thresholds.json",
+    "trend": "project_config/trend_thresholds.json"
+  }
+}

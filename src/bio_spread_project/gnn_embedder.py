@@ -118,6 +118,8 @@ class BackboneGraphEmbedder:
     def transform(self, backbone_ids: pl.Series) -> pl.DataFrame:
         if self.embeddings is None:
             raise ValueError("Model not fitted")
+        if self.backbone_mapping is None:
+            raise ValueError("Backbone mapping missing; call fit() before transform()")
 
         b_ids = backbone_ids.to_list()
         d = self.embeddings.shape[1]

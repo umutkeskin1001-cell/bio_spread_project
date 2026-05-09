@@ -9,7 +9,7 @@ import polars as pl
 
 from bio_spread_project.io_utils import write_json
 from bio_spread_project.runtime_policy import EnforcementPolicy
-from bio_spread_project.validation import require_non_negative, require_range, to_float, to_int
+from bio_spread_project.validation import require_non_negative, require_range, to_bool, to_float, to_int
 
 ALLOWED_CHECK_STATUSES = {"pass", "fail", "not_evaluated", "blocked", "not_required"}
 
@@ -32,6 +32,10 @@ class QualityThresholds:
     feature_lineage_required: bool = False
     max_unknown_lineage_count: int = 0
     max_disabled_feature_leak_count: int = 0
+    low_knownness_slice_auc_min: float = 0.82
+    low_knownness_slice_ap_min: float = 0.65
+    low_knownness_slice_ece_max: float = 0.06
+    low_knownness_slice_required: bool = False
 
     def __post_init__(self) -> None:
         for name in (
@@ -43,6 +47,9 @@ class QualityThresholds:
             "temporal_holdout_auc_min",
             "external_holdout_auc_min",
             "max_single_feature_auc_max",
+            "low_knownness_slice_auc_min",
+            "low_knownness_slice_ap_min",
+            "low_knownness_slice_ece_max",
         ):
             require_range(name, float(getattr(self, name)), minimum=0.0, maximum=1.0)
         require_non_negative("suspicious_feature_count_max", float(self.suspicious_feature_count_max))
@@ -91,14 +98,18 @@ def load_quality_thresholds(path: str | Path | None = None) -> QualityThresholds
         temporal_holdout_auc_min=require_range("temporal_holdout_auc_min", to_float("temporal_holdout_auc_min", payload.get("temporal_holdout_auc_min", 0.78)), minimum=0.0, maximum=1.0),
         external_holdout_auc_min=require_range("external_holdout_auc_min", to_float("external_holdout_auc_min", payload.get("external_holdout_auc_min", 0.78)), minimum=0.0, maximum=1.0),
         max_single_feature_auc_max=require_range("max_single_feature_auc_max", to_float("max_single_feature_auc_max", payload.get("max_single_feature_auc_max", 0.95)), minimum=0.0, maximum=1.0),
-        average_precision_above_prevalence=bool(payload.get("average_precision_above_prevalence", True)),
-        bootstrap_average_precision_ci_low_above_prevalence=bool(payload.get("bootstrap_average_precision_ci_low_above_prevalence", True)),
-        external_holdout_required=bool(payload.get("external_holdout_required", True)),
+        average_precision_above_prevalence=to_bool("average_precision_above_prevalence", payload.get("average_precision_above_prevalence", True)),
+        bootstrap_average_precision_ci_low_above_prevalence=to_bool("bootstrap_average_precision_ci_low_above_prevalence", payload.get("bootstrap_average_precision_ci_low_above_prevalence", True)),
+        external_holdout_required=to_bool("external_holdout_required", payload.get("external_holdout_required", True)),
         suspicious_feature_count_max=to_int("suspicious_feature_count_max", payload.get("suspicious_feature_count_max", 0)),
-        temporal_consistency_required=bool(payload.get("temporal_consistency_required", True)),
-        feature_lineage_required=bool(payload.get("feature_lineage_required", False)),
+        temporal_consistency_required=to_bool("temporal_consistency_required", payload.get("temporal_consistency_required", True)),
+        feature_lineage_required=to_bool("feature_lineage_required", payload.get("feature_lineage_required", False)),
         max_unknown_lineage_count=to_int("max_unknown_lineage_count", payload.get("max_unknown_lineage_count", 0)),
         max_disabled_feature_leak_count=to_int("max_disabled_feature_leak_count", payload.get("max_disabled_feature_leak_count", 0)),
+        low_knownness_slice_auc_min=require_range("low_knownness_slice_auc_min", to_float("low_knownness_slice_auc_min", payload.get("low_knownness_slice_auc_min", 0.82)), minimum=0.0, maximum=1.0),
+        low_knownness_slice_ap_min=require_range("low_knownness_slice_ap_min", to_float("low_knownness_slice_ap_min", payload.get("low_knownness_slice_ap_min", 0.65)), minimum=0.0, maximum=1.0),
+        low_knownness_slice_ece_max=require_range("low_knownness_slice_ece_max", to_float("low_knownness_slice_ece_max", payload.get("low_knownness_slice_ece_max", 0.06)), minimum=0.0, maximum=1.0),
+        low_knownness_slice_required=to_bool("low_knownness_slice_required", payload.get("low_knownness_slice_required", False)),
     )
 
 
@@ -141,7 +152,7 @@ def load_trend_thresholds(path: str | Path | None = None) -> TrendThresholds:
         roc_auc_max_drop=require_range("roc_auc_max_drop", to_float("roc_auc_max_drop", payload.get("roc_auc_max_drop", 0.02)), minimum=0.0, maximum=1.0),
         average_precision_max_drop=require_range("average_precision_max_drop", to_float("average_precision_max_drop", payload.get("average_precision_max_drop", 0.03)), minimum=0.0, maximum=1.0),
         min_gate_pass_rate=require_range("min_gate_pass_rate", to_float("min_gate_pass_rate", payload.get("min_gate_pass_rate", 0.90)), minimum=0.0, maximum=1.0),
-        required_entries_for_go=int(require_range("required_entries_for_go", to_float("required_entries_for_go", payload.get("required_entries_for_go", 20)), minimum=2.0, maximum=1000000.0)),
+        required_entries_for_go=to_int("required_entries_for_go", require_range("required_entries_for_go", to_float("required_entries_for_go", payload.get("required_entries_for_go", 20)), minimum=2.0, maximum=1000000.0)),
     )
 
 
@@ -163,8 +174,8 @@ def evaluate_quality_gate_details(
     group_auc = float(metrics.get("group_oof_roc_auc", 0.0))
     temporal_auc = float(metrics.get("temporal_holdout_roc_auc", 0.0))
     external_holdout_auc = float(metrics.get("external_holdout_roc_auc", 0.0))
-    bootstrap_auc_low = float(metrics.get("bootstrap_roc_auc_ci_low", auc))
-    bootstrap_ap_low = float(metrics.get("bootstrap_average_precision_ci_low", average_precision))
+    bootstrap_auc_low_raw = metrics.get("bootstrap_roc_auc_ci_low")
+    bootstrap_ap_low_raw = metrics.get("bootstrap_average_precision_ci_low")
     max_single_feature_auc = float(metrics.get("max_single_feature_auc", 0.5))
     suspicious_feature_count = int(float(metrics.get("suspicious_feature_count", 0.0)))
     temporal_consistency_status = str(metrics.get("temporal_consistency_status", "not_evaluated"))
@@ -172,6 +183,9 @@ def evaluate_quality_gate_details(
     feature_lineage_unknown_count = int(float(metrics.get("feature_lineage_unknown_count", 0.0)))
     disabled_feature_leak_count = int(float(metrics.get("disabled_feature_leak_count", 0.0)))
     max_bin_gap = float(metrics.get("max_calibration_bin_gap", 0.0))
+    low_auc_raw = metrics.get("knownness_slice_roc_auc")
+    low_ap_raw = metrics.get("knownness_slice_average_precision")
+    low_ece_raw = metrics.get("knownness_slice_expected_calibration_error")
     is_geo_mode = input_mode == "geo_reliability_feature_surface"
     def gate_status(name: str, passed: bool, observed: Any, target: Any) -> dict[str, Any]:
         return {
@@ -182,14 +196,49 @@ def evaluate_quality_gate_details(
             "reason": "" if passed else f"Observed {observed} does not meet required {target}"
         }
 
+    bootstrap_auc_gate = (
+        gate_status(
+            "boot_auc_low",
+            float(bootstrap_auc_low_raw) >= thresholds.bootstrap_auc_ci_low_min,
+            float(bootstrap_auc_low_raw),
+            thresholds.bootstrap_auc_ci_low_min,
+        )
+        if bootstrap_auc_low_raw is not None
+        else {"passed": False, "status": "fail", "observed": None, "threshold": thresholds.bootstrap_auc_ci_low_min, "reason": "bootstrap_roc_auc_ci_low missing"}
+    )
+    bootstrap_ap_gate = (
+        gate_status("boot_ap_low", float(bootstrap_ap_low_raw) > prevalence, float(bootstrap_ap_low_raw), prevalence)
+        if (thresholds.bootstrap_average_precision_ci_low_above_prevalence and bootstrap_ap_low_raw is not None)
+        else (
+            {"passed": False, "status": "fail", "observed": None, "threshold": prevalence, "reason": "bootstrap_average_precision_ci_low missing"}
+            if thresholds.bootstrap_average_precision_ci_low_above_prevalence
+            else {"passed": True, "status": "pass", "reason": "skipped"}
+        )
+    )
+    low_slice_auc_gate = (
+        gate_status("low_knownness_auc", float(low_auc_raw) >= thresholds.low_knownness_slice_auc_min, float(low_auc_raw), thresholds.low_knownness_slice_auc_min)
+        if low_auc_raw is not None
+        else {"passed": False, "status": "fail", "observed": None, "threshold": thresholds.low_knownness_slice_auc_min, "reason": "knownness_slice_roc_auc missing"}
+    )
+    low_slice_ap_gate = (
+        gate_status("low_knownness_ap", float(low_ap_raw) >= thresholds.low_knownness_slice_ap_min, float(low_ap_raw), thresholds.low_knownness_slice_ap_min)
+        if low_ap_raw is not None
+        else {"passed": False, "status": "fail", "observed": None, "threshold": thresholds.low_knownness_slice_ap_min, "reason": "knownness_slice_average_precision missing"}
+    )
+    low_slice_ece_gate = (
+        gate_status("low_knownness_ece", float(low_ece_raw) <= thresholds.low_knownness_slice_ece_max, float(low_ece_raw), thresholds.low_knownness_slice_ece_max)
+        if low_ece_raw is not None
+        else {"passed": False, "status": "fail", "observed": None, "threshold": thresholds.low_knownness_slice_ece_max, "reason": "knownness_slice_expected_calibration_error missing"}
+    )
+
     return {
         "cross_validated": gate_status("cross_validated", _validation_mode_is_cv(str(metrics.get("validation_mode", ""))), metrics.get("validation_mode", "direct"), "cv_variants"),
         "auc_at_least_target": gate_status("auc", auc >= thresholds.auc_min, auc, thresholds.auc_min),
         "average_precision_above_prevalence": gate_status("ap", average_precision > prevalence, average_precision, prevalence) if thresholds.average_precision_above_prevalence else {"passed": True, "status": "pass", "reason": "skipped"},
         "calibration_ece_at_most_target": gate_status("ece", ece <= thresholds.calibration_ece_max, ece, thresholds.calibration_ece_max),
         "calibration_bin_gap_at_most_target": gate_status("cal_bin_gap", max_bin_gap <= thresholds.calibration_bin_gap_max, max_bin_gap, thresholds.calibration_bin_gap_max),
-        "bootstrap_auc_ci_low_at_least_target": gate_status("boot_auc_low", bootstrap_auc_low >= thresholds.bootstrap_auc_ci_low_min, bootstrap_auc_low, thresholds.bootstrap_auc_ci_low_min),
-        "bootstrap_average_precision_ci_low_above_prevalence": gate_status("boot_ap_low", bootstrap_ap_low > prevalence, bootstrap_ap_low, prevalence) if thresholds.bootstrap_average_precision_ci_low_above_prevalence else {"passed": True, "status": "pass", "reason": "skipped"},
+        "bootstrap_auc_ci_low_at_least_target": bootstrap_auc_gate,
+        "bootstrap_average_precision_ci_low_above_prevalence": bootstrap_ap_gate,
         "group_auc_at_least_target": gate_status("group_auc", group_auc >= thresholds.group_auc_min, group_auc, thresholds.group_auc_min) if is_geo_mode else {"passed": True, "status": "pass", "reason": "skipped"},
         "temporal_holdout_auc_at_least_target": gate_status("temporal_auc", temporal_auc >= thresholds.temporal_holdout_auc_min, temporal_auc, thresholds.temporal_holdout_auc_min) if is_geo_mode else {"passed": True, "status": "pass", "reason": "skipped"},
         "temporal_consistency_passed": gate_status("temporal_consistency", temporal_consistency_status in {"pass", "not_evaluated"}, temporal_consistency_status, "pass_or_not_evaluated") if (is_geo_mode and thresholds.temporal_consistency_required) else {"passed": True, "status": "pass", "reason": "skipped"},
@@ -198,6 +247,9 @@ def evaluate_quality_gate_details(
         "external_holdout_auc_at_least_target": gate_status("external_auc", external_holdout_auc >= thresholds.external_holdout_auc_min, external_holdout_auc, thresholds.external_holdout_auc_min) if (is_geo_mode and thresholds.external_holdout_required) else {"passed": True, "status": "pass", "reason": "skipped"},
         "leakage_audit_passed": {"passed": bool(leakage_audit_passed), "status": "pass" if leakage_audit_passed else "fail", "reason": "Structural leakage check failed" if not leakage_audit_passed else ""},
         "adversarial_leakage_scan_passed": gate_status("adv_scan", suspicious_feature_count <= thresholds.suspicious_feature_count_max and max_single_feature_auc < thresholds.max_single_feature_auc_max, f"count={suspicious_feature_count}, max_auc={max_single_feature_auc:.3f}", f"max_count={thresholds.suspicious_feature_count_max}, max_auc={thresholds.max_single_feature_auc_max}") if is_geo_mode else {"passed": True, "status": "pass", "reason": "skipped"},
+        "low_knownness_slice_auc_at_least_target": low_slice_auc_gate if (is_geo_mode and thresholds.low_knownness_slice_required) else {"passed": True, "status": "pass", "reason": "skipped"},
+        "low_knownness_slice_ap_at_least_target": low_slice_ap_gate if (is_geo_mode and thresholds.low_knownness_slice_required) else {"passed": True, "status": "pass", "reason": "skipped"},
+        "low_knownness_slice_ece_at_most_target": low_slice_ece_gate if (is_geo_mode and thresholds.low_knownness_slice_required) else {"passed": True, "status": "pass", "reason": "skipped"},
     }
 
 
@@ -254,7 +306,12 @@ def evaluate_drift(
         all_passed = all_passed and passed
     if missing_required_metric:
         all_passed = False
-    return {"all_passed": all_passed, "metric_checks": metric_checks, "aux_checks": aux_checks}
+    return {
+        "all_passed": all_passed,
+        "status": "ok" if not missing_required_metric else "not_evaluated",
+        "metric_checks": metric_checks,
+        "aux_checks": aux_checks,
+    }
 
 
 def evaluate_drift_checks(
@@ -285,7 +342,7 @@ def evaluate_model_registry_trend(
     resolved_window = max(2, int(window_size))
     required_entries = max(2 * resolved_window, thresholds.required_entries_for_go)
     if df.is_empty() or len(df) < required_entries:
-        return {"status": "insufficient_data", "all_passed": True, "trend_evidence_sufficient": False, "required_entries": required_entries, "available_entries": len(df), "window_size": resolved_window}
+        return {"status": "insufficient_data", "all_passed": False, "trend_evidence_sufficient": False, "required_entries": required_entries, "available_entries": len(df), "window_size": resolved_window}
     recent = df.tail(resolved_window)
     previous = df.slice(len(df) - 2 * resolved_window, resolved_window)
 
@@ -420,7 +477,8 @@ def build_release_gate_report(
     allow_conditional_trend_release: bool = True,
 ) -> dict[str, Any]:
     quality_passed = bool(audit.get("all_quality_gates_passed", False))
-    drift_passed = bool(drift_report.get("all_passed", False))
+    drift_status = str(drift_report.get("status", "ok"))
+    drift_passed = bool(drift_report.get("all_passed", False)) and drift_status != "not_evaluated"
     trend_status = str(trend_report.get("status", "unknown"))
     trend_checks_passed = bool(trend_report.get("all_passed", False)) if trend_status == "ok" else False
     trend_evidence_sufficient = bool(trend_report.get("trend_evidence_sufficient", trend_status == "ok"))

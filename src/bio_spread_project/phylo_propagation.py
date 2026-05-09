@@ -23,11 +23,13 @@ Zero-Leakage Contract:
     preventing transductive graph shortcuts.
 """
 
+from pathlib import Path
+from typing import Any, Optional, Union
+
 import numpy as np
 import polars as pl
+from numpy.typing import NDArray
 from scipy.sparse import coo_matrix, diags
-from pathlib import Path
-from typing import Union, Optional, Any
 
 
 class PhyloPropagator:
@@ -56,7 +58,7 @@ class PhyloPropagator:
         self,
         graph: Any,
         features: pl.DataFrame,
-        mask: Optional[np.ndarray] = None,
+        mask: Optional[NDArray[np.bool_]] = None,
     ) -> pl.DataFrame:
         """
         Calculates risk using label propagation.
@@ -129,7 +131,7 @@ def build_phylo_propagation(
     alpha: float = 0.99,
     max_iter: int = 20,
     distance_threshold: float = 0.2,
-    labeled_ids: Optional[set] = None,
+    labeled_ids: Optional[set[str]] = None,
 ) -> pl.DataFrame:
     """
     Returns a DataFrame with columns: backbone_id, phylo_prop_risk.
@@ -166,13 +168,11 @@ def build_phylo_propagation(
                 rename_map["distance"] = "mash_distance"
             if rename_map:
                 mash_df = mash_df.rename(rename_map)
-        except Exception:
-            return pl.DataFrame(
-                {
-                    "backbone_id": features["backbone_id"].unique(),
-                    "phylo_prop_risk": 0.5,
-                }
-            )
+        except Exception as exc:
+            raise ValueError(
+                f"Failed to parse mash-distance graph from `{mash_path}`. "
+                "Refusing silent neutral-risk fallback."
+            ) from exc
 
     mash_df = mash_df.filter(pl.col("mash_distance") < distance_threshold)
 
@@ -293,13 +293,13 @@ def build_phylo_propagation(
 
         risk = np.zeros(n)
         y_labels = Y[:, 1].astype(int)
-        class_counts = np.bincount(y_labels)
-        min_class = int(class_counts.min()) if len(class_counts) > 1 else 0
-        n_splits = min(5, n, max(2, min_class))
-        if n_splits < 2 or len(np.unique(y_labels)) < 2:
+        class_counts = np.bincount(y_labels, minlength=2)
+        min_class = int(class_counts.min())
+        if min_class < 2 or len(np.unique(y_labels)) < 2:
             return pl.DataFrame(
                 {"backbone_id": all_ids, "phylo_prop_risk": [0.5] * n}
             )
+        n_splits = min(5, n, min_class)
 
         kf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=42)
         for train_idx, val_idx in kf.split(Y, y_labels):

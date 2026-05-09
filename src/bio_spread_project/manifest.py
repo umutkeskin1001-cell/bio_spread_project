@@ -10,12 +10,13 @@ from bio_spread_project.runtime_policy import EnforcementPolicy
 
 
 def portable_path(path: Path, *, root: Path | None = None) -> str:
-    resolved = path.resolve()
     anchor = (root or Path(__file__).resolve().parents[2]).resolve()
+    expanded = path.expanduser()
+    display_path = expanded if expanded.is_absolute() else anchor / expanded
     try:
-        return str(resolved.relative_to(anchor))
+        return str(display_path.relative_to(anchor))
     except ValueError:
-        return str(resolved)
+        return str(display_path)
 
 
 def build_manifest(
@@ -41,8 +42,8 @@ def build_manifest(
         name: portable_path(path)
         for name, path in (
             ("input", selection.candidate_inputs.get("input")),
-            ("records", selection.resolved_records_path),
-            ("amr", selection.resolved_amr_path),
+            ("records", selection.candidate_inputs.get("records") or selection.resolved_records_path),
+            ("amr", selection.candidate_inputs.get("amr") or selection.resolved_amr_path),
             ("geo_spread_features", selection.candidate_inputs.get("geo_spread_features")),
         )
         if path is not None and name in input_hashes

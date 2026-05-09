@@ -10,7 +10,6 @@ import torch
 from numpy.typing import NDArray
 from scipy.sparse import coo_matrix, diags, eye
 from sklearn.decomposition import NMF
-from sklearn.model_selection import KFold
 from sklearn.neighbors import NearestNeighbors
 
 # ---------------------------------------------------------------
@@ -24,6 +23,7 @@ INTERACTION_PAIRS = [
     ("orit_support", "amr_burden_saturation_norm"),
     ("backbone_purity_norm", "assignment_confidence_norm"),
     ("mean_antibiotic_pressure", "frac_pathogenic_hosts"),
+    ("grps", "amr_burden_saturation_norm"),
 ]
 
 
@@ -392,7 +392,7 @@ class BackboneGraphEmbedder:
 # ---------------------------------------------------------------
 # phylo_spatial_embedder
 # ---------------------------------------------------------------
-class GCN(torch.nn.Module):
+class GCN(torch.nn.Module):  # type: ignore[misc]
     def __init__(self, d_in: int, d_out: int, d_hidden: int = 16) -> None:
         super().__init__()
         from torch_geometric.nn import GCNConv
@@ -417,9 +417,8 @@ class PhyloSpatialGraphEmbedder:
         feature_matrix: NDArray[np.floating] | NDArray[np.integer],
         mash_path: Path | None = None
     ) -> PhyloSpatialGraphEmbedder:
-        import torch.nn.functional as F
         from torch_geometric.data import Data
-        
+
         self.backbone_map = {bb: i for i, bb in enumerate(backbone_ids)}
         n_backbones = len(backbone_ids)
         if n_backbones == 0:
@@ -492,7 +491,7 @@ class PhyloSpatialGraphEmbedder:
             loss = torch.relu(1.0 - pos + neg).mean()
             loss.backward()
             opt.step()
-        
+
         self.model.eval()
         with torch.no_grad():
             self.embeddings = np.asarray(self.model(data.x, data.edge_index, data.edge_attr).cpu().numpy(), dtype=np.float32)
@@ -505,7 +504,7 @@ class PhyloSpatialGraphEmbedder:
             cols = {f"psge_{i}": np.zeros(n) for i in range(self.dim)}
             cols["backbone_id"] = backbone_ids
             return pl.DataFrame(cols)
-        
+
         # In inductive mode, if we don't have edges for the transform set, we use zero-connectivity
         # or we could use the feature matrix and pass it through the GCN layers without neighbors (self-loops only)
         import torch
@@ -515,14 +514,14 @@ class PhyloSpatialGraphEmbedder:
         if x.shape[1] < 32:
             pad = torch.zeros((x.shape[0], 32 - x.shape[1]), dtype=torch.float32)
             x = torch.cat([x, pad], dim=1)
-        
+
         # Dummy empty edge index for inductive transform on isolated nodes
         edge_index = torch.zeros((2, 0), dtype=torch.long)
         edge_attr = torch.zeros((0,), dtype=torch.float32)
-        
+
         with torch.no_grad():
             z = self.model(x, edge_index, edge_attr).cpu().numpy()
-        
+
         cols = {f"psge_{i}": z[:, i] for i in range(self.dim)}
         cols["backbone_id"] = backbone_ids
         return pl.DataFrame(cols)
@@ -536,19 +535,19 @@ class PhyloSpatialGraphEmbedder:
         if save_path is not None:
             save_path.parent.mkdir(parents=True, exist_ok=True)
             torch.save({"backbone_map": self.backbone_map, "embeddings": self.embeddings, "state_dict": self.model.state_dict() if self.model else None}, save_path)
-        
+
         return self._to_df(backbone_ids)
 
     def _to_df(self, backbone_ids: list[str]) -> pl.DataFrame:
         if self.embeddings is None:
             raise ValueError("embeddings are not fitted")
-        
+
         # Create a mapping for efficient lookup
         id_to_emb = {}
         if hasattr(self, 'backbone_map'):
             for b_id, idx in self.backbone_map.items():
                 id_to_emb[b_id] = self.embeddings[idx]
-        
+
         dim = self.embeddings.shape[1]
         results = []
         for b_id in backbone_ids:
@@ -556,7 +555,7 @@ class PhyloSpatialGraphEmbedder:
                 results.append(id_to_emb[b_id])
             else:
                 results.append(np.zeros(dim))
-        
+
         results_arr = np.array(results)
         cols: dict[str, Any] = {f"psge_{i}": results_arr[:, i] for i in range(dim)}
         cols["backbone_id"] = backbone_ids
@@ -590,7 +589,7 @@ def build_fastrp_embeddings(records: pl.DataFrame, mash_df: pl.DataFrame, split_
     all_countries = sorted(bb_country_pairs["country"].unique().to_list())
     country_to_idx = {c: i for i, c in enumerate(all_countries)}
     bb_to_idx = {bb: i for i, bb in enumerate(backbone_ids)}
-    country_matrix = np.zeros((n, len(all_countries)), dtype=np.float64)
+    country_matrix: NDArray[np.float64] = np.zeros((n, len(all_countries)), dtype=np.float64)
     for row in bb_country_pairs.to_dicts():
         bi = bb_to_idx.get(row["backbone_id"])
         ci = country_to_idx.get(row["country"])
@@ -628,3 +627,61 @@ def build_fastrp_embeddings(records: pl.DataFrame, mash_df: pl.DataFrame, split_
     for i in range(emb_dim):
         out = out.with_columns(pl.Series(f'fastrp_{i}', embeddings[:, i]))
     return out
+
+# ---------------------------------------------------------------
+# historical_homophily
+# ---------------------------------------------------------------
+def add_historical_neighbor_risk(
+    features: pl.DataFrame,
+    mash_df: pl.DataFrame,
+    train_labels: pl.DataFrame,
+    *,
+    dist_threshold: float = 0.12
+) -> pl.DataFrame:
+    """
+    Computes risk metrics based on neighbors found ONLY in the training set (pre-split).
+    Completely honest, zero-leakage proxy for discovery of novel risky variants.
+    """
+    if features.is_empty() or mash_df.is_empty() or train_labels.is_empty():
+        return features.with_columns(pl.lit(0.0).alias("neighbor_historical_spread_rate"))
+
+    # train_labels should have backbone_id and label_geo_spread
+    label_map = dict(zip(train_labels["backbone_id"], train_labels["label_geo_spread"]))
+    train_ids = set(train_labels["backbone_id"])
+
+    # Filter mash to only those connecting to training set
+    filtered_mash = mash_df.filter(
+        (pl.col("backbone_id_1").is_in(train_ids) | pl.col("backbone_id_2").is_in(train_ids)) &
+        (pl.col("mash_distance") <= dist_threshold)
+    )
+
+    risk_scores = {}
+    for bb in features["backbone_id"].to_list():
+        # Find neighbors of 'bb' that are in the training set
+        neighbors = filtered_mash.filter(
+            ((pl.col("backbone_id_1") == bb) & pl.col("backbone_id_2").is_in(train_ids)) |
+            ((pl.col("backbone_id_2") == bb) & pl.col("backbone_id_1").is_in(train_ids))
+        )
+        
+        if neighbors.is_empty():
+            risk_scores[bb] = 0.0
+            continue
+            
+        neighbor_ids = []
+        for row in neighbors.to_dicts():
+            nid = row["backbone_id_2"] if row["backbone_id_1"] == bb else row["backbone_id_1"]
+            # --- LEAK-08 FIX: Exclude self from neighbor list to prevent target leakage ---
+            if nid != bb:
+                neighbor_ids.append(nid)
+            
+        labels = [label_map.get(nid, 0.0) for nid in neighbor_ids if nid in label_map]
+        risk_scores[bb] = float(np.mean(labels)) if labels else 0.0
+
+    risk_df = pl.DataFrame({
+        "backbone_id": list(risk_scores.keys()),
+        "neighbor_historical_spread_rate": list(risk_scores.values())
+    })
+    
+    return features.join(risk_df, on="backbone_id", how="left").with_columns(
+        pl.col("neighbor_historical_spread_rate").fill_null(0.0)
+    )

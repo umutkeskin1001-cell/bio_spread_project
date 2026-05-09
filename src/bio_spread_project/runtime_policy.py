@@ -36,9 +36,10 @@ class PipelineConfig:
     split_year: int = 2020
     horizon_years: int = 3
     policy: EnforcementPolicy = field(default_factory=EnforcementPolicy)
+    triage_budget: int | None = None
 
     def __post_init__(self) -> None:
-        accepted_modes = {"auto", "raw", "geo", "input"}
+        accepted_modes = {"auto", "raw", "geo", "input", "active_radar"}
         if self.run_mode not in accepted_modes:
             raise ValueError(f"run_mode must be one of {sorted(accepted_modes)}, got {self.run_mode!r}")
         if self.horizon_years <= 0:

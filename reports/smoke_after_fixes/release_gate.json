@@ -1,0 +1,19 @@
+{
+  "allow_conditional_trend_release": true,
+  "blocked_by": [
+    "quality_gates",
+    "trend_checks",
+    "trend_evidence"
+  ],
+  "checks": {
+    "drift_checks": true,
+    "quality_gates": false,
+    "trend_checks": false,
+    "trend_evidence": false
+  },
+  "max_score": 100,
+  "policy_version": "release_gate_v2",
+  "readiness": "no_go",
+  "score": 35,
+  "trend_status": "insufficient_data"
+}

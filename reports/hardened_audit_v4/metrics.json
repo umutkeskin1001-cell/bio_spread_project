@@ -1,0 +1,63 @@
+{
+  "abstain_rate": 0.014656144306651634,
+  "average_precision": 0.8687835343065606,
+  "brier_score": 0.1707245833846566,
+  "calibration_bins": [
+    {
+      "bin_end": 0.2,
+      "bin_start": 0.0,
+      "count": 423,
+      "mean_prediction": 0.16571638744759726,
+      "observed_rate": 0.06855791962174941
+    },
+    {
+      "bin_end": 0.4,
+      "bin_start": 0.2,
+      "count": 338,
+      "mean_prediction": 0.2654657904751196,
+      "observed_rate": 0.5059171597633136
+    },
+    {
+      "bin_end": 0.6000000000000001,
+      "bin_start": 0.4,
+      "count": 71,
+      "mean_prediction": 0.46972047194364985,
+      "observed_rate": 0.9014084507042254
+    },
+    {
+      "bin_end": 0.8,
+      "bin_start": 0.6000000000000001,
+      "count": 45,
+      "mean_prediction": 0.6882633971101152,
+      "observed_rate": 0.9777777777777777
+    },
+    {
+      "bin_end": 1.0,
+      "bin_start": 0.8,
+      "count": 10,
+      "mean_prediction": 0.8705823904498772,
+      "observed_rate": 1.0
+    }
+  ],
+  "expected_calibration_error": 0.18866151570156722,
+  "external_holdout_abstain_rate": 0.029411764705882353,
+  "external_holdout_average_precision": 0.6959687371452077,
+  "external_holdout_bootstrap_average_precision_ci_high": 0.7913440290303764,
+  "external_holdout_bootstrap_average_precision_ci_low": 0.5810817827794248,
+  "external_holdout_bootstrap_confidence": 0.95,
+  "external_holdout_bootstrap_resamples": 200.0,
+  "external_holdout_bootstrap_roc_auc_ci_high": 0.8179139612382168,
+  "external_holdout_bootstrap_roc_auc_ci_low": 0.6586816899415783,
+  "external_holdout_n_backbones": 102.0,
+  "external_holdout_n_positive": 44.0,
+  "external_holdout_prevalence": 0.43137254901960786,
+  "external_holdout_roc_auc": 0.734717868338558,
+  "external_holdout_top_k_precision": 1.0,
+  "n_backbones": 887.0,
+  "n_bins": 5.0,
+  "n_positive": 318.0,
+  "prevalence": 0.35851183765501693,
+  "primary_model": "geobio_reliability_ensemble",
+  "roc_auc": 0.9100264173049928,
+  "top_k_precision": 1.0
+}

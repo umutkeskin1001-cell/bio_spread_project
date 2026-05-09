@@ -65,6 +65,15 @@ def _calibration_summary(labels: NDArray[np.int64], probs: NDArray[np.float64], 
     return {"expected_calibration_error": float(ece), "brier_score": brier, "calibration_bins": payload}
 
 
+def _validate_metric_inputs(labels: NDArray[np.int64], probabilities: NDArray[np.float64]) -> None:
+    if len(labels) != len(probabilities):
+        raise ValueError("labels and probabilities must have the same length")
+    if not np.isin(labels, [0, 1]).all():
+        raise ValueError("labels must be binary 0/1 values")
+    if not np.isfinite(probabilities).all() or np.any((probabilities < 0.0) | (probabilities > 1.0)):
+        raise ValueError("probabilities must be finite values in [0, 1]")
+
+
 def compute_metrics(
     *,
     labels: NDArray[np.int64],
@@ -74,6 +83,7 @@ def compute_metrics(
 ) -> ClassificationMetrics:
     if len(labels) == 0:
         raise ValueError("labels is empty")
+    _validate_metric_inputs(labels, probabilities)
     n_positive = int(np.sum(labels))
     prevalence = float(n_positive / len(labels))
     top_k = min(len(labels), max(10, int(round(len(labels) * 0.01))))
@@ -104,7 +114,8 @@ def bootstrap_metrics(
     n_resamples: int = 1000,
     confidence: float = 0.95,
     seed: int = 7,
-) -> dict[str, float]:
+) -> dict[str, Any]:
+    _validate_metric_inputs(labels, probabilities)
     rng = np.random.default_rng(seed)
     aucs: list[float] = []
     aps: list[float] = []
@@ -118,7 +129,12 @@ def bootstrap_metrics(
         aucs.append(_fast_auc(y, p))
         aps.append(_fast_average_precision(y, p))
     if not aucs or not aps:
-        return {}
+        return {
+            "bootstrap_status": "not_evaluated",
+            "bootstrap_reason": "insufficient_class_variation_in_resamples",
+            "bootstrap_confidence": float(confidence),
+            "bootstrap_resamples": float(n_resamples),
+        }
     alpha = (1.0 - confidence) / 2.0
     return {
         "bootstrap_confidence": float(confidence),
@@ -194,7 +210,7 @@ def bootstrap_metric_intervals(
     n_resamples: int = 1000,
     confidence: float = 0.95,
     seed: int = 7,
-) -> dict[str, float]:
+) -> dict[str, Any]:
     if not predictions:
         raise ValueError("Cannot bootstrap metrics for an empty prediction set")
     labels, probabilities, _ = labels_probabilities_from_predictions(predictions)

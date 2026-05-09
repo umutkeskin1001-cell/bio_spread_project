@@ -1,0 +1,50 @@
+{
+  "abstain_rate": 0.016177957532861477,
+  "average_precision": 0.8753525680609231,
+  "brier_score": 0.16219059625244217,
+  "calibration_bins": [
+    {
+      "bin_end": 0.2,
+      "bin_start": 0.0,
+      "count": 467,
+      "mean_prediction": 0.16371116110662134,
+      "observed_rate": 0.0728051391862955
+    },
+    {
+      "bin_end": 0.4,
+      "bin_start": 0.2,
+      "count": 351,
+      "mean_prediction": 0.2681516015740392,
+      "observed_rate": 0.47293447293447294
+    },
+    {
+      "bin_end": 0.6000000000000001,
+      "bin_start": 0.4,
+      "count": 93,
+      "mean_prediction": 0.48935155357316173,
+      "observed_rate": 0.9032258064516129
+    },
+    {
+      "bin_end": 0.8,
+      "bin_start": 0.6000000000000001,
+      "count": 61,
+      "mean_prediction": 0.6989647732400213,
+      "observed_rate": 1.0
+    },
+    {
+      "bin_end": 1.0,
+      "bin_start": 0.8,
+      "count": 17,
+      "mean_prediction": 0.8538886884967094,
+      "observed_rate": 1.0
+    }
+  ],
+  "expected_calibration_error": 0.1756008561475379,
+  "n_backbones": 989.0,
+  "n_bins": 5.0,
+  "n_positive": 362.0,
+  "prevalence": 0.3660262891809909,
+  "primary_model": "geobio_reliability_ensemble",
+  "roc_auc": 0.9096262126939649,
+  "top_k_precision": 1.0
+}

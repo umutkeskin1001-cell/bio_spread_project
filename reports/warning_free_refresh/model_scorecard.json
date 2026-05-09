@@ -1,0 +1,109 @@
+{
+  "primary_model": "geobio_reliability_ensemble",
+  "scorecard": [
+    {
+      "abstain_rate": 0.016177957532861477,
+      "average_precision": 0.8500142868037378,
+      "blocked_columns": [],
+      "bootstrap_average_precision_ci_high": 0.88016584595729,
+      "bootstrap_average_precision_ci_low": 0.8004845367742077,
+      "bootstrap_confidence": 0.95,
+      "bootstrap_resamples": 100.0,
+      "bootstrap_roc_auc_ci_high": 0.9242664171524465,
+      "bootstrap_roc_auc_ci_low": 0.8860965085394921,
+      "canary_self_test": {
+        "alarm_count": 0,
+        "auc_floor": 0.9,
+        "canary_auc": 1.0,
+        "reason": "",
+        "status": "pass"
+      },
+      "group_oof_average_precision": 0.8500142868037378,
+      "group_oof_roc_auc": 0.9062844202419661,
+      "leakage_alarm_count": 0.0,
+      "leakage_alarm_features": [],
+      "max_single_feature_auc": 0.9165146668781446,
+      "model_name": "geobio_reliability_ensemble",
+      "n_backbones": 989.0,
+      "n_positive": 362.0,
+      "oof_average_precision": 0.8500142868037378,
+      "oof_roc_auc": 0.9062844202419661,
+      "permutation_sanity": {
+        "alarm_count": 0,
+        "auc_ceiling": 0.6,
+        "n_trials": 8,
+        "permutation_auc_max": 0.522418867359257,
+        "permutation_auc_mean": 0.4878791183131107,
+        "permutation_auc_values": [
+          0.48159040242494733,
+          0.5032030100363918,
+          0.5197577696123785,
+          0.45353873130843175,
+          0.4737040365856882,
+          0.4990990157462969,
+          0.44972111343149435,
+          0.522418867359257
+        ],
+        "reason": "",
+        "status": "pass"
+      },
+      "prevalence": 0.3660262891809909,
+      "roc_auc": 0.9062844202419661,
+      "single_feature_scan_error_count": 0.0,
+      "single_feature_scan_errors": [],
+      "status": "pass",
+      "suspicious_feature_count": 0.0,
+      "temporal_holdout_abstain_rate": 0.01125703564727955,
+      "temporal_holdout_average_precision": 0.9330436322054745,
+      "temporal_holdout_n_backbones": 533.0,
+      "temporal_holdout_n_positive": 218.0,
+      "temporal_holdout_prevalence": 0.4090056285178236,
+      "temporal_holdout_roc_auc": 0.949592252803262,
+      "temporal_holdout_top_k_precision": 1.0,
+      "top_features": [
+        {
+          "feature": "country_slope_train",
+          "score": 1.9459809359489917
+        },
+        {
+          "feature": "synergy_coherence_score__country_slope_train",
+          "score": 1.7275991061954596
+        },
+        {
+          "feature": "psge_1",
+          "score": 1.0523124808015343
+        },
+        {
+          "feature": "recent_expansion_flag",
+          "score": 1.015968157008209
+        },
+        {
+          "feature": "psge_4",
+          "score": 0.9480097160599494
+        },
+        {
+          "feature": "psge_7",
+          "score": 0.7193125402768908
+        },
+        {
+          "feature": "psge_0",
+          "score": 0.6941755264643014
+        },
+        {
+          "feature": "psge_2",
+          "score": 0.4696037814247897
+        },
+        {
+          "feature": "synergy_T_eff_norm__H_obs_specialization_norm",
+          "score": 0.4687596259538119
+        },
+        {
+          "feature": "orit_support",
+          "score": 0.41842503983607604
+        }
+      ],
+      "top_k_precision": 1.0,
+      "validation_mode": "spatial_group_cv_stacked"
+    }
+  ]
+}

@@ -1,0 +1,271 @@
+{
+  "all_quality_gates_passed": true,
+  "environment": {
+    "git_commit": "f6daf02d33aeafeeeabb2213d88162d67ba77770",
+    "numpy": "1.26.4",
+    "polars": "0.20.31",
+    "python": "3.9.6",
+    "scikit_learn": "1.6.1",
+    "ssl_backend": "LibreSSL 2.8.3"
+  },
+  "input_hashes": {
+    "geo_spread_features": "5d0b631336fd67cba06d6b3cecf2deec433dcbe22152d126f6d7334f55b2e6b4"
+  },
+  "input_mode": "geo_reliability_feature_surface",
+  "leakage_audit": {
+    "max_single_feature_auc": 0.9165146668781446,
+    "status": "pass",
+    "suspicious_feature_count": 0.0
+  },
+  "primary_model": "geobio_reliability_ensemble",
+  "project": "BioSpread",
+  "quality_gate_details": {
+    "adversarial_leakage_scan_passed": {
+      "observed": "count=0, max_auc=0.917",
+      "passed": true,
+      "reason": "",
+      "status": "pass",
+      "threshold": "max_count=0, max_auc=0.95"
+    },
+    "auc_at_least_target": {
+      "observed": 0.9077735775903848,
+      "passed": true,
+      "reason": "",
+      "status": "pass",
+      "threshold": 0.82
+    },
+    "average_precision_above_prevalence": {
+      "observed": 0.8483103105277765,
+      "passed": true,
+      "reason": "",
+      "status": "pass",
+      "threshold": 0.3660262891809909
+    },
+    "bootstrap_auc_ci_low_at_least_target": {
+      "observed": 0.8892343480832219,
+      "passed": true,
+      "reason": "",
+      "status": "pass",
+      "threshold": 0.78
+    },
+    "bootstrap_average_precision_ci_low_above_prevalence": {
+      "observed": 0.7971877465957575,
+      "passed": true,
+      "reason": "",
+      "status": "pass",
+      "threshold": 0.3660262891809909
+    },
+    "calibration_ece_at_most_target": {
+      "observed": 0.03697211624014442,
+      "passed": true,
+      "reason": "",
+      "status": "pass",
+      "threshold": 0.05
+    },
+    "cross_validated": {
+      "observed": "spatial_group_cv_stacked",
+      "passed": true,
+      "reason": "",
+      "status": "pass",
+      "threshold": "cv_variants"
+    },
+    "external_holdout_auc_at_least_target": {
+      "passed": true,
+      "reason": "skipped",
+      "status": "pass"
+    },
+    "feature_lineage_passed": {
+      "observed": "status=pass, unknown=0",
+      "passed": true,
+      "reason": "",
+      "status": "pass",
+      "threshold": "status=pass, unknown<=0"
+    },
+    "group_auc_at_least_target": {
+      "observed": 0.9077735775903848,
+      "passed": true,
+      "reason": "",
+      "status": "pass",
+      "threshold": 0.8
+    },
+    "leakage_audit_passed": {
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    "temporal_consistency_passed": {
+      "observed": "pass",
+      "passed": true,
+      "reason": "",
+      "status": "pass",
+      "threshold": "pass_or_not_evaluated"
+    },
+    "temporal_holdout_auc_at_least_target": {
+      "observed": 0.9489296636085627,
+      "passed": true,
+      "reason": "",
+      "status": "pass",
+      "threshold": 0.78
+    }
+  },
+  "quality_gates": {
+    "adversarial_leakage_scan_passed": true,
+    "auc_at_least_target": true,
+    "average_precision_above_prevalence": true,
+    "bootstrap_auc_ci_low_at_least_target": true,
+    "bootstrap_average_precision_ci_low_above_prevalence": true,
+    "calibration_ece_at_most_target": true,
+    "cross_validated": true,
+    "external_holdout_auc_at_least_target": true,
+    "feature_lineage_passed": true,
+    "group_auc_at_least_target": true,
+    "leakage_audit_passed": true,
+    "temporal_consistency_passed": true,
+    "temporal_holdout_auc_at_least_target": true
+  },
+  "quality_thresholds": {
+    "auc_min": 0.82,
+    "average_precision_above_prevalence": true,
+    "bootstrap_auc_ci_low_min": 0.78,
+    "bootstrap_average_precision_ci_low_above_prevalence": true,
+    "calibration_ece_max": 0.05,
+    "external_holdout_auc_min": 0.78,
+    "external_holdout_required": false,
+    "group_auc_min": 0.8,
+    "max_single_feature_auc_max": 0.95,
+    "suspicious_feature_count_max": 0,
+    "temporal_holdout_auc_min": 0.78
+  },
+  "run_id": "84b3d5c4-7d90-4c55-81b4-5c56cb271d3d",
+  "timestamp": "2026-05-05T20:50:11.077727",
+  "validation": {
+    "average_precision": 0.8483103105277765,
+    "bootstrap_average_precision_ci_high": 0.8795050906957402,
+    "bootstrap_average_precision_ci_low": 0.7971877465957575,
+    "bootstrap_roc_auc_ci_high": 0.9259636529200999,
+    "bootstrap_roc_auc_ci_low": 0.8892343480832219,
+    "brier_score": 0.11898531163465544,
+    "calibration_bins": [
+      {
+        "bin_end": 0.2,
+        "bin_start": 0.0,
+        "count": 496,
+        "mean_prediction": 0.09946752314358547,
+        "observed_rate": 0.07862903225806452
+      },
+      {
+        "bin_end": 0.4,
+        "bin_start": 0.2,
+        "count": 148,
+        "mean_prediction": 0.29365926348995647,
+        "observed_rate": 0.30405405405405406
+      },
+      {
+        "bin_end": 0.6000000000000001,
+        "bin_start": 0.4,
+        "count": 110,
+        "mean_prediction": 0.5013658518821875,
+        "observed_rate": 0.6818181818181818
+      },
+      {
+        "bin_end": 0.8,
+        "bin_start": 0.6000000000000001,
+        "count": 73,
+        "mean_prediction": 0.7118112485992228,
+        "observed_rate": 0.7671232876712328
+      },
+      {
+        "bin_end": 1.0,
+        "bin_start": 0.8,
+        "count": 162,
+        "mean_prediction": 0.9123676995900117,
+        "observed_rate": 0.9074074074074074
+      }
+    ],
+    "expected_calibration_error": 0.03697211624014442,
+    "max_single_feature_auc": 0.9165146668781446,
+    "mode": "spatial_group_cv_stacked",
+    "n_backbones": 989,
+    "n_positive": 362,
+    "prevalence": 0.3660262891809909,
+    "roc_auc": 0.9077735775903848,
+    "suspicious_feature_count": 0,
+    "top_features": [
+      {
+        "feature": "country_slope_train",
+        "score": 1.9465713789151395
+      },
+      {
+        "feature": "synergy_coherence_score__country_slope_train",
+        "score": 1.7292849461604662
+      },
+      {
+        "feature": "psge_1",
+        "score": 1.0534972984733078
+      },
+      {
+        "feature": "recent_expansion_flag",
+        "score": 1.015540740656243
+      },
+      {
+        "feature": "psge_4",
+        "score": 0.9488026004088778
+      },
+      {
+        "feature": "psge_7",
+        "score": 0.719040852916785
+      },
+      {
+        "feature": "psge_0",
+        "score": 0.6937648745436812
+      },
+      {
+        "feature": "psge_2",
+        "score": 0.46804824323258976
+      },
+      {
+        "feature": "synergy_T_eff_norm__H_obs_specialization_norm",
+        "score": 0.46736195231393496
+      },
+      {
+        "feature": "orit_support",
+        "score": 0.41684239532676803
+      }
+    ],
+    "tracks": {
+      "adversarial_leakage": {
+        "max_single_feature_auc": 0.9165146668781446,
+        "status": "evaluated",
+        "suspicious_feature_count": 0.0
+      },
+      "external_holdout": {
+        "status": "not_evaluated"
+      },
+      "group_oof": {
+        "average_precision": 0.8483103105277765,
+        "roc_auc": 0.9077735775903848,
+        "status": "evaluated"
+      },
+      "oof": {
+        "average_precision": 0.8483103105277765,
+        "bootstrap_average_precision_ci_high": 0.8795050906957402,
+        "bootstrap_average_precision_ci_low": 0.7971877465957575,
+        "bootstrap_roc_auc_ci_high": 0.9259636529200999,
+        "bootstrap_roc_auc_ci_low": 0.8892343480832219,
+        "brier_score": 0.11898531163465544,
+        "expected_calibration_error": 0.03697211624014442,
+        "n_backbones": 989.0,
+        "n_positive": 362.0,
+        "prevalence": 0.3660262891809909,
+        "roc_auc": 0.9077735775903848,
+        "status": "evaluated"
+      },
+      "temporal_holdout": {
+        "average_precision": 0.9361487483338856,
+        "n_backbones": 533.0,
+        "roc_auc": 0.9489296636085627,
+        "status": "evaluated"
+      }
+    }
+  }
+}

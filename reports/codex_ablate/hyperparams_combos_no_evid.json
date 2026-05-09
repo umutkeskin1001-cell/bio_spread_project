@@ -1,0 +1,92 @@
+[
+  {
+    "average_precision": 0.9034613812418439,
+    "brier_score": 0.09425074586565345,
+    "expected_calibration_error": 0.012590836148693335,
+    "name": "hgb_depth4_rf300",
+    "params": {
+      "HGB_MAX_DEPTH": 4,
+      "N_ESTIMATORS_RF": 300
+    },
+    "roc_auc": 0.9267449135143233,
+    "seconds": 4.11,
+    "status": "pass",
+    "temporal_holdout_average_precision": 0.7655871594071713,
+    "temporal_holdout_roc_auc": 0.9422037422037423
+  },
+  {
+    "average_precision": 0.905141446595517,
+    "brier_score": 0.09423226409899543,
+    "expected_calibration_error": 0.012016682394752181,
+    "name": "hgb_depth4_l2_0",
+    "params": {
+      "HGB_L2_REG": 0.0,
+      "HGB_MAX_DEPTH": 4
+    },
+    "roc_auc": 0.9287209107651097,
+    "seconds": 3.479,
+    "status": "pass",
+    "temporal_holdout_average_precision": 0.7655871594071713,
+    "temporal_holdout_roc_auc": 0.9422037422037423
+  },
+  {
+    "average_precision": 0.902062365688565,
+    "brier_score": 0.09445110724066019,
+    "expected_calibration_error": 0.00886203471338262,
+    "name": "hgb_depth4_leaf10",
+    "params": {
+      "HGB_MAX_DEPTH": 4,
+      "HGB_MIN_SAMPLES_LEAF": 10
+    },
+    "roc_auc": 0.9261501317331501,
+    "seconds": 3.524,
+    "status": "pass",
+    "temporal_holdout_average_precision": 0.7655871594071713,
+    "temporal_holdout_roc_auc": 0.9422037422037423
+  },
+  {
+    "average_precision": 0.9045720215999256,
+    "brier_score": 0.09324871740330343,
+    "expected_calibration_error": 0.016821118933693917,
+    "name": "hgb_depth4_logreg1",
+    "params": {
+      "HGB_MAX_DEPTH": 4,
+      "LOGREG_C_DEFAULT": 1.0
+    },
+    "roc_auc": 0.928370650382863,
+    "seconds": 3.471,
+    "status": "pass",
+    "temporal_holdout_average_precision": 0.7683173061096271,
+    "temporal_holdout_roc_auc": 0.9484407484407484
+  },
+  {
+    "average_precision": 0.9026293051875955,
+    "brier_score": 0.09350657581546092,
+    "expected_calibration_error": 0.00711596454263903,
+    "name": "hgb_depth4_logreg2",
+    "params": {
+      "HGB_MAX_DEPTH": 4,
+      "LOGREG_C_DEFAULT": 2.0
+    },
+    "roc_auc": 0.9278727960030665,
+    "seconds": 3.474,
+    "status": "pass",
+    "temporal_holdout_average_precision": 0.7783978687359305,
+    "temporal_holdout_roc_auc": 0.9546777546777547
+  },
+  {
+    "average_precision": 0.9049519587960331,
+    "brier_score": 0.09298943049904636,
+    "expected_calibration_error": 0.00911580395204502,
+    "name": "hgb_depth4_ridge03",
+    "params": {
+      "HGB_MAX_DEPTH": 4,
+      "RIDGE_ALPHA": 0.3
+    },
+    "roc_auc": 0.9280093755231876,
+    "seconds": 3.465,
+    "status": "pass",
+    "temporal_holdout_average_precision": 0.7655871594071713,
+    "temporal_holdout_roc_auc": 0.9422037422037423
+  }
+]

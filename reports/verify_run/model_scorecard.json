@@ -1,0 +1,18 @@
+{
+  "primary_model": "mobility",
+  "scorecard": [
+    {
+      "abstain_rate": 0.0,
+      "average_precision": 0.5,
+      "model_name": "mobility",
+      "n_backbones": 5.0,
+      "n_positive": 2.0,
+      "oof_average_precision": 0.5,
+      "oof_roc_auc": 0.5,
+      "prevalence": 0.4,
+      "roc_auc": 0.5,
+      "top_k_precision": 0.4,
+      "validation_mode": "cross_validated"
+    }
+  ]
+}
