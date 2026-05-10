@@ -1,0 +1,1 @@
+{"all_quality_gates_passed": false, "average_precision": 0.7283831341765236, "external_holdout_roc_auc": 0.7813479623824452, "input_mode": "geo_reliability_feature_surface", "max_single_feature_auc": 0.5, "model_name": "biospread_omega_v15", "roc_auc": 0.8192348929491218, "suspicious_feature_count": 0.0, "timestamp_utc": "2026-05-10T16:59:01.080072+00:00"}

@@ -1,0 +1,370 @@
+{
+  "blocked_by": [
+    "trend_failed"
+  ],
+  "drift_checks": [
+    {
+      "detail": {
+        "baseline": 0.9779629126887169,
+        "current": 0.9780727978264289,
+        "delta": 0.0001098851377119292,
+        "max_drop": 0.03,
+        "status": "pass",
+        "threshold_name": "roc_auc_max_drop"
+      },
+      "name": "drift_roc_auc",
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    {
+      "detail": {
+        "baseline": 0.7210010053085485,
+        "current": 0.7168550321810836,
+        "delta": -0.004145973127464897,
+        "max_drop": 0.04,
+        "status": "pass",
+        "threshold_name": "average_precision_max_drop"
+      },
+      "name": "drift_average_precision",
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    {
+      "detail": {
+        "baseline": 0.9779629126887169,
+        "current": 0.9780727978264289,
+        "delta": 0.0001098851377119292,
+        "max_drop": 0.04,
+        "status": "pass",
+        "threshold_name": "group_auc_max_drop"
+      },
+      "name": "drift_group_oof_roc_auc",
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    {
+      "detail": {
+        "baseline": 0.9779629126887169,
+        "current": 0.9780727978264289,
+        "delta": 0.0001098851377119292,
+        "max_drop": 0.04,
+        "status": "pass",
+        "threshold_name": "temporal_auc_max_drop"
+      },
+      "name": "drift_temporal_holdout_roc_auc",
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    {
+      "detail": {
+        "baseline": 0.8213166144200627,
+        "current": 0.8232758620689655,
+        "delta": 0.001959247648902873,
+        "max_drop": 0.04,
+        "status": "pass",
+        "threshold_name": "external_holdout_auc_max_drop"
+      },
+      "name": "drift_external_holdout_roc_auc",
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    {
+      "detail": {
+        "baseline": 0.5,
+        "current": 0.5,
+        "delta": 0.0,
+        "max_increase": 0.03,
+        "status": "pass"
+      },
+      "name": "drift_max_single_feature_auc",
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    {
+      "detail": {
+        "baseline": 0.0,
+        "current": 0.0,
+        "delta": 0.0,
+        "max_increase": 0.0,
+        "status": "pass"
+      },
+      "name": "drift_suspicious_feature_count",
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    }
+  ],
+  "policy_flags": {
+    "allow_conditional_release": true,
+    "fail_on_drift_fail": false,
+    "fail_on_quality_gates": false,
+    "fail_on_trend_fail": false,
+    "require_trend_evidence": false
+  },
+  "quality_checks": [
+    {
+      "detail": {
+        "observed": "cross_validated",
+        "passed": true,
+        "reason": "",
+        "status": "pass",
+        "threshold": "cv_variants"
+      },
+      "name": "cross_validated",
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    {
+      "detail": {
+        "observed": 0.9780727978264289,
+        "passed": true,
+        "reason": "",
+        "status": "pass",
+        "threshold": 0.82
+      },
+      "name": "auc_at_least_target",
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    {
+      "detail": {
+        "observed": 0.7168550321810836,
+        "passed": true,
+        "reason": "",
+        "status": "pass",
+        "threshold": 0.05165692007797271
+      },
+      "name": "average_precision_above_prevalence",
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    {
+      "detail": {
+        "observed": 0.027340382240427796,
+        "passed": true,
+        "reason": "",
+        "status": "pass",
+        "threshold": 0.15
+      },
+      "name": "calibration_ece_at_most_target",
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    {
+      "detail": {
+        "observed": 0.0,
+        "passed": true,
+        "reason": "",
+        "status": "pass",
+        "threshold": 0.25
+      },
+      "name": "calibration_bin_gap_at_most_target",
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    {
+      "detail": {
+        "observed": 0.9728817472969293,
+        "passed": true,
+        "reason": "",
+        "status": "pass",
+        "threshold": 0.7
+      },
+      "name": "bootstrap_auc_ci_low_at_least_target",
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    {
+      "detail": {
+        "observed": 0.6668494678337483,
+        "passed": true,
+        "reason": "",
+        "status": "pass",
+        "threshold": 0.05165692007797271
+      },
+      "name": "bootstrap_average_precision_ci_low_above_prevalence",
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    {
+      "detail": {
+        "observed": 0.9780727978264289,
+        "passed": true,
+        "reason": "",
+        "status": "pass",
+        "threshold": 0.75
+      },
+      "name": "group_auc_at_least_target",
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    {
+      "detail": {
+        "observed": 0.9780727978264289,
+        "passed": true,
+        "reason": "",
+        "status": "pass",
+        "threshold": 0.75
+      },
+      "name": "temporal_holdout_auc_at_least_target",
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    {
+      "detail": {
+        "passed": true,
+        "reason": "skipped",
+        "status": "pass"
+      },
+      "name": "temporal_consistency_passed",
+      "passed": true,
+      "reason": "skipped",
+      "status": "pass"
+    },
+    {
+      "detail": {
+        "passed": true,
+        "reason": "skipped",
+        "status": "pass"
+      },
+      "name": "feature_lineage_passed",
+      "passed": true,
+      "reason": "skipped",
+      "status": "pass"
+    },
+    {
+      "detail": {
+        "observed": 0,
+        "passed": true,
+        "reason": "",
+        "status": "pass",
+        "threshold": 0
+      },
+      "name": "disabled_feature_leak_passed",
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    {
+      "detail": {
+        "passed": true,
+        "reason": "skipped",
+        "status": "pass"
+      },
+      "name": "external_holdout_auc_at_least_target",
+      "passed": true,
+      "reason": "skipped",
+      "status": "pass"
+    },
+    {
+      "detail": {
+        "passed": true,
+        "reason": "",
+        "status": "pass"
+      },
+      "name": "leakage_audit_passed",
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    {
+      "detail": {
+        "observed": "count=0, max_auc=0.500",
+        "passed": true,
+        "reason": "",
+        "status": "pass",
+        "threshold": "max_count=0, max_auc=0.95"
+      },
+      "name": "adversarial_leakage_scan_passed",
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    {
+      "detail": {
+        "passed": true,
+        "reason": "skipped",
+        "status": "pass"
+      },
+      "name": "low_knownness_slice_auc_at_least_target",
+      "passed": true,
+      "reason": "skipped",
+      "status": "pass"
+    },
+    {
+      "detail": {
+        "passed": true,
+        "reason": "skipped",
+        "status": "pass"
+      },
+      "name": "low_knownness_slice_ap_at_least_target",
+      "passed": true,
+      "reason": "skipped",
+      "status": "pass"
+    },
+    {
+      "detail": {
+        "passed": true,
+        "reason": "skipped",
+        "status": "pass"
+      },
+      "name": "low_knownness_slice_ece_at_most_target",
+      "passed": true,
+      "reason": "skipped",
+      "status": "pass"
+    }
+  ],
+  "readiness": "no_go",
+  "trend_checks": [
+    {
+      "detail": {
+        "delta": -0.0024912684407729646,
+        "passed": true,
+        "previous_mean": 0.980512086287843,
+        "recent_mean": 0.9780208178470701
+      },
+      "name": "trend_roc_auc",
+      "passed": true,
+      "reason": "",
+      "status": "pass"
+    },
+    {
+      "detail": {
+        "delta": -0.030448551610815278,
+        "passed": false,
+        "previous_mean": 0.7492442605359082,
+        "recent_mean": 0.7187957089250929
+      },
+      "name": "trend_average_precision",
+      "passed": false,
+      "reason": "",
+      "status": "fail"
+    },
+    {
+      "detail": {
+        "min_required": 0.9,
+        "passed": false,
+        "recent_rate": 0.0
+      },
+      "name": "trend_gate_pass_rate",
+      "passed": false,
+      "reason": "",
+      "status": "fail"
+    }
+  ]
+}

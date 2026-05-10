@@ -1,0 +1,25 @@
+{
+  "primary_model": "BioSpread",
+  "scorecard": [
+    {
+      "abstain_rate": 0.41000649772579595,
+      "average_precision": 0.2505879636850384,
+      "brier_score": 0.1731554589240933,
+      "expected_calibration_error": 0.326013678857903,
+      "max_single_feature_auc": 0.5,
+      "model_name": "BioSpread",
+      "n_backbones": 6156.0,
+      "n_positive": 318.0,
+      "oof_enhanced_average_precision": 0.2505879636850384,
+      "oof_enhanced_roc_auc": 0.9096598731796234,
+      "oof_raw_average_precision": 0.25102575399734744,
+      "oof_raw_roc_auc": 0.9108271334414948,
+      "oof_raw_top_k_precision": 0.1774193548387097,
+      "prevalence": 0.05165692007797271,
+      "roc_auc": 0.9096598731796234,
+      "status": "pass",
+      "suspicious_feature_count": 0,
+      "top_k_precision": 0.1935483870967742
+    }
+  ]
+}

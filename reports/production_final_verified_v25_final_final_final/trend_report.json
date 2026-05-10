@@ -1,0 +1,15 @@
+{
+  "all_passed": true,
+  "checks": {
+    "trend_evidence": {
+      "all_passed": false,
+      "available_entries": 0,
+      "required_entries": 20,
+      "status": "insufficient_data",
+      "trend_evidence_sufficient": false,
+      "window_size": 10
+    }
+  },
+  "status": "insufficient_data",
+  "trend_evidence_sufficient": false
+}

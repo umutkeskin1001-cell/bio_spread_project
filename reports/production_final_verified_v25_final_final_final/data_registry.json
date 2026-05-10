@@ -1,0 +1,7 @@
+{
+  "input_count": 1,
+  "inputs": {
+    "primary": "data/project_inputs/geo_spread/inputs/backbone_scored_train_only.tsv"
+  },
+  "project": "BioSpread"
+}

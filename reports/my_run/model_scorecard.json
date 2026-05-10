@@ -1,0 +1,35 @@
+{
+  "primary_model": "BioSpread",
+  "scorecard": [
+    {
+      "abstain_rate": 0.05880441845354126,
+      "average_precision": 0.7168550321810836,
+      "bootstrap_average_precision_ci_high": 0.7627832743549336,
+      "bootstrap_average_precision_ci_low": 0.6668494678337483,
+      "bootstrap_confidence": 0.95,
+      "bootstrap_resamples": 100.0,
+      "bootstrap_roc_auc_ci_high": 0.9817929518842472,
+      "bootstrap_roc_auc_ci_low": 0.9728817472969293,
+      "brier_score": 0.028316693097158268,
+      "expected_calibration_error": 0.027340382240427796,
+      "group_oof_average_precision": 0.7168550321810836,
+      "group_oof_roc_auc": 0.9780727978264289,
+      "max_single_feature_auc": 0.5,
+      "model_name": "BioSpread",
+      "n_backbones": 6156.0,
+      "n_positive": 318.0,
+      "oof_average_precision": 0.7168550321810836,
+      "oof_roc_auc": 0.9780727978264289,
+      "prevalence": 0.05165692007797271,
+      "roc_auc": 0.9780727978264289,
+      "status": "pass",
+      "suspicious_feature_count": 0,
+      "temporal_holdout_average_precision": 0.7168550321810836,
+      "temporal_holdout_expected_calibration_error": 0.027340382240427796,
+      "temporal_holdout_n_backbones": 6156,
+      "temporal_holdout_roc_auc": 0.9780727978264289,
+      "top_k_precision": 0.8709677419354839,
+      "validation_mode": "cross_validated"
+    }
+  ]
+}

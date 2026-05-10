@@ -1,0 +1,6 @@
+{
+    "roc_auc": 0.8436520376175549,
+    "avg_precision": 0.8073274348575112,
+    "expected_calibration_error": 0.24806758936713724,
+    "gnn_trigger_rate": 0.0
+}

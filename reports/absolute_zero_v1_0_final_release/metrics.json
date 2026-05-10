@@ -1,0 +1,75 @@
+{
+  "abstain_rate": 0.3602988953866147,
+  "average_precision": 0.2993671895503133,
+  "brier_score": 0.156596923894788,
+  "calibration_bins": [
+    {
+      "bin_end": 0.2,
+      "bin_start": 0.0,
+      "count": 3635,
+      "mean_prediction": 0.19314171160677604,
+      "observed_rate": 0.0005502063273727648
+    },
+    {
+      "bin_end": 0.4,
+      "bin_start": 0.2,
+      "count": 343,
+      "mean_prediction": 0.2573732117261553,
+      "observed_rate": 0.014577259475218658
+    },
+    {
+      "bin_end": 0.6000000000000001,
+      "bin_start": 0.4,
+      "count": 583,
+      "mean_prediction": 0.5188401635883194,
+      "observed_rate": 0.024013722126929673
+    },
+    {
+      "bin_end": 0.8,
+      "bin_start": 0.6000000000000001,
+      "count": 1595,
+      "mean_prediction": 0.6968821247543288,
+      "observed_rate": 0.18620689655172415
+    },
+    {
+      "bin_end": 1.0,
+      "bin_start": 0.8,
+      "count": 0,
+      "mean_prediction": null,
+      "observed_rate": null
+    }
+  ],
+  "expected_calibration_error": 0.3064262406867847,
+  "external_holdout_abstain_rate": 0.9411764705882353,
+  "external_holdout_average_precision": 0.6447684827403277,
+  "external_holdout_bootstrap_average_precision_ci_high": 0.8012385879230316,
+  "external_holdout_bootstrap_average_precision_ci_low": 0.5279405436526627,
+  "external_holdout_bootstrap_confidence": 0.95,
+  "external_holdout_bootstrap_resamples": 200.0,
+  "external_holdout_bootstrap_roc_auc_ci_high": 0.8486432587823667,
+  "external_holdout_bootstrap_roc_auc_ci_low": 0.6553104392186139,
+  "external_holdout_knownness_slice_abstain_rate": 1.0,
+  "external_holdout_knownness_slice_average_precision": 0.5857142857142857,
+  "external_holdout_knownness_slice_brier_score": 0.3372435477122909,
+  "external_holdout_knownness_slice_expected_calibration_error": 0.4063506239936466,
+  "external_holdout_knownness_slice_n": 21.0,
+  "external_holdout_knownness_slice_prevalence": 0.23809523809523808,
+  "external_holdout_knownness_slice_roc_auc": 0.7625,
+  "external_holdout_knownness_slice_threshold": 0.5112716794013977,
+  "external_holdout_knownness_slice_top_k_precision": 0.4,
+  "external_holdout_n_backbones": 102.0,
+  "external_holdout_n_positive": 44.0,
+  "external_holdout_prevalence": 0.43137254901960786,
+  "external_holdout_roc_auc": 0.7496081504702194,
+  "external_holdout_top_k_precision": 0.6,
+  "max_single_feature_auc": 0.5,
+  "n_backbones": 6156.0,
+  "n_bins": 5.0,
+  "n_positive": 318.0,
+  "prevalence": 0.05165692007797271,
+  "primary_model": "BioSpread",
+  "roc_auc": 0.9197862734071502,
+  "status": "pass",
+  "suspicious_feature_count": 0,
+  "top_k_precision": 0.3064516129032258
+}

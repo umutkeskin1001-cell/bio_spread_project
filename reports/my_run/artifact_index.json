@@ -1,0 +1,18 @@
+{
+  "audit": "audit.json",
+  "benchmark": "benchmark.json",
+  "dashboard": "dashboard.html",
+  "drift_report": "drift_report.json",
+  "features": "features.csv",
+  "features_parquet": "features.parquet",
+  "governance_report": "governance_report.json",
+  "metrics": "metrics.json",
+  "model": "model.joblib",
+  "model_card": "model_card.md",
+  "performance_summary": "performance_summary.png",
+  "predictions": "predictions.csv",
+  "predictions_parquet": "predictions.parquet",
+  "release_gate": "release_gate.json",
+  "risk_table": "risk_table.png",
+  "trend_report": "trend_report.json"
+}

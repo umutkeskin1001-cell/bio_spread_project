@@ -1,0 +1,8 @@
+{
+    "ROC_AUC": 0.509247311827957,
+    "Average_Precision": 0.55217489196354,
+    "False_Positives": 60,
+    "False_Negatives": 1,
+    "True_Positives": 74,
+    "True_Negatives": 2
+}

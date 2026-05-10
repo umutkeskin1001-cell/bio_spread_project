@@ -1,0 +1,24 @@
+{
+  "all_passed": false,
+  "checks": {
+    "trend_average_precision": {
+      "delta": -0.030448551610815278,
+      "passed": false,
+      "previous_mean": 0.7492442605359082,
+      "recent_mean": 0.7187957089250929
+    },
+    "trend_gate_pass_rate": {
+      "min_required": 0.9,
+      "passed": false,
+      "recent_rate": 0.0
+    },
+    "trend_roc_auc": {
+      "delta": -0.0024912684407729646,
+      "passed": true,
+      "previous_mean": 0.980512086287843,
+      "recent_mean": 0.9780208178470701
+    }
+  },
+  "status": "ok",
+  "trend_evidence_sufficient": true
+}

@@ -1,0 +1,20 @@
+{
+  "primary_model": "BioSpread",
+  "scorecard": [
+    {
+      "abstain_rate": 0.4093567251461988,
+      "average_precision": 0.38763494863755266,
+      "brier_score": 0.1702384606900702,
+      "expected_calibration_error": 0.327545340191706,
+      "max_single_feature_auc": 0.5,
+      "model_name": "BioSpread",
+      "n_backbones": 6156.0,
+      "n_positive": 318.0,
+      "prevalence": 0.05165692007797271,
+      "roc_auc": 0.9258318412655321,
+      "status": "pass",
+      "suspicious_feature_count": 0,
+      "top_k_precision": 0.5483870967741935
+    }
+  ]
+}
