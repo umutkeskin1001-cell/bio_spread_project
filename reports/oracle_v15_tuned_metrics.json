@@ -1,0 +1,12 @@
+{
+    "OOF_ROC_AUC": 0.8040489441331032,
+    "OOF_Average_Precision": 0.18730474472377678,
+    "OOF_Recall": 0.5911949685534591,
+    "OOF_Precision": 0.1724770642201835,
+    "External_ROC_AUC": 0.7721394984326019,
+    "External_Average_Precision": 0.7465495942836151,
+    "External_Recall": 0.6818181818181818,
+    "External_Precision": 0.6976744186046512,
+    "External_False_Positives": 13,
+    "External_False_Negatives": 14
+}
