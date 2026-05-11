@@ -8,6 +8,7 @@ torch_geometric<3,>=2.0
 scipy<2,>=1.11
 PyYAML>=6.0
 click>=8.0
+pydantic>=2.0
 
 [dev]
 pytest<10,>=9.0.3

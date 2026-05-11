@@ -13,6 +13,7 @@ Requires-Dist: torch_geometric<3,>=2.0
 Requires-Dist: scipy<2,>=1.11
 Requires-Dist: PyYAML>=6.0
 Requires-Dist: click>=8.0
+Requires-Dist: pydantic>=2.0
 Provides-Extra: dev
 Requires-Dist: pytest<10,>=9.0.3; extra == "dev"
 Requires-Dist: pytest-cov<8,>=5; extra == "dev"

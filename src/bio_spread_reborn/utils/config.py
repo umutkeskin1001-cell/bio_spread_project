@@ -1,15 +1,17 @@
 import yaml
 from pathlib import Path
-from typing import Dict, Any
+from bio_spread_reborn.config.schema import Config
 
-def load_config(config_path: str = "config/default.yaml") -> Dict[str, Any]:
+def load_config(config_path: str = "config/default.yaml") -> Config:
     """
-    Load YAML configuration file.
+    Load and validate YAML configuration file using Pydantic.
     """
     path = Path(config_path)
     if not path.exists():
         raise FileNotFoundError(f"Configuration file not found: {config_path}")
     
     with open(path, 'r') as f:
-        config = yaml.safe_load(f)
-    return config
+        data = yaml.safe_load(f)
+    
+    # Pydantic validation
+    return Config(**data)

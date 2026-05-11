@@ -1,13 +1,17 @@
 data:
   backbones_path: "data/raw/plasmid_backbones.tsv"
   amr_path: "data/raw/amr.tsv"
-  records_path: "data/project_inputs/scores/backbone_scored_infilled.tsv"
+  records_path: "data/project_inputs/silver/plasmid_backbones.tsv"
   split_year: 2020
+  snapshot_cache_dir: "data/snapshots"
 
 model:
   emb_dim: 256
   hidden_dim: 512
   max_genes: 300
+  num_heads: 4
+  num_layers: 2
+  time_freqs: 12
 
 training:
   batch_size: 128

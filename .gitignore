@@ -23,6 +23,9 @@ output/
 playwright/
 fresh_run_outputs/
 catboost_info/
+artifacts/
+predictions.json
+data/snapshots/
 
 # Data and large files
 data/raw/
