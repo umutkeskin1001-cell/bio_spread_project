@@ -1,8 +1,0 @@
-{
-  "input_count": 2,
-  "inputs": {
-    "external_holdout": "data/project_inputs/geo_spread/inputs/external_holdout.tsv",
-    "geo_spread_features": "data/project_inputs/geo_spread/inputs/backbone_scored_train_only.tsv"
-  },
-  "project": "BioSpread"
-}

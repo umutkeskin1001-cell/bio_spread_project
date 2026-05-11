@@ -1,8 +1,0 @@
-{
-  "input_count": 2,
-  "inputs": {
-    "amr": "data/project_inputs/raw/amr.tsv",
-    "geo_spread_features": "data/project_inputs/scores/backbone_scored.tsv"
-  },
-  "project": "BioSpread"
-}
