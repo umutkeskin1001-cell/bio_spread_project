@@ -155,23 +155,23 @@ class SovereignOracleNet(nn.Module):
 
 def evidential_loss(alpha: torch.Tensor, y: torch.Tensor, lambda_reg: float = 0.1) -> torch.Tensor:
     """
-    Dirichlet Evidential Loss for binary classification.
-    y: [B] containing 0 or 1 labels.
-    alpha: [B, 2]
+    Corrected Evidential Loss (Dirichlet).
+    Ensures that correct-class evidence is preserved while punishing incorrect confidence.
     """
-    y_one_hot = F.one_hot(y.long(), num_classes=2).float()
+    y_onehot = F.one_hot(y.long(), num_classes=2).float()
     S = torch.sum(alpha, dim=1, keepdim=True)
     
-    # Negative Log-Likelihood of Dirichlet
-    loss_err = torch.sum(y_one_hot * (torch.digamma(S) - torch.digamma(alpha)), dim=1)
+    # 1. Prediction Error (Log Likelihood of the Dirichlet)
+    loss_err = torch.sum(y_onehot * (torch.digamma(S) - torch.digamma(alpha)), dim=1)
     
-    # KL Divergence Regularization to shrink evidence of incorrect class
-    alpha_tilde = y_one_hot + (1 - y_one_hot) * alpha
+    # 2. Corrected KL Divergence Regularization
+    # We want to push the evidence of the INCORRECT class toward 1.0 (zero evidence).
+    # Correct class evidence remains untouched in alpha_tilde.
+    alpha_tilde = y_onehot + (1 - y_onehot) * alpha
     S_tilde = torch.sum(alpha_tilde, dim=1, keepdim=True)
     
-    kl_reg = torch.lgamma(S_tilde.squeeze()) - torch.lgamma(torch.tensor(2.0, device=alpha.device))
-    kl_reg -= torch.sum(torch.lgamma(alpha_tilde), dim=1)
-    kl_reg += torch.sum((alpha_tilde - 1) * (torch.digamma(alpha_tilde) - torch.digamma(S_tilde)), dim=1)
+    kl = torch.lgamma(S_tilde.squeeze()) - torch.lgamma(torch.tensor(2.0, device=alpha.device)) \
+         - torch.sum(torch.lgamma(alpha_tilde), dim=1) \
+         + torch.sum((alpha_tilde - 1) * (torch.digamma(alpha_tilde) - torch.digamma(S_tilde)), dim=1)
     
-    loss = loss_err + lambda_reg * kl_reg
-    return loss.mean()
+    return torch.mean(loss_err + lambda_reg * kl)
