@@ -1,0 +1,27 @@
+## 🧬 DEEPSEEK GENIUS TASK: BioSpread Architectural Optimization
+
+### 🔴 THE SITUATION: FROM "FAKING" TO "FAILING"
+I am working on BioSpread, a predictive pipeline for plasmid spread. 
+
+**The Disaster:** The previous architecture reported 0.90+ AUC, but it was a total fraud. It relied on "global features" (like total future country counts) computed on the entire dataset, creating massive data leakage. The model was effectively looking at the future to predict the future.
+
+**The Fix (Phase 1):** We have just over-hauled the system. 
+1. We implemented a `TemporalSnapshotBuilder` that strictly separates past and future.
+2. We replaced naive gene pooling with a `GeneEncoder` (Transformer) and naive time handling with a `TimeGate` (Fourier features).
+3. **The Result:** The model is now honest but performant-less. The ROC AUC dropped to **0.58**. It is barely better than a coin flip.
+
+### 🐛 CURRENT BOTTLENECKS
+1. **Feature Vacuum:** By removing the "cheating" features, we left the model with only raw genetic token sequences and observation years. The rich ecological signal is gone.
+2. **Signal-to-Noise Ratio:** The genetic Transformer is struggling to find a spread signal in the raw sequences without the help of the (now deleted) future-aggregates.
+3. **Convergence Issues:** Training triggers "Early Stopping" within 5-10 epochs because the validation AUC does not improve.
+4. **Class Bias:** The model currently defaults to predicting spread for everything (Recall 1.0), failing to distinguish true spreaders from stable plasmids.
+
+### 🧠 YOUR MISSION: THE "GENIUS" PHASE 2 PLAN
+I need you to audit the `src/bio_spread_reborn/` codebase and the `REDESIGN_REPORT.md`. 
+
+**Do not just suggest "more data" or "hyperparameter tuning".** 
+I want you to think from first principles and propose a **more suitable, ingenious solution** to bridge the performance gap (0.58 -> 0.75+ AUC) while maintaining strict zero-leakage integrity.
+
+What are we missing? Is the Transformer architecture too heavy for this signal? Is there a better way to represent temporal dynamics than Fourier gates? How do we re-introduce ecological signal without re-introducing leakage?
+
+**Propose a comprehensive Phase 2 strategy that is technically sophisticated and biologically sound.**
