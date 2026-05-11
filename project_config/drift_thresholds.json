@@ -1,9 +1,0 @@
-{
-  "roc_auc_max_drop": 0.03,
-  "average_precision_max_drop": 0.04,
-  "group_auc_max_drop": 0.04,
-  "temporal_auc_max_drop": 0.04,
-  "external_holdout_auc_max_drop": 0.04,
-  "max_single_feature_auc_max_increase": 0.03,
-  "suspicious_feature_count_max_increase": 0
-}

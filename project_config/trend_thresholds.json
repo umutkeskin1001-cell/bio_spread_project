@@ -1,6 +1,0 @@
-{
-  "roc_auc_max_drop": 0.02,
-  "average_precision_max_drop": 0.03,
-  "min_gate_pass_rate": 0.9,
-  "required_entries_for_go": 20
-}

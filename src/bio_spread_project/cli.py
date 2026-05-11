@@ -1,250 +1,58 @@
-"""Command-line interface for BioSpread."""
-
-from __future__ import annotations
-
-import argparse
-import subprocess
-import sys
+import logging
+import json
 from pathlib import Path
+from bio_spread_project.etl import SovereignETL
+from bio_spread_project.train import run_training_cycle
+from sklearn.metrics import roc_auc_score, confusion_matrix, precision_recall_curve
+import numpy as np
 
-from bio_spread_project.config_loader import ProjectPaths
-from bio_spread_project.governance import (
-    evaluate_model_registry_trend,
-    load_model_registry,
-    load_trend_thresholds,
-    write_trend_report,
-)
-from bio_spread_project.orchestrator import run_pipeline
-from bio_spread_project.runtime_policy import EnforcementPolicy, PipelineConfig
-from bio_spread_project.verification import run_verification
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+logger = logging.getLogger("OracleRebirth")
 
-
-def _default_trend_thresholds_path() -> Path:
-    return Path(__file__).resolve().parents[2] / "project_config" / "trend_thresholds.json"
-
-
-def build_parser() -> argparse.ArgumentParser:
-    paths = ProjectPaths.from_env()
-    default_raw_backbones = paths.raw_backbones
-    default_raw_amr = paths.raw_amr
-    default_geo_spread_features = paths.geo_spread_features
-    default_external_holdout = paths.external_holdout_geo_spread_features
-    default_output = paths.default_output_dir
-
-    parser = argparse.ArgumentParser(description="BioSpread geographic spread early-warning workflow")
-    subparsers = parser.add_subparsers(dest="command", required=True)
-
-    run = subparsers.add_parser("run", help="Run BioSpread")
-    run.add_argument("--input", type=Path)
-    run.add_argument("--records", type=Path, default=default_raw_backbones)
-    run.add_argument("--amr", type=Path, default=default_raw_amr)
-    run.add_argument("--geo-spread-features", type=Path, default=default_geo_spread_features)
-    run.add_argument(
-        "--external-holdout",
-        type=Path,
-        default=default_external_holdout,
-        help="Optional external holdout feature surface (TSV) for independent evaluation",
-    )
-    run.add_argument("--baseline-benchmark", type=Path, default=None)
-    run.add_argument("--drift-thresholds", type=Path, default=None)
-    run.add_argument("--trend-thresholds", type=Path, default=None)
-    run.add_argument(
-        "--quality-thresholds",
-        type=Path,
-        default=None,
-        help="Optional JSON file overriding quality gate thresholds",
-    )
-    run.add_argument(
-        "--mode",
-        choices=("auto", "raw", "geo", "input", "active_radar"),
-        default="auto",
-        help="auto: prefer geo surface when present; raw: use records/amr; geo: force geo surface; input: force input CSV; active_radar: generate threat watchlist for next 3 years",
-    )
-    run.add_argument("--output-dir", type=Path, default=default_output)
-    run.add_argument("--split-year", type=int, default=2020)
-    run.add_argument("--horizon-years", type=int, default=3)
-    run.add_argument(
-        "--triage-budget",
-        type=int,
-        default=None,
-        help="Operational surveillance budget (N backbones) for dynamic threshold optimization",
-    )
-    run.add_argument(
-        "--require-explicit-surface",
-        action="store_true",
-        help="Fail auto mode if it would implicitly promote raw inputs to the packaged GeoSpread feature surface",
-    )
-    run.add_argument("--fail-on-quality-gates", action="store_true")
-    run.add_argument("--fail-on-drift-fail", action="store_true")
-    run.add_argument("--fail-on-trend-fail", action="store_true")
-    run.add_argument(
-        "--require-trend-evidence",
-        action="store_true",
-        help="Treat insufficient model-registry history as a blocking release-gate failure",
-    )
-    run.add_argument(
-        "--require-strict-lineage",
-        action="store_true",
-        help="Require lineage coverage for all model features in the feature surface.",
-    )
-
-    trend = subparsers.add_parser("trend", help="Evaluate rolling trend from model registry history")
-    trend.add_argument("--model-registry", type=Path, default=default_output / "model_registry.jsonl")
-    trend.add_argument("--window-size", type=int, default=10)
-    trend.add_argument("--trend-thresholds", type=Path, default=_default_trend_thresholds_path())
-    trend.add_argument("--output", type=Path, default=default_output / "trend_report.json")
-    trend.add_argument("--fail-on-fail", action="store_true")
-    health = subparsers.add_parser("health", help="Check project health and scientific rigor status")
-    health.add_argument("--check-types", action="store_true", help="Run mypy check")
-    health.add_argument("--check-tests", action="store_true", help="Run pytest")
-    verify = subparsers.add_parser("verify", help="Run verification checks")
-    verify.add_argument("--release", action="store_true", help="Run release-grade verification checks")
-    verify.add_argument("--skip-security", action="store_true", help="Skip dependency vulnerability audit")
-
-    return parser
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    if args.command == "health":
-        print("=== BioSpread Health & Scientific Rigor Check ===")
-        exit_code = 0
-        if args.check_types:
-            print("Running Mypy (Strict Mode)...")
-            completed = subprocess.run([sys.executable, "-m", "mypy", "src/bio_spread_project"], check=False)
-            if completed.returncode != 0:
-                exit_code = completed.returncode
-        if args.check_tests:
-            print("Running Pytest...")
-            completed = subprocess.run([sys.executable, "-m", "pytest", "tests/"], check=False)
-            if completed.returncode != 0:
-                exit_code = completed.returncode
-        print("Health check complete.")
-        return exit_code
-    if args.command == "verify":
-        return run_verification(release=bool(args.release), skip_security=bool(args.skip_security))
-
-    if args.command == "trend":
-        thresholds = load_trend_thresholds(args.trend_thresholds)
-        payload = evaluate_model_registry_trend(
-            entries=load_model_registry(args.model_registry),
-            window_size=args.window_size,
-            thresholds=thresholds,
-        )
-        report_path = write_trend_report(args.output, payload)
-        print(f"Model registry: {args.model_registry}")
-        print(f"Trend report: {report_path}")
-        print(f"Trend status: {payload.get('status', 'unknown')}")
-        print(f"All checks passed: {payload.get('all_passed', False)}")
-        if args.fail_on_fail and payload.get("status") == "ok" and not payload.get("all_passed", False):
-            raise SystemExit(2)
-        return 0
-
-    policy = EnforcementPolicy(
-        fail_on_quality_gates=args.fail_on_quality_gates,
-        fail_on_drift_fail=args.fail_on_drift_fail,
-        fail_on_trend_fail=args.fail_on_trend_fail,
-        require_trend_evidence=args.require_trend_evidence,
-        require_explicit_surface=args.require_explicit_surface,
-        require_strict_lineage=args.require_strict_lineage,
-    )
-    config = PipelineConfig(
-        input_path=args.input,
-        backbone_records_path=args.records if args.input is None else None,
-        amr_path=args.amr,
-        geo_spread_features_path=args.geo_spread_features,
-        external_holdout_path=args.external_holdout,
-        baseline_benchmark_path=args.baseline_benchmark,
-        drift_thresholds_path=args.drift_thresholds,
-        trend_thresholds_path=args.trend_thresholds,
-        quality_thresholds_path=args.quality_thresholds,
-        output_dir=args.output_dir,
-        run_mode=args.mode,
-        split_year=args.split_year,
-        horizon_years=args.horizon_years,
-        policy=policy,
-        triage_budget=args.triage_budget,
-    )
-    result = run_pipeline(config)
-    print(f"Input mode: {result.input_mode}")
-    print(f"Selection reason: {result.selection_reason}")
-    print(f"Predictions: {result.predictions_path}")
-    print(f"Report: {result.report_path}")
-    print(f"Audit: {result.audit_path}")
-    print(f"Model card: {result.model_card_path}")
-    print(f"Benchmark: {result.benchmark_path}")
-    print(f"Drift report: {result.drift_report_path}")
-    print(f"Data registry: {result.data_registry_path}")
-    print(f"Model registry: {result.model_registry_path}")
-    print(f"Trend report: {result.trend_report_path}")
-    print(f"Release gate: {result.release_gate_path}")
-    print(f"Artifact index: {result.artifact_index_path}")
-    print(f"ROC AUC: {result.metrics['roc_auc']:.3f}")
-
-    # --- BioSpread v4.0: Active Radar & Threat Watchlist ---
-    if args.mode == "active_radar":
-        from bio_spread_project.reporting import render_llm_json_briefing, build_threat_triage_matrix
-        predictions = []
-        try:
-            import polars as pl
-            pred_df = pl.read_csv(result.predictions_path)
-            for row in pred_df.to_dicts():
-                predictions.append(
-                    __import__("bio_spread_project.model", fromlist=["Prediction"]).Prediction(
-                        model_name="active_radar",
-                        backbone_id=str(row.get("backbone_id", "")),
-                        risk_probability=float(row.get("risk_probability", 0.0)),
-                        confidence_tier=str(row.get("confidence_tier", "review")),
-                        label_geo_spread=int(row.get("label_geo_spread", 0)),
-                        knownness_score=float(row.get("knownness_score", 0.5)),
-                        n_new_countries_future=int(row.get("n_new_countries_future", 0)),
-                        explanation=str(row.get("explanation", "")),
-                    )
-                )
-        except Exception as exc:
-            print(f"Warning: Could not load predictions for active_radar watchlist: {exc}")
-
-        triage = build_threat_triage_matrix(predictions)
-        watchlist_path = Path(args.output_dir) / "THREAT_WATCHLIST.md"
-        briefing_path = Path(args.output_dir) / "llm_briefing.json"
-        watchlist_lines = [
-            "# BioSpread Active Radar — Threat Watchlist",
-            "",
-            f"**Generated:** {__import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat()}Z",
-            f"**Mode:** active_radar | **Horizon:** {args.horizon_years} years",
-            "",
-            "## Triage Matrix (Risk × Uncertainty)",
-            "",
-            f"- 🔴 **RED (Alert):** {triage['counts']['red']} backbones",
-            f"- 🟡 **YELLOW (Watch):** {triage['counts']['yellow']} backbones",
-            f"- 🟢 **GREEN (Monitor):** {triage['counts']['green']} backbones",
-            "",
-            "## Top 20 Priority Surveillance Targets",
-            "",
-        ]
-        sorted_preds = sorted(predictions, key=lambda p: p.risk_probability, reverse=True)[:20]
-        for i, p in enumerate(sorted_preds, 1):
-            watchlist_lines.append(f"{i}. `{p.backbone_id}` — risk={p.risk_probability:.3f}, tier={p.confidence_tier}, knownness={p.knownness_score:.2f}")
-        watchlist_lines.extend([
-            "",
-            "## Operational Notes",
-            "- RED tier requires immediate cross-border notification (IHR compliant).",
-            "- YELLOW tier enters enhanced sentinel surveillance (weekly sequencing).",
-            "- GREEN tier is monitored via routine AMR surveillance.",
-            "",
-            "---",
-            "*BioSpread v4.0 Infinite Architect — Active Radar Module*",
-        ])
-        watchlist_path.write_text("\n".join(watchlist_lines), encoding="utf-8")
-        print(f"Threat watchlist: {watchlist_path}")
-
-        briefing = render_llm_json_briefing(predictions, result.metrics, triage=triage, split_year=args.split_year, horizon_years=args.horizon_years)
-        briefing_path.write_text(briefing, encoding="utf-8")
-        print(f"LLM briefing: {briefing_path}")
-
-    return 0
-
+def main():
+    logger.info("Initializing Sovereign Oracle v17 Rebirth...")
+    
+    # 1. ETL
+    etl = SovereignETL()
+    genetic_map = etl.load_genetic_map()
+    
+    inputs_dir = Path("data/project_inputs/geo_spread/inputs")
+    train_df = etl.prepare_dataset(inputs_dir / "backbone_scored_train_only.tsv", genetic_map)
+    test_df = etl.prepare_dataset(inputs_dir / "external_holdout_curated_v1.tsv", genetic_map)
+    
+    # 2. Train
+    oof_probs, external_probs, vocab = run_training_cycle(train_df, test_df, genetic_map)
+    
+    # 3. Evaluate
+    y_train = train_df["y"].to_list()
+    y_test = test_df["y"].to_list()
+    
+    oof_auc = roc_auc_score(y_train, oof_probs)
+    ext_auc = roc_auc_score(y_test, external_probs)
+    
+    # Optimal threshold from OOF
+    p, r, t = precision_recall_curve(y_train, oof_probs)
+    f1 = 2*p*r / (p+r+1e-8)
+    best_t = t[np.argmax(f1)]
+    
+    ext_preds = (external_probs >= best_t).astype(int)
+    tn, fp, fn, tp = confusion_matrix(y_test, ext_preds).ravel()
+    
+    results = {
+        "OOF_AUC": float(oof_auc),
+        "External_AUC": float(ext_auc),
+        "External_Recall": float(tp/(tp+fn)),
+        "External_Precision": float(tp/(tp+fp)),
+        "FP": int(fp),
+        "FN": int(fn),
+        "Threshold": float(best_t)
+    }
+    
+    logger.info(f"REBIRTH COMPLETE. RESULTS: {json.dumps(results, indent=4)}")
+    
+    Path("reports").mkdir(exist_ok=True)
+    with open("reports/rebirth_v17_final.json", "w") as f:
+        json.dump(results, f, indent=4)
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()

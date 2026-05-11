@@ -1,6 +1,0 @@
-# Temporary pip-audit ignore list.
-# Review cadence: every dependency refresh and before any tagged release.
-GHSA-6w46-j5rx-g56g
-GHSA-w853-jp5j-5j7f
-GHSA-qmgc-5h2g-mvrw
-GHSA-gc5v-m9x4-r6x2

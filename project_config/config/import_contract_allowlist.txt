@@ -1,3 +1,0 @@
-# Temporary architectural debt allowlist for import-contract regression gate.
-# Format: <source module prefix> -> <imported module prefix>
-# Currently empty: new violations should fail CI unless explicitly allowlisted.

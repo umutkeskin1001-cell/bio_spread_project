@@ -1,1 +1,0 @@
-{"OOF_ROC_AUC": 0.8009891278351983, "OOF_Confusion_Matrix": {"TN": 4898, "FP": 940, "FN": 128, "TP": 190}, "External_ROC_AUC": 0.7701802507836991, "External_Recall": 0.7272727272727273, "External_Precision": 0.7111111111111111, "External_FP": 13, "External_FN": 12, "Threshold": 0.015436699613928795}
