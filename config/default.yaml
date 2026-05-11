@@ -1,0 +1,17 @@
+data:
+  backbones_path: "data/raw/plasmid_backbones.tsv"
+  amr_path: "data/raw/amr.tsv"
+  records_path: "data/project_inputs/scores/backbone_scored_infilled.tsv"
+  split_year: 2020
+
+model:
+  emb_dim: 256
+  hidden_dim: 512
+  max_genes: 300
+
+training:
+  batch_size: 128
+  lr: 0.003
+  epochs: 50
+  patience: 5
+  kl_annealing: 0.1

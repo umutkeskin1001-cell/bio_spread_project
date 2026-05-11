@@ -3,9 +3,9 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "bio-spread-project"
+name = "bio-spread-reborn"
 version = "0.1.0"
-description = "Standalone plasmid backbone geographic spread early-warning workflow"
+description = "Modular time-aware evidential learning pipeline for plasmid spread"
 requires-python = ">=3.9"
 dependencies = [
   "numpy>=1.26,<3",
@@ -16,7 +16,8 @@ dependencies = [
   "torch>=2.0,<3",
   "torch_geometric>=2.0,<3",
   "scipy>=1.11,<2",
-  "lightgbm>=4.0",
+  "PyYAML>=6.0",
+  "click>=8.0",
 ]
 
 [project.optional-dependencies]
@@ -31,7 +32,7 @@ dev = [
 ]
 
 [project.scripts]
-bio-spread = "bio_spread_project.cli:main"
+bio-spread = "bio_spread_reborn.cli.main:cli"
 
 [tool.setuptools.packages.find]
 where = ["src"]

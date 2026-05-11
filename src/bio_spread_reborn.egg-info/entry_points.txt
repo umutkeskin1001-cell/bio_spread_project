@@ -1,0 +1,2 @@
+[console_scripts]
+bio-spread = bio_spread_reborn.cli.main:cli
