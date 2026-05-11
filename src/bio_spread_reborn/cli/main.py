@@ -1,114 +1,113 @@
 import click
+import logging
+import polars as pl
 import torch
 import json
-import logging
 from pathlib import Path
-import polars as pl
-from torch.utils.data import DataLoader
-import numpy as np
+from datetime import datetime
+from torch.utils.data import DataLoader, WeightedRandomSampler
+from functools import partial
 
-from bio_spread_reborn.data.loader import DataPipeline
-from bio_spread_reborn.data.tokenizer import GeneTokenizer
-from bio_spread_reborn.data.dataset import BioDataset
-from bio_spread_reborn.data.snapshot import TemporalSnapshotBuilder
-from bio_spread_reborn.models.evidential import SovereignNet
-from bio_spread_reborn.models.trainer import EvidentialTrainer
+from bio_spread_reborn.config.schema import Config
 from bio_spread_reborn.utils.config import load_config
-from bio_spread_reborn.utils.metrics import compute_metrics
-from bio_spread_reborn.utils.logging import setup_logging
+from bio_spread_reborn.data.loader import DataPipeline
+from bio_spread_reborn.data.snapshot import TemporalSnapshotBuilder
+from bio_spread_reborn.data.dataset import BioDataset, bio_collate_fn
+from bio_spread_reborn.data.tokenizer import GeneTokenizer
+from bio_spread_reborn.data.functional_tokenizer import FunctionalTokenizer
+from bio_spread_reborn.models.evidential import FusionNet
+from bio_spread_reborn.models.trainer import EvidentialTrainer
+from bio_spread_reborn.utils.metrics import print_report
 
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("BioSpreadCLI")
 
 @click.group()
 def cli():
     """BioSpread Reborn: Elite-grade plasmid spread surveillance."""
-    setup_logging()
+    pass
 
 @cli.command()
 @click.option('--config', default='config/default.yaml', help='Path to config file')
-def snapshot(config):
-    """Build temporal snapshots to eliminate future leakage."""
+@click.option('--output-path', default='data/snapshots/snapshot_records.tsv')
+def snapshot(config, output_path):
+    """Build temporal snapshots with backcast features."""
     cfg = load_config(config)
-    logger.info(f"Loading raw data for snapshot building...")
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     
-    # Load raw records
+    logger.info("Loading raw data for snapshot building...")
     raw_records = pl.read_csv(cfg.data.records_path, separator='\t')
-    
-    # Rename resolved_year if it exists
     if 'resolved_year' in raw_records.columns and 'year' not in raw_records.columns:
         raw_records = raw_records.rename({'resolved_year': 'year'})
-    
-    # If year is missing, join it
-    if 'year' not in raw_records.columns:
-        backbones = pl.read_csv(cfg.data.backbones_path, separator='\t', columns=['backbone_id', 'resolved_year'])
-        backbones = backbones.group_by('backbone_id').agg(pl.col('resolved_year').max())
-        raw_records = raw_records.join(backbones, on='backbone_id', how='left').rename({'resolved_year': 'year'})
-    
-    # Load metadata and AMR for builder (if needed for labeling logic)
+        
     backbone_meta = pl.read_csv(cfg.data.backbones_path, separator='\t')
     amr = pl.read_csv(cfg.data.amr_path, separator='\t')
     
     builder = TemporalSnapshotBuilder(raw_records, backbone_meta, amr)
-    
-    cache_dir = Path(cfg.data.snapshot_cache_dir)
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    output_path = cache_dir / "snapshot_records.tsv"
-    
     builder.build_snapshot(output_path)
-    click.echo(f"Snapshot created at {output_path}")
+    click.echo(f"Enriched snapshot created at {output_path}")
 
 @cli.command()
 @click.option('--config', default='config/default.yaml', help='Path to config file')
 def train(config):
-    """Train the SovereignNet model using the evidential learning pipeline."""
+    """Train the FusionNet model with backcast features and functional encoding."""
     cfg = load_config(config)
-    logger.info("Initializing Data Pipeline...")
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     
-    pipeline = DataPipeline(cfg)
-    
-    # 1. Load and Tokenize Genetic Map
-    genetic_df = pipeline.load_genetic_map()
-    tokenizer = GeneTokenizer(max_len=cfg.model.max_genes)
-    tokenizer.fit(genetic_df['gene_list'])
-    logger.info(f"Vocabulary size: {tokenizer.get_vocab_size()}")
-    
-    # Pre-tokenize entire genetic map once (Efficient O(N))
-    genetic_map = {
-        row['backbone_id']: tokenizer.encode(row['gene_list']) 
-        for row in genetic_df.to_dicts()
-    }
-    
-    # 2. Use snapshots if available, otherwise fallback to records_path
+    # 1. Load Enriched Snapshot
     snapshot_path = Path(cfg.data.snapshot_cache_dir) / "snapshot_records.tsv"
-    records_to_load = str(snapshot_path) if snapshot_path.exists() else cfg.data.records_path
-    
     if not snapshot_path.exists():
-        logger.warning("Snapshot not found! Using raw records (LEAKAGE RISK). Run 'snapshot' first.")
+        raise FileNotFoundError("Snapshot missing. Run 'bio-spread snapshot' first.")
     
-    train_df, val_df = pipeline.prepare_dataset(records_path=records_to_load)
-    logger.info(f"Train size: {len(train_df)}, Val size: {len(val_df)}")
+    df = pl.read_csv(snapshot_path, separator='\t')
     
-    # 3. Create Loaders
+    # 2. Data Pipeline
+    pipeline = DataPipeline(cfg)
+    genetic_map_df = pipeline.load_genetic_map()
+    genetic_map = dict(zip(genetic_map_df["backbone_id"], genetic_map_df["gene_list"]))
+    
+    train_df = df.filter(pl.col("year") < cfg.data.split_year)
+    val_df = df.filter(pl.col("year") >= cfg.data.split_year)
+    
+    # 3. Tokenizers
+    tokenizer = GeneTokenizer(max_len=cfg.model.max_genes)
+    tokenizer.fit(genetic_map_df["gene_list"])
+    func_tokenizer = FunctionalTokenizer()
+    
+    # 4. Create Loaders
     train_ds = BioDataset(train_df, genetic_map, max_genes=cfg.model.max_genes)
     val_ds = BioDataset(val_df, genetic_map, max_genes=cfg.model.max_genes)
     
-    train_loader = DataLoader(train_ds, batch_size=cfg.training.batch_size, shuffle=True)
-    val_loader = DataLoader(val_ds, batch_size=cfg.training.batch_size)
+    # Balanced Sampler
+    labels = train_df["spread_label"].to_list()
+    class_counts = [labels.count(0), labels.count(1)]
+    weights = [1.0/class_counts[l] for l in labels]
+    sampler = WeightedRandomSampler(weights, len(weights))
     
-    # 4. Initialize Model
-    model = SovereignNet(
+    collate = partial(bio_collate_fn, tokenizer=tokenizer, max_genes=cfg.model.max_genes)
+    
+    train_loader = DataLoader(train_ds, batch_size=cfg.training.batch_size, sampler=sampler, collate_fn=collate)
+    val_loader = DataLoader(val_ds, batch_size=cfg.training.batch_size, collate_fn=collate)
+    
+    # 5. Initialize FusionNet
+    model = FusionNet(
         vocab_size=tokenizer.get_vocab_size(),
+        func_dim=func_tokenizer.get_dim(),
+        history_dim=len(train_ds.history_cols),
         emb_dim=cfg.model.emb_dim,
         hidden_dim=cfg.model.hidden_dim,
         num_heads=cfg.model.num_heads,
-        num_layers=cfg.model.num_layers,
+        num_layers=1, # Light Transformer for Phase 2
         time_freqs=cfg.model.time_freqs
     )
     
-    # 5. Initialize Trainer
-    trainer = EvidentialTrainer(model, cfg.model_dump())
+    # 6. Initialize Trainer
+    train_cfg = cfg.model_dump()
+    train_cfg["run_id"] = run_id
+    trainer = EvidentialTrainer(model, train_cfg)
     
-    # 6. Save Vocab in artifact dir BEFORE training for safety
+    # Save artifacts before fit
     tokenizer.save(trainer.artifact_dir / 'tokenizer.json')
     
     # 7. Fit
@@ -116,70 +115,59 @@ def train(config):
     logger.info(f"Training complete. Artifacts saved in {artifact_dir}")
 
 @cli.command()
-@click.option('--model-path', required=True, help='Path to model weights (.pt)')
-@click.option('--tokenizer-path', required=True, help='Path to tokenizer (.json)')
-@click.option('--input-path', required=True, help='Path to TSV with backbone records')
-@click.option('--output-path', default='predictions.json', help='Path to save results')
-@click.option('--config', default='config/default.yaml', help='Path to config file')
+@click.option('--model-path', required=True)
+@click.option('--tokenizer-path', required=True)
+@click.option('--input-path', required=True)
+@click.option('--output-path', default='predictions.json')
+@click.option('--config', default='config/default.yaml')
 def predict(model_path, tokenizer_path, input_path, output_path, config):
-    """Run inference on new backbone records."""
+    """Run inference using FusionNet."""
     cfg = load_config(config)
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    tokenizer = GeneTokenizer.load(Path(tokenizer_path))
+    func_tokenizer = FunctionalTokenizer()
     
-    # 1. Load Tokenizer and Model
-    tokenizer = GeneTokenizer.load(tokenizer_path)
-    model = SovereignNet(
+    # Build a mini-dataset for prediction to get the correct dimensions
+    input_df = pl.read_csv(input_path, separator='\t')
+    
+    # If columns are missing, add defaults to avoid crash
+    required = ["n_countries_so_far", "n_host_genera_so_far", "years_since_first_obs", "delta_countries_last_2y", "n_records_so_far"]
+    for col in required:
+        if col not in input_df.columns:
+            input_df = input_df.with_columns(pl.lit(0.0).alias(col))
+    
+    pipeline = DataPipeline(cfg)
+    genetic_map_df = pipeline.load_genetic_map()
+    genetic_map = dict(zip(genetic_map_df["backbone_id"], genetic_map_df["gene_list"]))
+    
+    ds = BioDataset(input_df, genetic_map, max_genes=cfg.model.max_genes)
+    collate = partial(bio_collate_fn, tokenizer=tokenizer, max_genes=cfg.model.max_genes)
+    loader = DataLoader(ds, batch_size=1, collate_fn=collate)
+    
+    model = FusionNet(
         vocab_size=tokenizer.get_vocab_size(),
+        func_dim=func_tokenizer.get_dim(),
+        history_dim=len(ds.history_cols),
         emb_dim=cfg.model.emb_dim,
         hidden_dim=cfg.model.hidden_dim,
         num_heads=cfg.model.num_heads,
-        num_layers=cfg.model.num_layers,
+        num_layers=1,
         time_freqs=cfg.model.time_freqs
     )
-    model.load_state_dict(torch.load(model_path, map_location=device))
-    model.to(device)
+    model.load_state_dict(torch.load(model_path, map_location="cpu"))
     model.eval()
     
-    # 2. Load Data
-    pipeline = DataPipeline(cfg)
-    genetic_df = pipeline.load_genetic_map()
-    genetic_map = {
-        row['backbone_id']: tokenizer.encode(row['gene_list']) 
-        for row in genetic_df.to_dicts()
-    }
-    
-    input_df = pl.read_csv(input_path, separator='\t')
-    
-    # Ensure year exists
-    if 'year' not in input_df.columns:
-        backbones = pl.read_csv(cfg.data.backbones_path, separator='\t', columns=['backbone_id', 'resolved_year'])
-        backbones = backbones.group_by('backbone_id').agg(pl.col('resolved_year').max())
-        input_df = input_df.join(backbones, on='backbone_id', how='left').rename({'resolved_year': 'year'})
-    
-    dataset = BioDataset(input_df, genetic_map, max_genes=cfg.model.max_genes)
-    loader = DataLoader(dataset, batch_size=32)
-    
-    # 3. Predict
     results = []
-    # Fetch backbone IDs once for efficient mapping
-    all_bids = input_df['backbone_id'].to_list()
-    
     with torch.no_grad():
         for i, batch in enumerate(loader):
-            x, t = batch[0].to(device), batch[1].to(device)
-            prob, unc, _ = model(x, t)
+            x_gene, x_func, x_history, t, _ = batch
+            prob, unc, _ = model(x_gene, x_func, x_history, t)
+            results.append({
+                "backbone_id": input_df["backbone_id"][i],
+                "spread_probability": float(prob.item()),
+                "uncertainty": float(unc.item())
+            })
             
-            # Efficiently map back to IDs
-            start_idx = i * 32
-            batch_ids = all_bids[start_idx : start_idx + len(x)]
-            
-            results.extend([
-                {"backbone_id": bid, "spread_probability": float(p), "uncertainty": float(u)}
-                for bid, p, u in zip(batch_ids, prob.cpu().tolist(), unc.cpu().tolist())
-            ])
-            
-    # 4. Save results
-    with open(output_path, 'w') as f:
+    with open(output_path, "w") as f:
         json.dump(results, f, indent=2)
     click.echo(f"Predictions saved to {output_path}")
 
@@ -189,64 +177,35 @@ def predict(model_path, tokenizer_path, input_path, output_path, config):
 @click.option('--input-path', required=True)
 @click.option('--config', default='config/default.yaml')
 def evaluate(model_path, tokenizer_path, input_path, config):
-    """Evaluate model performance on a labeled dataset."""
+    """Evaluate FusionNet performance."""
     cfg = load_config(config)
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    tokenizer = GeneTokenizer.load(Path(tokenizer_path))
+    func_tokenizer = FunctionalTokenizer()
     
-    tokenizer = GeneTokenizer.load(tokenizer_path)
-    model = SovereignNet(
+    df = pl.read_csv(input_path, separator='\t')
+    pipeline = DataPipeline(cfg)
+    genetic_map_df = pipeline.load_genetic_map()
+    genetic_map = dict(zip(genetic_map_df["backbone_id"], genetic_map_df["gene_list"]))
+    
+    ds = BioDataset(df, genetic_map, max_genes=cfg.model.max_genes)
+    collate = partial(bio_collate_fn, tokenizer=tokenizer, max_genes=cfg.model.max_genes)
+    loader = DataLoader(ds, batch_size=cfg.training.batch_size, collate_fn=collate)
+    
+    model = FusionNet(
         vocab_size=tokenizer.get_vocab_size(),
+        func_dim=func_tokenizer.get_dim(),
+        history_dim=len(ds.history_cols),
         emb_dim=cfg.model.emb_dim,
         hidden_dim=cfg.model.hidden_dim,
         num_heads=cfg.model.num_heads,
-        num_layers=cfg.model.num_layers,
+        num_layers=1,
         time_freqs=cfg.model.time_freqs
     )
-    model.load_state_dict(torch.load(model_path, map_location=device))
-    model.to(device)
-    model.eval()
+    model.load_state_dict(torch.load(model_path, map_location="cpu"))
     
-    pipeline = DataPipeline(cfg)
-    genetic_df = pipeline.load_genetic_map()
-    genetic_map = {
-        row['backbone_id']: tokenizer.encode(row['gene_list']) 
-        for row in genetic_df.to_dicts()
-    }
-    
-    input_df = pl.read_csv(input_path, separator='\t')
-    if 'year' not in input_df.columns:
-        backbones = pl.read_csv(cfg.data.backbones_path, separator='\t', columns=['backbone_id', 'resolved_year'])
-        backbones = backbones.group_by('backbone_id').agg(pl.col('resolved_year').max())
-        input_df = input_df.join(backbones, on='backbone_id', how='left').rename({'resolved_year': 'year'})
-    
-    input_df = input_df.filter(pl.col('spread_label').is_not_null())
-    dataset = BioDataset(input_df, genetic_map, max_genes=cfg.model.max_genes)
-    loader = DataLoader(dataset, batch_size=32)
-    
-    all_probs, all_uncs, all_targets = [], [], []
-    with torch.no_grad():
-        for x, t, y in loader:
-            x, t = x.to(device), t.to(device)
-            prob, unc, _ = model(x, t)
-            all_probs.extend(prob.cpu().tolist())
-            all_uncs.extend(unc.cpu().tolist())
-            all_targets.extend(y.tolist())
-                
-    m = compute_metrics(np.array(all_targets), np.array(all_probs), np.array(all_uncs))
-    
-    click.echo("\n" + "="*40)
-    click.echo("       BIO-SPREAD EVALUATION REPORT")
-    click.echo("="*40)
-    click.echo(f"ROC AUC:          {m['auc']:.4f}")
-    click.echo(f"Brier Score:      {m['brier']:.4f}")
-    click.echo(f"Precision:        {m['precision']:.4f}")
-    click.echo(f"Recall:           {m['recall']:.4f}")
-    click.echo(f"F1 Score:         {m['f1']:.4f}")
-    click.echo("-"*40)
-    click.echo(f"TP/FP/TN/FN:      {m['tp']}/{m['fp']}/{m['tn']}/{m['fn']}")
-    click.echo(f"Uncertainty AUC:  {m['uncertainty_auc']:.4f}")
-    click.echo(f"Avg Uncertainty:  {m['avg_uncertainty']:.4f}")
-    click.echo("="*40 + "\n")
+    trainer = EvidentialTrainer(model, cfg.model_dump())
+    metrics = trainer.evaluate(loader)
+    print_report(metrics)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     cli()

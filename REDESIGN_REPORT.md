@@ -1,31 +1,28 @@
 # BioSpread Architectural Redesign Report
 
-## Current Status: PHASE 1 COMPLETE
-The project has undergone a complete architectural overhaul to eliminate data leakage and modernize the predictive pipeline.
+## Current Status: PHASE 2 COMPLETE (MODEST IMPROVEMENT)
+The project has implemented DeepSeek's Phase 2 strategy, focusing on epidemiological backcast features and multi-modal fusion.
 
-### 1. Architecture Overhaul
-- **Temporal Snapshot Builder**: Implemented to ensure zero future leakage. Labels and features are strictly computed based on historical snapshots.
-- **GeneEncoder (Transformer)**: Replaced naive MLP/Bag-of-Words with a sequence-aware Transformer encoder.
-- **TimeGate (Fourier)**: Replaced sigmoid-gated linear time projection with learnable Fourier features (`sin`/`cos`) for better temporal dynamics.
-- **Evidential Learning**: Maintained the Dirichlet-based evidential head for uncertainty estimation.
+### 1. Phase 2 Implementation
+- **FusionNet Architecture**: Successfully integrated three streams:
+    - Raw Genetic Stream (Transformer-lite)
+    - Functional Gene Stream (Multi-hot biological categories)
+    - Temporal History Stream (Backcast features: n_countries, n_hosts, velocity)
+- **Leakage-Free Logic**: Maintained strict temporal snapshots.
+- **Training Hardening**: Implemented Focal Loss and WeightedRandomSampler.
 
-### 2. Verified Metrics (Leakage-Free)
-After removing the "cheating" mechanisms (temporal corruption), the current metrics on `snapshot_records.tsv` are:
-- **ROC AUC**: 0.5858
-- **Uncertainty AUC**: 0.5741
-- **Recall**: 1.0000 (Model currently biased towards positive class)
-- **Status**: Early stopping triggered at Epoch 6.
+### 2. Verified Metrics (Phase 2)
+On `snapshot_records.tsv` (Temporal test split):
+- **ROC AUC**: 0.6532 (Significant jump from 0.58, but still below 0.75 target)
+- **Precision**: 0.7124 (Strong improvement in prediction quality)
+- **Recall**: 0.5619 (Bias issue fixed, model no longer predicts 1 for everything)
+- **Uncertainty AUC**: 0.6173
+- **Status**: Early stopping triggered at Epoch 7.
 
 ### 3. Critical Observations
-- **Data Hardening**: The model is no longer "memorizing" future aggregates. The task is significantly harder but scientifically valid.
-- **Feature Sparsity**: The current model only uses genetic sequences and years. It lacks the complex ecological and phenotypic features present in the original (leaky) dataset.
-- **Performance Gap**: There is a significant gap between the "fake" 0.90+ AUC and the "real" 0.58 AUC. Bridging this gap requires a "genius-level" strategy.
-
-### 4. Technical Debt Resolved
-- CLI fixed (outputs saved).
-- Configuration validated with Pydantic.
-- Artifact management versioned.
-- CI/Makefile aligned.
+- **Signal Gains**: The "Epidemiological Pressure" (backcast features) provided the first real performance boost without leakage.
+- **Glass Ceiling**: We seem to be hitting a wall at ~0.65 AUC. The model finds the training data "easy" (Loss 0.16) but fails to generalize further on the validation set.
+- **Complexity vs. Signal**: The FusionNet might still be too "shallow" in its biological understanding, or we are missing a critical dimension of the spread.
 
 ---
-*Report generated for DeepSeek review.*
+*Report updated for DeepSeek Phase 3 Audit.*
