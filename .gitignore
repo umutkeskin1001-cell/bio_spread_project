@@ -10,62 +10,42 @@ __pycache__/
 test_output.txt
 test_bio_spread_output.txt
 test_bio_spread_all_output.txt
-reports/smoke_cli/
-reports/competition_final/
-reports/run/
-reports/cli_run/
-reports/latest/**
+# Reports
+reports/**
+!reports/
 !reports/latest/
-!reports/latest/audit.json
-!reports/latest/benchmark.json
-!reports/latest/data_registry.json
-!reports/latest/drift_report.json
-!reports/latest/governance_report.json
-!reports/latest/manifest.json
-!reports/latest/metrics.json
-!reports/latest/model_card.md
-!reports/latest/model_registry.jsonl
-!reports/latest/model_scorecard.json
-!reports/latest/release_gate.json
-!reports/latest/report.md
-!reports/latest/trend_report.json
-reports/final_submission/**
+!reports/latest/**
 !reports/final_submission/
-!reports/final_submission/audit.json
-!reports/final_submission/benchmark.json
-!reports/final_submission/data_registry.json
-!reports/final_submission/drift_report.json
-!reports/final_submission/governance_report.json
-!reports/final_submission/manifest.json
-!reports/final_submission/metrics.json
-!reports/final_submission/model_card.md
-!reports/final_submission/model_registry.jsonl
-!reports/final_submission/model_scorecard.json
-!reports/final_submission/release_gate.json
-!reports/final_submission/report.md
-!reports/final_submission/trend_report.json
-reports/refresh_geo/
-reports/refresh_raw/
-reports/history/
-reports/.staging_*/
-reports/release_verify_smoke/
-reports/enrich_*/
-reports/modeling_*/
-reports/*_smoke/
-reports/*_ablation*/
-final_report_demo/
-final_report_production/
-audit_demo/
-output/playwright/
+!reports/final_submission/**
+
+# Output
 output/
-build/
-dist/
-*.egg-info/
-reports/optimized_run/
-reports/honest_run/
-reports/honest_run_v2/
-reports/honest_run_v3/
-reports/sota_final*/
+playwright/
+fresh_run_outputs/
+catboost_info/
+
+# Data and large files
+data/raw/
+data/holdouts/
+data/project_inputs/raw/
+data/project_inputs/external/
+data/project_inputs/silver/
+data/project_inputs/scores/
+data/project_inputs/geo_spread/
+data/**/*.fasta
+data/**/*.parquet
+data/**/*.tar
+data/**/*.tar.*
+data/**/*.gz
+data/**/*.dat
+data/**/*.joblib
+data/**/*.csv
+!data/sample_plasmid_records.csv
+!data/project_inputs/README.md
+
+# Keep source control lightweight.
+# Large raw/external/generated datasets can live locally.
+
 
 
 # Keep source control lightweight. Large raw/external/generated datasets can
