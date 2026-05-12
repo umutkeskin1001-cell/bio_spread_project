@@ -1,55 +1,57 @@
-# DEEPSEEK GENIUS PROMPT: BIOPREAD PIU SCALE-UP (ENRICHED DATA EDITION)
+# DEEPSEEK GENIUS PROMPT: BIOPREAD PIU SCALE-UP (NEUTRAL EXPLORATION)
 
-**Role:** You are a Senior Bio-AI Researcher specializing in plasmid evolution and epidemiological forecasting.
+**Role:** You are a Senior Bio-AI Researcher with expertise in plasmid evolution, epidemiological forecasting, and multi-modal deep learning.
 
-**Task:** Deeply analyze the provided BioSpread Phase 3 codebase and the detailed dataset metadata below. Propose "Genius-level" architectural or feature-engineering interventions to break the current 0.60 AUC plateau and reach 0.75+ without introducing data leakage.
-
----
-
-### 📊 DATASET CATALOG & METADATA
-
-**1. Main Records (Silver Layer): `plasmid_backbones.tsv`**
-- **Count:** 72,556 unique plasmid records.
-- **Key Columns:** `backbone_id` (Clustered Identity), `resolved_year` (1900-2024), `country`, `genus`, `species`, `sequence_length`, `gc`, `topology`, `predicted_mobility` (Conjugative, Mobilizable, Non-mobilizable), `mash_neighbor_distance`.
-- **Taxonomy:** phylum, class, order, family, genus, species coverage.
-
-**2. Functional Annotations: `amr.tsv`**
-- **Count:** 251,138 gene annotations.
-- **Key Columns:** `gene_symbol`, `drug_class` (e.g., Carbapenem, Colistin), `antimicrobial_agent`, `coverage_percentage`, `predicted_phenotype_confidence_level`.
-- **Functionality Mapping:** Genes are mapped to 5 categories: `AMR`, `MOBILITY`, `MAINTENANCE`, `PHAGE`, `OTHER`.
-
-**3. Training Snapshots: `snapshot_records.tsv`**
-- **Count:** 21,520 temporal snapshots (1900-2024).
-- **Target:** `spread_label` (Binary: 1 if plasmid spreads to a NEW country in the next time window).
-- **History Features (Input):**
-  - `n_countries_so_far`, `n_host_genera_so_far`, `years_since_first_obs`, `delta_countries_last_2y`, `n_records_so_far`.
-  - Scaled via `log1p` in the current implementation.
+**Objective:** Conduct a first-principles analysis of the provided BioSpread Phase 3 codebase and the dataset catalog below. Your goal is to identify why the model is plateauing at **0.60 AUC** and propose a sequence of highly sophisticated, "genius-level" interventions to break this ceiling and target **0.75+ AUC**.
 
 ---
 
-### 🧠 ARCHITECTURAL CONTEXT
+### 📊 DATASET CATALOG & SYSTEM STATE
 
-1. **Model:** FusionNetV3 (Multi-modal Transformer + MLP fusion).
-2. **Loss:** Dirichlet Evidential Loss (for uncertainty) + Pairwise RankNet Loss (for temporal ranking).
-3. **Pillar Features (PIU):**
-   - **PFP:** Protein Fitness Fingerprint (ESM-2 -> PCA 16-dim).
-   - **EBV:** Epistatic Pressure (Fisher's Exact Test on Gene Pairs, strictly <= 2020 data).
-   - **CAV:** Geographic Aura (Node2Vec on weighted World Flight/Adjacency Graph).
-4. **Resumption:** Supports `--resume-from` to load weights and continue fine-tuning.
+**1. Raw Population Data (`plasmid_backbones.tsv`):**
+- **Size:** 72,556 unique records.
+- **Dimensionality:** Includes temporal (`resolved_year`), geographic (`country`), taxonomic (`phylum` to `species`), and structural (`sequence_length`, `gc`, `topology`, `predicted_mobility`) data.
+- **The Gap:** We have a massive population (72k) but only 21k labeled spread events.
+
+**2. Functional Annotations (`amr.tsv`):**
+- **Size:** 251,138 gene-level records.
+- **Signal:** Direct links between genes and drug classes (AMR), but currently reduced to a coarse 5-dimensional functional bag.
+
+**3. Training Snapshots (`snapshot_records.tsv`):**
+- **Size:** 21,520 temporal snapshots.
+- **Target (`spread_label`):** Binary indicator of spread to a new geographic region in the subsequent window.
+- **Status:** Historically "sterilized" to prevent future data leakage. Features are log-scaled.
+
+**4. Current Architecture (FusionNetV3):**
+- Multi-modal fusion of Gene sequences (Transformer), Functional categories (MLP), Temporal History (MLP), and PIU Pillars (PFP fitness, EBV epistasis, CAV geographic aura).
+- Employs **Dirichlet Evidential Loss** for uncertainty estimation and **RankNet Loss** for temporal consistency.
 
 ---
 
-### 🚀 DEEP ANALYSIS REQUIREMENTS
+### 🔬 YOUR MISSION: DEEP ANALYTICAL PROBING
 
-1. **Host-Range Modeling:** We have `genus`/`species` for 72k records but only use them for simple history counts. How can we use an **Embedding Layer for Host Genera** to capture "Host-Generalist" vs "Host-Specialist" strategic advantages?
-2. **Dynamic Epistasis:** EBV is currently a static 6-dim vector. Suggest a way to use **Graph Convolutional Networks (GCN)** on the Gene-Gene interaction graph to predict "Emergent Synergies" in novel gene combinations.
-3. **Temporal Attention:** We use a simple `TimeGate` (Sine/Cosine). Should we transition to a **Temporal Fusion Transformer (TFT)** or **Neural ODE** to model the continuous-time spread probability?
-4. **Label Refinement:** Binary labels are noisy. Can we use **Self-Supervised Pre-training (Contrastive Learning)** on the 72k records before training on the 21k labeled snapshots?
-5. **Geographic GNNs:** CAV uses Node2Vec. Would a **Spatial-Temporal Graph Neural Network (ST-GNN)** that takes the current global distribution of a plasmid as a graph signal perform better?
+I want you to think beyond standard "add more layers" solutions. Deeply investigate the following areas from a first-principles perspective:
+
+1. **Information Density Analysis:**
+   - Are we losing too much signal by compressing 251k gene annotations into 5 functional categories and 16 PCA dimensions?
+   - How can we represent the "Evolutionary Trajectory" of a plasmid identity more effectively than simple count-based history features?
+
+2. **The "Silent" Signal in Taxonomy:**
+   - We possess detailed host taxonomy (`genus`, `species`) for 72k records. Analyze how the interaction between plasmid "cargo" and host "niche" can be modeled to predict colonization potential.
+
+3. **Multi-Modal Synchronization:**
+   - The current fusion strategy is concatenation-based. Evaluate the potential for "Cross-Modal Attention" or "Gated Fusion" to allow the model to weight genetic signal vs. epidemiological pressure dynamically.
+
+4. **Label Noise & Problem Formulation:**
+   - 0.60 AUC often indicates either a low signal-to-noise ratio in labels or a fundamental mismatch in the loss function. Re-evaluate the binary classification vs. risk-ranking trade-off.
+
+5. **Advanced Feature Synergy:**
+   - Explore how to integrate geographic connectivity (flights/trade) and biological epistasis into a unified "Risk Surface".
 
 **Instructions for the response:**
-- Provide concrete Python/PyTorch code snippets.
-- Propose new mathematical formulations for the loss function.
-- Analyze the impact of the 11MB `piu_extra_features.json` dictionary vs. on-the-fly calculation.
+- Avoid generic suggestions. Focus on high-impact, biologically-informed AI strategies.
+- Provide mathematical formulations for any proposed architectural or loss changes.
+- Include Python/PyTorch pseudo-code for complex implementations.
+- Identify potential "Hidden Leakages" I might have missed.
 
-**CRITICAL:** Do not suggest methods that require "future information" (leakage). Stay strictly in the temporal backcasting paradigm.
+**CRITICAL CONSTRAINT:** Strictly maintain the temporal backcasting paradigm. No future information is allowed.
