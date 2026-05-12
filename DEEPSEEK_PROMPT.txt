@@ -1,29 +1,55 @@
-# DEEPSEEK GENIUS PROMPT: BIOPREAD PIU SCALE-UP
+# DEEPSEEK GENIUS PROMPT: BIOPREAD PIU SCALE-UP (ENRICHED DATA EDITION)
 
 **Role:** You are a Senior Bio-AI Researcher specializing in plasmid evolution and epidemiological forecasting.
 
-**Task:** Deeply analyze the provided BioSpread Phase 3 codebase and propose "Genius-level" architectural or feature-engineering interventions to break the current 0.60 AUC plateau and reach 0.75+ without introducing data leakage.
+**Task:** Deeply analyze the provided BioSpread Phase 3 codebase and the detailed dataset metadata below. Propose "Genius-level" architectural or feature-engineering interventions to break the current 0.60 AUC plateau and reach 0.75+ without introducing data leakage.
 
-**Context:**
+---
+
+### 📊 DATASET CATALOG & METADATA
+
+**1. Main Records (Silver Layer): `plasmid_backbones.tsv`**
+- **Count:** 72,556 unique plasmid records.
+- **Key Columns:** `backbone_id` (Clustered Identity), `resolved_year` (1900-2024), `country`, `genus`, `species`, `sequence_length`, `gc`, `topology`, `predicted_mobility` (Conjugative, Mobilizable, Non-mobilizable), `mash_neighbor_distance`.
+- **Taxonomy:** phylum, class, order, family, genus, species coverage.
+
+**2. Functional Annotations: `amr.tsv`**
+- **Count:** 251,138 gene annotations.
+- **Key Columns:** `gene_symbol`, `drug_class` (e.g., Carbapenem, Colistin), `antimicrobial_agent`, `coverage_percentage`, `predicted_phenotype_confidence_level`.
+- **Functionality Mapping:** Genes are mapped to 5 categories: `AMR`, `MOBILITY`, `MAINTENANCE`, `PHAGE`, `OTHER`.
+
+**3. Training Snapshots: `snapshot_records.tsv`**
+- **Count:** 21,520 temporal snapshots (1900-2024).
+- **Target:** `spread_label` (Binary: 1 if plasmid spreads to a NEW country in the next time window).
+- **History Features (Input):**
+  - `n_countries_so_far`, `n_host_genera_so_far`, `years_since_first_obs`, `delta_countries_last_2y`, `n_records_so_far`.
+  - Scaled via `log1p` in the current implementation.
+
+---
+
+### 🧠 ARCHITECTURAL CONTEXT
+
 1. **Model:** FusionNetV3 (Multi-modal Transformer + MLP fusion).
 2. **Loss:** Dirichlet Evidential Loss (for uncertainty) + Pairwise RankNet Loss (for temporal ranking).
-3. **Features:**
-   - Gene Tokens (max 300) -> Attention.
-   - Functional Categories (5-dim).
-   - History Counts (log-scaled).
-   - PIU Pillars: PFP (Protein PCA), EBV (Epistasis ORs), CAV (Node2Vec World Graph Aura).
-4. **Current Status:** The model is "sterilized" (no leakage). It understands general trends but struggles with high-variance spread events.
+3. **Pillar Features (PIU):**
+   - **PFP:** Protein Fitness Fingerprint (ESM-2 -> PCA 16-dim).
+   - **EBV:** Epistatic Pressure (Fisher's Exact Test on Gene Pairs, strictly <= 2020 data).
+   - **CAV:** Geographic Aura (Node2Vec on weighted World Flight/Adjacency Graph).
+4. **Resumption:** Supports `--resume-from` to load weights and continue fine-tuning.
 
-**Deep Analysis Requirements:**
-1. **The Biological Bottleneck:** How can we better represent the "Metabolic Burden" vs "Colonization Advantage"? Is 5 functional categories too sparse?
-2. **Architecture Hardening:** Should we implement a "Mixture of Experts" (MoE) where different heads handle different "Spread Modes" (e.g., Hospital Outbreak vs. Global Trade)?
-3. **Feature Synergy:** CAV uses a static world graph. How can we make it "Dynamic" or "Plasmid-Specific" using Host-Range information?
-4. **Label Refinement:** We use binary labels (spread vs no spread). Propose a "Soft-Labeling" or "Ordinal Regression" strategy that better captures the "Magnitude of Spread".
-5. **Epistasis Evolution:** EBV uses Fisher's Exact Test on past data. Suggest a way to use "Co-evolutionary Signal" from protein-protein interaction (PPI) databases to enhance EBV.
+---
+
+### 🚀 DEEP ANALYSIS REQUIREMENTS
+
+1. **Host-Range Modeling:** We have `genus`/`species` for 72k records but only use them for simple history counts. How can we use an **Embedding Layer for Host Genera** to capture "Host-Generalist" vs "Host-Specialist" strategic advantages?
+2. **Dynamic Epistasis:** EBV is currently a static 6-dim vector. Suggest a way to use **Graph Convolutional Networks (GCN)** on the Gene-Gene interaction graph to predict "Emergent Synergies" in novel gene combinations.
+3. **Temporal Attention:** We use a simple `TimeGate` (Sine/Cosine). Should we transition to a **Temporal Fusion Transformer (TFT)** or **Neural ODE** to model the continuous-time spread probability?
+4. **Label Refinement:** Binary labels are noisy. Can we use **Self-Supervised Pre-training (Contrastive Learning)** on the 72k records before training on the 21k labeled snapshots?
+5. **Geographic GNNs:** CAV uses Node2Vec. Would a **Spatial-Temporal Graph Neural Network (ST-GNN)** that takes the current global distribution of a plasmid as a graph signal perform better?
 
 **Instructions for the response:**
-- Provide concrete Python/PyTorch code snippets for architectural changes.
-- Propose new mathematical formulations for the loss function if necessary.
-- Suggest specific external datasets that could be integrated (e.g., host-plasmid interaction maps).
+- Provide concrete Python/PyTorch code snippets.
+- Propose new mathematical formulations for the loss function.
+- Analyze the impact of the 11MB `piu_extra_features.json` dictionary vs. on-the-fly calculation.
 
 **CRITICAL:** Do not suggest methods that require "future information" (leakage). Stay strictly in the temporal backcasting paradigm.
