@@ -1,21 +1,29 @@
-## 🧬 DEEPSEEK GENIUS TASK: BioSpread Architectural Audit - PHASE 3
+# DEEPSEEK GENIUS PROMPT: BIOPREAD PIU SCALE-UP
 
-### 🔴 STATUS CHECK: WE HIT A GLASS CEILING
-We implemented your Phase 2 plan (Backcast features, FusionNet, Focal Loss). It worked: AUC went from **0.58 to 0.65**. Precision jumped to **0.71**. The model is now "sane" and no longer biased.
+**Role:** You are a Senior Bio-AI Researcher specializing in plasmid evolution and epidemiological forecasting.
 
-**HOWEVER, 0.65 IS STILL NOT GOOD ENOUGH.** 
-The target is 0.75+. We are still in the "mediocre" zone. The model converges quickly (Loss 0.16) but hits early stopping because the validation AUC stops improving.
+**Task:** Deeply analyze the provided BioSpread Phase 3 codebase and propose "Genius-level" architectural or feature-engineering interventions to break the current 0.60 AUC plateau and reach 0.75+ without introducing data leakage.
 
-### 🐛 THE RESIDUAL BOTTLENECK
-Even with backcast features (epidemiological pressure), the model is missing the **biological "why"**. We have the "how it spread so far" (history) but we are still weak on the "what makes this specific plasmid a monster" (intrinsic fitness).
+**Context:**
+1. **Model:** FusionNetV3 (Multi-modal Transformer + MLP fusion).
+2. **Loss:** Dirichlet Evidential Loss (for uncertainty) + Pairwise RankNet Loss (for temporal ranking).
+3. **Features:**
+   - Gene Tokens (max 300) -> Attention.
+   - Functional Categories (5-dim).
+   - History Counts (log-scaled).
+   - PIU Pillars: PFP (Protein PCA), EBV (Epistasis ORs), CAV (Node2Vec World Graph Aura).
+4. **Current Status:** The model is "sterilized" (no leakage). It understands general trends but struggles with high-variance spread events.
 
-### 🧠 YOUR MISSION: THE "RADICAL" PHASE 3 PLAN
-I need you to think deeper. Much deeper. We need a **Phase 3** plan that doesn't just "add more features" but changes how the model **perceives the biological threat**.
+**Deep Analysis Requirements:**
+1. **The Biological Bottleneck:** How can we better represent the "Metabolic Burden" vs "Colonization Advantage"? Is 5 functional categories too sparse?
+2. **Architecture Hardening:** Should we implement a "Mixture of Experts" (MoE) where different heads handle different "Spread Modes" (e.g., Hospital Outbreak vs. Global Trade)?
+3. **Feature Synergy:** CAV uses a static world graph. How can we make it "Dynamic" or "Plasmid-Specific" using Host-Range information?
+4. **Label Refinement:** We use binary labels (spread vs no spread). Propose a "Soft-Labeling" or "Ordinal Regression" strategy that better captures the "Magnitude of Spread".
+5. **Epistasis Evolution:** EBV uses Fisher's Exact Test on past data. Suggest a way to use "Co-evolutionary Signal" from protein-protein interaction (PPI) databases to enhance EBV.
 
-**Consider these radical directions:**
-1. **Biological Pre-training (The "Gene-GPT" Approach)**: Should we use a Masked Language Model (MLM) pre-training on ALL 200k+ plasmid gene sequences to learn a "Universal Plasmid Grammar" before the spread task?
-2. **Topology-Aware Snapshots**: We currently treat countries as independent. Can we inject a **Geographical Adjacency Matrix** (distance between countries) so the model understands that spreading from France to Germany is different from France to Japan?
-3. **Multi-Scale Temporal Windows**: Instead of one snapshot, should we use a **Recurrent (GRU/LSTM) or Temporal Convolutional (TCN)** block over a sequence of snapshots to see the "acceleration" of the spread?
-4. **Genetic Interaction (Epistasis) Maps**: The current `GeneEncoder` sees genes as tokens. Can we model **Co-occurrence Networks** where certain combinations of genes (AMR + High-conjugation) trigger a "High-Risk" state?
+**Instructions for the response:**
+- Provide concrete Python/PyTorch code snippets for architectural changes.
+- Propose new mathematical formulations for the loss function if necessary.
+- Suggest specific external datasets that could be integrated (e.g., host-plasmid interaction maps).
 
-**Review the `FusionNet` in `evidential.py` and the `REDESIGN_REPORT.md`. Propose a Phase 3 plan that is truly "ingenious" and potentially Nobel-worthy in the context of computational epidemiology.**
+**CRITICAL:** Do not suggest methods that require "future information" (leakage). Stay strictly in the temporal backcasting paradigm.
