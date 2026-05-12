@@ -39,7 +39,7 @@ I want you to think beyond standard "add more layers" solutions. Deeply investig
 2. **The "Silent" Signal in Taxonomy:**
    - We possess detailed host taxonomy (`genus`, `species`) for 72k records. Analyze how the interaction between plasmid "cargo" and host "niche" can be modeled to predict colonization potential.
 
-3. **Multi-Modal Synchronization:**
+3. **Multi-modal Synchronization:**
    - The current fusion strategy is concatenation-based. Evaluate the potential for "Cross-Modal Attention" or "Gated Fusion" to allow the model to weight genetic signal vs. epidemiological pressure dynamically.
 
 4. **Label Noise & Problem Formulation:**
@@ -54,4 +54,6 @@ I want you to think beyond standard "add more layers" solutions. Deeply investig
 - Include Python/PyTorch pseudo-code for complex implementations.
 - Identify potential "Hidden Leakages" I might have missed.
 
-**CRITICAL CONSTRAINT:** Strictly maintain the temporal backcasting paradigm. No future information is allowed.
+**CRITICAL CONSTRAINTS:**
+- **Leakage:** Strictly maintain the temporal backcasting paradigm. No future information is allowed.
+- **Compute Efficiency:** Propose solutions that are **computationally lean**. No suggestions requiring massive GPU clusters, LLM fine-tuning, or multi-day training runs. Focus on algorithmic "cleverness" rather than brute force.
