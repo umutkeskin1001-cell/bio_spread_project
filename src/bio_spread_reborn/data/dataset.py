@@ -1,141 +1,238 @@
-import torch
-from torch.utils.data import Dataset
-import polars as pl
+"""
+Sovereign-X: Backbone-level sequence dataset (with taxonomy support).
+
+Each item = one backbone's full temporal sequence of snapshots.
+Model processes sequences, not individual snapshots.
+"""
+
+from __future__ import annotations
+
 import logging
-import numpy as np
+from pathlib import Path
 from typing import Dict, List, Optional
-from bio_spread_reborn.data.functional_tokenizer import FunctionalTokenizer
+
+import numpy as np
+import polars as pl
+import torch
+from torch.utils.data import Dataset, Sampler
 
 logger = logging.getLogger(__name__)
 
-class BioDataset(Dataset):
-    def __init__(self, 
-                 df: pl.DataFrame, 
-                 genetic_map: Dict[str, List[str]], 
-                 extra_features: Optional[Dict[str, np.ndarray]] = None,
-                 max_genes: int = 50,
-                 return_pairs: bool = False):
-        """
-        # and backcast features: n_countries_so_far, n_host_genera_so_far, years_since_first_obs, delta_countries_last_2y
-        """
-        self.df = df
-        self.genetic_map = genetic_map
-        self.extra_features = extra_features
-        self.max_genes = max_genes
-        self.func_tokenizer = FunctionalTokenizer()
-        self.return_pairs = return_pairs
-        
-        # Cache for performance
-        self.backbone_ids = df["backbone_id"].to_list()
-        self.years = df["year"].to_list()
-        self.labels = df["spread_label"].to_list() if "spread_label" in df.columns else None
-        
-        # Precompute pairs for Ranking Loss
-        self.pairs = {}
-        if return_pairs:
-            from collections import defaultdict
-            import random
-            bid_to_idx = defaultdict(list)
-            for i, bid in enumerate(self.backbone_ids):
-                bid_to_idx[bid].append(i)
-            for i, bid in enumerate(self.backbone_ids):
-                candidates = [j for j in bid_to_idx[bid] if j != i]
-                if candidates:
-                    self.pairs[i] = random.choice(candidates)
-        
-        # Backcast features: any numeric column except year and label
-        exclude = ["backbone_id", "year", "spread_label"]
-        self.history_cols = [c for c in df.columns if c not in exclude and df[c].dtype in [pl.Float32, pl.Float64, pl.Int32, pl.Int64]]
-        self.history_features = df.select(self.history_cols).to_numpy().astype("float32")
-        # Scale history features (counts, years) using log1p to prevent vanishing/exploding gradients
-        self.history_features = np.log1p(np.maximum(self.history_features, 0.0))
-        logger.info(f"BioDataset initialized with {len(self.history_cols)} numeric features: {self.history_cols}. Pairs: {return_pairs}")
+from bio_spread_reborn.data.snapshot import (
+    SNAPSHOT_FEATURE_COLS,
+    STATIC_COLS,
+    TAXONOMY_COLS,
+)
+
+# Hazard target columns
+HAZARD_COLS = ["hazard_1", "hazard_2", "hazard_3"]
+
+# Count target column
+COUNT_COL = "n_new_countries"
 
 
-
-    def __len__(self):
-        return len(self.df)
-
-    def _get_single_item(self, idx):
-        bid = self.backbone_ids[idx]
-        year = self.years[idx]
-        
-        # 1. Genetic tokens (Raw)
-        genes = self.genetic_map.get(bid, [])
-        
-        # 2. Functional features
-        func_vec = self.func_tokenizer.encode(genes)
-        
-        # 3. History features
-        hist_vec = self.history_features[idx]
-        
-        # 4. Extra features (PFP + EBV + CAV) using snapshot-aware key
-        key = f"{bid}_{year}"
-        if self.extra_features and key in self.extra_features:
-            extra_vec = self.extra_features[key]
-        elif self.extra_features and bid in self.extra_features:
-            # Fallback for old cached data if still present
-            extra_vec = self.extra_features[bid]
-        else:
-            # Fallback to zeros (16+6+8 = 30)
-            extra_vec = np.zeros(30, dtype=np.float32)
-            
-        # 5. Label
-        label = self.labels[idx] if self.labels is not None else 0
-        
-        return {
-            "bid": bid,
-            "year": year,
-            "genes": genes,
-            "func_vec": torch.tensor(func_vec, dtype=torch.float32),
-            "hist_vec": torch.tensor(hist_vec, dtype=torch.float32),
-            "extra_vec": torch.tensor(extra_vec, dtype=torch.float32),
-            "label": label
-        }
-
-    def __getitem__(self, idx):
-        item = self._get_single_item(idx)
-        if self.return_pairs and idx in self.pairs:
-            pair_item = self._get_single_item(self.pairs[idx])
-            return [item, pair_item]
-        return [item]
+def fit_normalizers(train_df: pl.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+    """Fit feature normalizers on TRAINING data only. Returns (means, stds)."""
+    vals = []
+    for col in SNAPSHOT_FEATURE_COLS:
+        if col in train_df.columns:
+            vals.append(train_df[col].to_numpy())
+    if not vals:
+        return np.zeros(len(SNAPSHOT_FEATURE_COLS)), np.ones(len(SNAPSHOT_FEATURE_COLS))
+    arr = np.column_stack(vals)
+    return np.nanmean(arr, axis=0), np.nanstd(arr, axis=0).clip(min=1e-8)
 
 
-def bio_collate_fn(batch, tokenizer, max_genes=50):
+def fit_static_normalizers(train_df: pl.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+    """Fit static feature normalizers on TRAINING data only."""
+    first = train_df.group_by("backbone_id").agg([pl.col(c).first().alias(c) for c in STATIC_COLS])
+    vals = []
+    for col in STATIC_COLS:
+        vals.append(first[col].to_numpy())
+    if not vals:
+        return np.zeros(len(STATIC_COLS)), np.ones(len(STATIC_COLS))
+    arr = np.column_stack(vals)
+    return np.nanmean(arr, axis=0), np.nanstd(arr, axis=0).clip(min=1e-8)
+
+
+def save_normalizers(path: Path, means: np.ndarray, stds: np.ndarray):
+    np.savez_compressed(path, means=means, stds=stds)
+
+
+def load_normalizers(path: Path) -> tuple[np.ndarray, np.ndarray]:
+    data = np.load(path)
+    return data["means"], data["stds"]
+
+
+class SovereignSequenceDataset(Dataset):
+    """Dataset returning one backbone's temporal sequence per item.
+
+    Supports taxonomy indices as additional static features.
+    Normalization is fit on train data only (via fit_normalizers).
     """
-    Custom collate to handle tokenization and padding.
-    """
-    flat_batch = [item for sublist in batch for item in sublist]
-    
-    bids = [item["bid"] for item in flat_batch]
-    # TimeGate Normalization: (year - 2000) / 30.0
-    years = torch.tensor([(item["year"] - 2000.0) / 30.0 for item in flat_batch], dtype=torch.float32).unsqueeze(-1)
-    labels = torch.tensor([item["label"] for item in flat_batch], dtype=torch.long)
-    
-    func_vecs = torch.stack([item["func_vec"] for item in flat_batch])
-    hist_vecs = torch.stack([item["hist_vec"] for item in flat_batch])
-    extra_vecs = torch.stack([item["extra_vec"] for item in flat_batch])
-    
-    # Tokenize raw genes
-    token_list = []
-    for item in flat_batch:
-        tokens = tokenizer.encode(item["genes"])[:max_genes]
-        padding = [0] * (max_genes - len(tokens))
-        token_list.append(torch.tensor(tokens + padding, dtype=torch.long))
-        
-    x_gene = torch.stack(token_list)
-    
-    # Also pass raw years just in case
-    raw_years = [item["year"] for item in flat_batch]
-    
-    return {
-        "x_gene": x_gene,
-        "x_func": func_vecs,
-        "x_hist": hist_vecs,
-        "x_extra": extra_vecs,
-        "t": years,
-        "y": labels,
-        "bids": bids,
-        "raw_years": raw_years
+
+    def __init__(
+        self,
+        sequences_df: pl.DataFrame,
+        backbone_ids: List[str],
+        max_seq_len: int = 50,
+        normalizer: Optional[tuple[np.ndarray, np.ndarray]] = None,
+        static_normalizer: Optional[tuple[np.ndarray, np.ndarray]] = None,
+        use_taxonomy: bool = True,
+    ):
+        self.max_seq_len = max_seq_len
+        self.use_taxonomy = use_taxonomy and all(c in sequences_df.columns for c in TAXONOMY_COLS)
+        self.means, self.stds = normalizer or (
+            np.zeros(len(SNAPSHOT_FEATURE_COLS)),
+            np.ones(len(SNAPSHOT_FEATURE_COLS)),
+        )
+        self.static_means, self.static_stds = static_normalizer or (
+            np.zeros(len(STATIC_COLS)),
+            np.ones(len(STATIC_COLS)),
+        )
+        self._build(sequences_df, backbone_ids)
+
+    def _build(self, df: pl.DataFrame, backbone_ids: List[str]):
+        grouped = {}
+        for (bid,), g in df.group_by(["backbone_id"], maintain_order=True):
+            if bid in backbone_ids:
+                grouped[bid] = g.sort("year")
+        self.items = []
+        n_features = len(SNAPSHOT_FEATURE_COLS)
+        n_static = len(STATIC_COLS)
+
+        for bid in backbone_ids:
+            g = grouped.get(bid)
+            if g is None or len(g) == 0:
+                continue
+            seq_len = min(len(g), self.max_seq_len)
+
+            # Extract + normalize snapshot features
+            feat = np.zeros((seq_len, n_features), dtype=np.float32)
+            for j, col in enumerate(SNAPSHOT_FEATURE_COLS):
+                if col in g.columns:
+                    vals = g[col].to_numpy()[:seq_len]
+                    feat[:, j] = np.nan_to_num(vals, nan=0.0)
+            feat = (feat - self.means) / self.stds
+
+            # Extract numeric static features (first snapshot per backbone)
+            static_arr = np.zeros(n_static, dtype=np.float32)
+            for j, col in enumerate(STATIC_COLS):
+                if col in g.columns:
+                    v = g[col].to_numpy()[0]
+                    static_arr[j] = float(v) if v is not None and v == v else 0.0
+            static_arr = (static_arr - self.static_means) / self.static_stds
+
+            # Extract taxonomy indices (NOT normalized, stored as int)
+            taxonomy_idxs = None
+            if self.use_taxonomy:
+                idxs = np.zeros(5, dtype=np.int64)
+                for j, col in enumerate(TAXONOMY_COLS):
+                    if col in g.columns:
+                        v = g[col].to_numpy()[0]
+                        idxs[j] = int(v) if v is not None else 0
+                taxonomy_idxs = idxs
+
+            # Extract hazards
+            hazard = np.full((seq_len, 3), -1.0, dtype=np.float32)
+            for j, col in enumerate(HAZARD_COLS):
+                if col in g.columns:
+                    vals = g[col].to_numpy()[:seq_len]
+                    hazard[:, j] = np.nan_to_num(vals, nan=-1.0)
+
+            # Extract count target (last snapshot's value)
+            count_val = 0.0
+            if COUNT_COL in g.columns:
+                last_count = g[COUNT_COL].to_numpy()[seq_len - 1] if seq_len > 0 else 0.0
+                count_val = float(last_count) if last_count is not None and last_count >= 0 else -1.0
+
+            item = {
+                "seq": torch.from_numpy(feat),
+                "static": torch.from_numpy(static_arr),
+                "hazard": torch.from_numpy(hazard),
+                "count": torch.tensor(count_val, dtype=torch.float32),
+                "seq_len": seq_len,
+                "backbone_id": bid,
+            }
+            if self.use_taxonomy:
+                item["taxonomy"] = torch.from_numpy(taxonomy_idxs).long()
+
+            self.items.append(item)
+
+        logger.info(
+            "Built SovereignSequenceDataset with %d backbones (taxonomy=%s)", len(self.items), self.use_taxonomy
+        )
+
+    def __len__(self) -> int:
+        return len(self.items)
+
+    def __getitem__(self, idx: int) -> Dict:
+        return self.items[idx]
+
+
+def sequence_collate(batch: List[Dict], max_seq_len: int = 50) -> Dict[str, torch.Tensor]:
+    """Collate backbone sequences into padded batch. All tensors on CPU."""
+    B = len(batch)
+    n_features = batch[0]["seq"].size(-1)
+    n_static = batch[0]["static"].size(-1)
+    has_taxonomy = "taxonomy" in batch[0]
+
+    seqs = torch.zeros(B, max_seq_len, n_features)
+    hazards = torch.full((B, max_seq_len, 3), -1.0)
+    masks = torch.zeros(B, max_seq_len)
+    lengths = torch.zeros(B, dtype=torch.long)
+    static = torch.zeros(B, n_static)
+    counts = torch.full((B,), -1.0)
+    taxonomy_idxs = torch.zeros(B, 5, dtype=torch.long) if has_taxonomy else None
+    bids = []
+
+    for i, item in enumerate(batch):
+        L = item["seq_len"]
+        lengths[i] = L
+        masks[i, :L] = 1.0
+        seqs[i, :L] = item["seq"][:L]
+        item_h = item["hazard"][:L]
+        hazards[i, :L] = item_h
+        static[i] = item["static"]
+        counts[i] = item["count"]
+        if has_taxonomy:
+            taxonomy_idxs[i] = item["taxonomy"]
+        bids.append(item["backbone_id"])
+
+    result = {
+        "seq": seqs,
+        "static": static,
+        "hazard": hazards,
+        "count": counts,
+        "mask": masks,
+        "seq_len": lengths,
+        "backbone_ids": bids,
     }
+    if has_taxonomy:
+        result["taxonomy"] = taxonomy_idxs
+    return result
 
+
+class SequenceBatchSampler(Sampler):
+    """Samples backbones ensuring diverse sequence lengths per batch."""
+
+    def __init__(self, seq_lens: List[int], batch_size: int, shuffle: bool = True):
+        self.seq_lens = np.array(seq_lens)
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        self.n_samples = len(seq_lens)
+
+    def __iter__(self):
+        indices = np.arange(self.n_samples)
+        if self.shuffle:
+            np.random.shuffle(indices)
+        sorted_idx = indices[np.argsort(self.seq_lens[indices])]
+        batches = []
+        for i in range(0, len(sorted_idx), self.batch_size):
+            batches.append(sorted_idx[i : i + self.batch_size])
+        if self.shuffle:
+            np.random.shuffle(batches)
+        return iter(batches)
+
+    def __len__(self) -> int:
+        return max(1, (self.n_samples + self.batch_size - 1) // self.batch_size)

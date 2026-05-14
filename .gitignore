@@ -74,3 +74,4 @@ data/**/*.dat
 !tests/fixtures/**
 scratch/
 docs/superpowers/
+archive/

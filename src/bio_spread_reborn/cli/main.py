@@ -1,305 +1,398 @@
-import click
+"""
+Sovereign-X: Thin CLI. Three commands: sovereign-prepare, train, evaluate.
+"""
+
+from __future__ import annotations
+
+import json
 import logging
+from pathlib import Path
+
+import click
+import numpy as np
 import polars as pl
 import torch
-import json
-import numpy as np
-from pathlib import Path
-from datetime import datetime
-from torch.utils.data import DataLoader, WeightedRandomSampler
-from functools import partial
-from typing import Dict, List, Optional
+from torch.utils.data import DataLoader
 
-from bio_spread_reborn.config.schema import Config
+from bio_spread_reborn.data.dataset import (
+    SequenceBatchSampler,
+    SovereignSequenceDataset,
+    fit_normalizers,
+    fit_static_normalizers,
+    load_normalizers,
+    save_normalizers,
+    sequence_collate,
+)
+from bio_spread_reborn.data.snapshot import (
+    TAXONOMY_COLS,
+    build_sequences,
+    build_taxonomy_vocab,
+    disjoint_backbone_split,
+    load_taxonomy_vocab,
+    save_taxonomy_vocab,
+)
+from bio_spread_reborn.models.sovereign import SovereignX
+from bio_spread_reborn.models.trainer import SovereignXTrainer
 from bio_spread_reborn.utils.config import load_config
-from bio_spread_reborn.data.loader import DataPipeline
-from bio_spread_reborn.data.snapshot import TemporalSnapshotBuilder
-from bio_spread_reborn.data.dataset import BioDataset, bio_collate_fn
-from bio_spread_reborn.data.tokenizer import GeneTokenizer
-from bio_spread_reborn.data.functional_tokenizer import FunctionalTokenizer
-from bio_spread_reborn.models.evidential import FusionNetV3
-from bio_spread_reborn.models.trainer import EvidentialTrainer
-from bio_spread_reborn.utils.metrics import print_report
-from bio_spread_reborn.features.pfp_extractor import PFPExtractor
-from bio_spread_reborn.features.epistasis_matrix import EBVExtractor
-from bio_spread_reborn.features.geo_aura import CAVExtractor
-from bio_spread_reborn.data.data_fetcher import DataFetcher
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("BioSpreadCLI")
+logger = logging.getLogger("sovereign")
+
 
 @click.group()
 def cli():
-    """BioSpread Reborn: Elite-grade plasmid spread surveillance."""
-    pass
-
-@cli.command()
-@click.option('--config', default='config/default.yaml', help='Path to config file')
-@click.option('--output-path', default='data/snapshots/snapshot_records.tsv')
-def snapshot(config, output_path):
-    """Build temporal snapshots with backcast features."""
-    cfg = load_config(config)
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    logger.info("Loading raw data for snapshot building...")
-    raw_records = pl.read_csv(cfg.data.records_path, separator='\t')
-    if 'resolved_year' in raw_records.columns and 'year' not in raw_records.columns:
-        raw_records = raw_records.rename({'resolved_year': 'year'})
-        
-    backbone_meta = pl.read_csv(cfg.data.backbones_path, separator='\t')
-    amr = pl.read_csv(cfg.data.amr_path, separator='\t')
-    
-    builder = TemporalSnapshotBuilder(raw_records, backbone_meta, amr)
-    builder.build_snapshot(output_path)
-    click.echo(f"Enriched snapshot created at {output_path}")
-
-@cli.command()
-@click.option('--config', default='config/default.yaml')
-def piu_prepare(config):
-    """Pillar Feature Extraction (PIU Phase 3)."""
-    cfg = load_config(config)
-    fetcher = DataFetcher()
-    fetcher.fetch_geo_adjacency()
-    fetcher.fetch_simulated_flights()
-    
-    # 1. Load Data
-    pipeline = DataPipeline(cfg)
-    genetic_map_df = pipeline.load_genetic_map()
-    genetic_map = dict(zip(genetic_map_df["backbone_id"], genetic_map_df["gene_list"]))
-    
-    snapshot_path = Path(cfg.data.snapshot_cache_dir) / "snapshot_records.tsv"
-    df = pl.read_csv(snapshot_path, separator='\t')
-    backbone_meta = pl.read_csv(cfg.data.backbones_path, separator='\t')
-    
-    # 2. Pillar 1: PFP
-    pfp_ext = PFPExtractor()
-    # Mocking sequences for demonstration if faa files are missing
-    bid_to_seqs = {bid: [("p1", "MKKVLLLSVLLV")] for bid in df["backbone_id"].unique()}
-    pfp_feats = pfp_ext.compute_pfp(bid_to_seqs, backbone_meta)
-    
-    # 3. Pillar 2: EBV (Leakage-free: only use backbones seen before split_year)
-    raw_records = pl.read_csv(cfg.data.records_path, separator='\t')
-    if 'resolved_year' in raw_records.columns and 'year' not in raw_records.columns:
-        raw_records = raw_records.rename({'resolved_year': 'year'})
-    
-    past_backbones = set(raw_records.filter(pl.col("year") < cfg.data.split_year)["backbone_id"].unique().to_list())
-    past_genetic_map = {bid: genes for bid, genes in genetic_map.items() if bid in past_backbones}
-    
-    ebv_ext = EBVExtractor()
-    ebv_ext.build_matrix(past_genetic_map)
-    ebv_feats = ebv_ext.compute_all_ebv(genetic_map) # Can compute for all, but matrix is built on past
-    
-    # 4. Pillar 3: CAV (Leakage-free: dynamic per snapshot)
-    cav_ext = CAVExtractor()
-    G = cav_ext.build_world_graph()
-    cav_ext.train_node2vec(G)
-    
-    # 5. Merge and Save (Snapshot aware: bid_year)
-    extra_features = {}
-    
-    # Pre-group raw_records by backbone for fast historical lookups
-    bid_records = raw_records.select(["backbone_id", "year", "country"]).sort("year")
-    
-    for row in df.to_dicts():
-        bid = row["backbone_id"]
-        year = row["year"]
-        key = f"{bid}_{year}"
-        
-        # PFP (Static)
-        pfp = pfp_feats.get(bid, np.zeros(16))
-        # EBV (Static, but matrix built without leakage)
-        ebv = ebv_feats.get(bid, np.zeros(6))
-        
-        # CAV (Dynamic: only countries seen <= year)
-        past_countries = bid_records.filter(
-            (pl.col("backbone_id") == bid) & (pl.col("year") <= year)
-        )["country"].unique().to_list()
-        
-        cav = cav_ext.compute_aura(past_countries)
-        
-        extra_features[key] = np.concatenate([pfp, ebv, cav]).tolist()
-    
-    with open("data/piu_extra_features.json", "w") as f:
-        json.dump(extra_features, f)
-    
-    logger.info("PIU feature extraction complete. Saved to data/piu_extra_features.json")
+    """Sovereign-X: Dual-expert temporal hazard model for plasmid spread."""
 
 
 @cli.command()
-@click.option('--config', default='config/default.yaml', help='Path to config file')
-@click.option('--resume-from', default=None, help='Path to best_model.pt to resume training from')
-def train(config, resume_from):
-    """Train the FusionNetV3 model with PIU features."""
+@click.option("--config", default="config/default.yaml")
+@click.option("--output-dir", default="data/sovereign_features")
+def sovereign_prepare(config: str, output_dir: str):
+    """Build sequences + disjoint backbone split + save normalizers."""
     cfg = load_config(config)
-    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    
-    # 1. Load Data
-    snapshot_path = Path(cfg.data.snapshot_cache_dir) / "snapshot_records.tsv"
-    df = pl.read_csv(snapshot_path, separator='\t')
-    
-    pipeline = DataPipeline(cfg)
-    genetic_map_df = pipeline.load_genetic_map()
-    genetic_map = dict(zip(genetic_map_df["backbone_id"], genetic_map_df["gene_list"]))
-    
-    # Load Extra Features
-    extra_path = Path("data/piu_extra_features.json")
-    extra_features = None
-    if extra_path.exists():
-        with open(extra_path, "r") as f:
-            extra_features = {k: np.array(v, dtype=np.float32) for k, v in json.load(f).items()}
-            logger.info(f"Loaded extra features for {len(extra_features)} backbones")
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    train_df = df.filter(pl.col("year") < cfg.data.split_year)
-    val_df = df.filter(pl.col("year") >= cfg.data.split_year)
-    
-    # 3. Tokenizers
-    tokenizer = GeneTokenizer(max_len=cfg.model.max_genes)
-    tokenizer.fit(genetic_map_df["gene_list"])
-    func_tokenizer = FunctionalTokenizer()
-    
-    # 4. Create Loaders
-    train_ds = BioDataset(train_df, genetic_map, extra_features=extra_features, max_genes=cfg.model.max_genes, return_pairs=True)
-    val_ds = BioDataset(val_df, genetic_map, extra_features=extra_features, max_genes=cfg.model.max_genes, return_pairs=False)
-    
-    labels = train_df["spread_label"].to_list()
-    class_counts = [labels.count(0), labels.count(1)]
-    weights = [1.0/max(1, class_counts[l]) for l in labels]
-    sampler = WeightedRandomSampler(weights, len(weights))
-    
-    collate = partial(bio_collate_fn, tokenizer=tokenizer, max_genes=cfg.model.max_genes)
-    
-    train_loader = DataLoader(train_ds, batch_size=cfg.training.batch_size, sampler=sampler, collate_fn=collate)
-    val_loader = DataLoader(val_ds, batch_size=cfg.training.batch_size, collate_fn=collate)
-    
-    # 5. Initialize FusionNetV3
-    model = FusionNetV3(
-        vocab_size=tokenizer.get_vocab_size(),
-        func_dim=func_tokenizer.get_dim(),
-        history_dim=len(train_ds.history_cols),
-        extra_dim=30,
-        emb_dim=cfg.model.emb_dim,
-        hidden_dim=cfg.model.hidden_dim,
-        num_heads=cfg.model.num_heads,
-        num_layers=1,
-        time_freqs=cfg.model.time_freqs
+    raw = pl.read_csv(cfg.data.backbones_path, separator="\t")
+    if "resolved_year" in raw.columns and "year" not in raw.columns:
+        raw = raw.rename({"resolved_year": "year"})
+    meta = raw.unique(subset=["backbone_id"])
+    split_year = cfg.data.split_year
+
+    # Disjoint backbone split
+    train_bids, val_bids, test_bids = disjoint_backbone_split(
+        raw,
+        split_year,
+        val_frac=cfg.data.val_backbone_frac,
+        test_frac=cfg.data.test_backbone_frac,
     )
-    
-    # 6. Initialize Trainer
-    train_cfg = cfg.model_dump()
-    train_cfg["run_id"] = run_id
-    trainer = EvidentialTrainer(model, train_cfg)
-    
-    if resume_from:
-        logger.info(f"Resuming model weights from {resume_from}")
-        model.load_state_dict(torch.load(resume_from, map_location="cpu"))
-    
-    tokenizer.save(trainer.artifact_dir / 'tokenizer.json')
 
-    
-    # 7. Fit
-    artifact_dir = trainer.fit(train_loader, val_loader)
-    logger.info(f"Training complete. Artifacts saved in {artifact_dir}")
+    seq_kwargs = {
+        "horizon": cfg.data.spread_horizon,
+        "min_snapshots": 1,
+        "require_country_history": cfg.data.require_country_history,
+    }
+
+    all_bids = {}
+    for bid in train_bids:
+        all_bids[bid] = "train"
+    for bid in val_bids:
+        all_bids[bid] = "val"
+    for bid in test_bids:
+        all_bids[bid] = "test"
+
+    # Build taxonomy vocabulary from ALL raw data
+    taxonomy_vocab = build_taxonomy_vocab(raw)
+    save_taxonomy_vocab(taxonomy_vocab, output_dir / "taxonomy_vocab.json")
+
+    sequences = build_sequences(raw, meta, set(all_bids.keys()), taxonomy_vocab=taxonomy_vocab, **seq_kwargs)
+    sequences = sequences.with_columns(
+        pl.col("backbone_id")
+        .map_elements(lambda bid: all_bids.get(bid, "unknown"), return_dtype=pl.Utf8)
+        .alias("split")
+    )
+
+    # Fit normalizers on TRAIN only (leakage prevention)
+    train_seq = sequences.filter(pl.col("split") == "train")
+    seq_means, seq_stds = fit_normalizers(train_seq)
+    static_means, static_stds = fit_static_normalizers(train_seq)
+    save_normalizers(output_dir / "normalizers.npz", seq_means, seq_stds)
+    save_normalizers(output_dir / "static_normalizers.npz", static_means, static_stds)
+
+    sequences.write_csv(output_dir / "sequences.tsv", separator="\t")
+    with open(output_dir / "split.json", "w") as f:
+        json.dump(
+            {
+                "train": list(train_bids),
+                "val": list(val_bids),
+                "test": list(test_bids),
+                "split_year": split_year,
+            },
+            f,
+            indent=2,
+        )
+
+    has_tax = all(c in sequences.columns for c in TAXONOMY_COLS)
+    logger.info(
+        "Prepared %d sequences (%d train, %d val, %d test) [taxonomy=%s]",
+        len(sequences),
+        sequences.filter(pl.col("split") == "train").shape[0],
+        sequences.filter(pl.col("split") == "val").shape[0],
+        sequences.filter(pl.col("split") == "test").shape[0],
+        "yes" if has_tax else "no",
+    )
+
 
 @cli.command()
-@click.option('--model-path', required=True)
-@click.option('--tokenizer-path', required=True)
-@click.option('--input-path', required=True)
-@click.option('--output-path', default='predictions.json')
-@click.option('--config', default='config/default.yaml')
-def predict(model_path, tokenizer_path, input_path, output_path, config):
-    """Run inference using FusionNetV3."""
+@click.option("--config", default="config/default.yaml")
+@click.option("--feature-dir", default="data/sovereign_features")
+def train(config: str, feature_dir: str):
+    """Train Sovereign-X model."""
     cfg = load_config(config)
-    tokenizer = GeneTokenizer.load(Path(tokenizer_path))
-    func_tokenizer = FunctionalTokenizer()
-    
-    input_df = pl.read_csv(input_path, separator='\t')
-    
-    # Add dummy extra features for prediction if not provided
-    extra_features = {}
-    for bid in input_df["backbone_id"].unique():
-        extra_features[bid] = np.zeros(30, dtype=np.float32)
-        
-    pipeline = DataPipeline(cfg)
-    genetic_map_df = pipeline.load_genetic_map()
-    genetic_map = dict(zip(genetic_map_df["backbone_id"], genetic_map_df["gene_list"]))
-    
-    ds = BioDataset(input_df, genetic_map, extra_features=extra_features, max_genes=cfg.model.max_genes)
-    collate = partial(bio_collate_fn, tokenizer=tokenizer, max_genes=cfg.model.max_genes)
-    loader = DataLoader(ds, batch_size=1, collate_fn=collate)
-    
-    model = FusionNetV3(
-        vocab_size=tokenizer.get_vocab_size(),
-        func_dim=func_tokenizer.get_dim(),
-        history_dim=len(ds.history_cols),
-        extra_dim=30,
-        emb_dim=cfg.model.emb_dim,
-        hidden_dim=cfg.model.hidden_dim,
-        num_heads=cfg.model.num_heads,
-        num_layers=1,
-        time_freqs=cfg.model.time_freqs
+    feature_dir = Path(feature_dir)
+
+    seq_df = pl.read_csv(feature_dir / "sequences.tsv", separator="\t")
+    taxonomy_vocab = load_taxonomy_vocab(feature_dir / "taxonomy_vocab.json")
+    use_taxonomy = bool(taxonomy_vocab)
+
+    train_df = seq_df.filter((pl.col("split") == "train") & (pl.col("observed") == 1.0))
+    val_df = seq_df.filter((pl.col("split") == "val") & (pl.col("observed") == 1.0))
+
+    # Split val into early-stop (70%), cal-temp (15%), cal-cold (15%)
+    val_bids = val_df["backbone_id"].unique().to_list()
+    np.random.seed(cfg.training.seed)
+    np.random.shuffle(val_bids)
+    n_val = len(val_bids)
+    n_cal_temp = max(1, n_val // 7)
+    n_cal_cold = max(1, n_val // 7)
+    cal_temp_bids = set(val_bids[:n_cal_temp])
+    cal_cold_bids = set(val_bids[n_cal_temp : n_cal_temp + n_cal_cold])
+    early_stop_bids = set(val_bids[n_cal_temp + n_cal_cold :])
+
+    # Load normalizers fitted on train
+    seq_means, seq_stds = load_normalizers(feature_dir / "normalizers.npz")
+    static_means, static_stds = load_normalizers(feature_dir / "static_normalizers.npz")
+
+    max_seq_len = cfg.model.max_seq_len
+
+    train_ds = SovereignSequenceDataset(
+        train_df,
+        train_df["backbone_id"].unique().to_list(),
+        max_seq_len,
+        normalizer=(seq_means, seq_stds),
+        static_normalizer=(static_means, static_stds),
+        use_taxonomy=use_taxonomy,
     )
-    model.load_state_dict(torch.load(model_path, map_location="cpu"))
-    model.eval()
-    
-    results = []
-    with torch.no_grad():
-        for i, batch in enumerate(loader):
-            x_gene, x_func, x_history, x_extra, t, _ = batch
-            prob, unc, _ = model(x_gene, x_func, x_history, x_extra, t)
-            results.append({
-                "backbone_id": input_df["backbone_id"][i],
-                "spread_probability": float(prob.item()),
-                "uncertainty": float(unc.item())
-            })
-            
-    with open(output_path, "w") as f:
-        json.dump(results, f, indent=2)
-    click.echo(f"Predictions saved to {output_path}")
+    val_ds = SovereignSequenceDataset(
+        val_df.filter(pl.col("backbone_id").is_in(early_stop_bids)),
+        list(early_stop_bids),
+        max_seq_len,
+        normalizer=(seq_means, seq_stds),
+        static_normalizer=(static_means, static_stds),
+        use_taxonomy=use_taxonomy,
+    )
+    cal_temp_ds = SovereignSequenceDataset(
+        val_df.filter(pl.col("backbone_id").is_in(cal_temp_bids)),
+        list(cal_temp_bids),
+        max_seq_len,
+        normalizer=(seq_means, seq_stds),
+        static_normalizer=(static_means, static_stds),
+        use_taxonomy=use_taxonomy,
+    )
+    cal_cold_ds = SovereignSequenceDataset(
+        val_df.filter(pl.col("backbone_id").is_in(cal_cold_bids)),
+        list(cal_cold_bids),
+        max_seq_len,
+        normalizer=(seq_means, seq_stds),
+        static_normalizer=(static_means, static_stds),
+        use_taxonomy=use_taxonomy,
+    )
+
+    if len(train_ds) == 0 or len(val_ds) == 0:
+        raise ValueError("Empty training or validation dataset")
+
+    sampler = SequenceBatchSampler(
+        [item["seq_len"] for item in train_ds.items],
+        batch_size=cfg.training.batch_size,
+    )
+
+    def _collate(b):
+        return sequence_collate(b, max_seq_len)
+
+    train_loader = DataLoader(train_ds, batch_sampler=sampler, collate_fn=_collate)
+    val_loader = DataLoader(val_ds, batch_size=cfg.training.batch_size, collate_fn=_collate)
+    cal_temp_loader = (
+        DataLoader(cal_temp_ds, batch_size=cfg.training.batch_size, collate_fn=_collate)
+        if len(cal_temp_ds) > 0
+        else None
+    )
+    cal_cold_loader = (
+        DataLoader(cal_cold_ds, batch_size=cfg.training.batch_size, collate_fn=_collate)
+        if len(cal_cold_ds) > 0
+        else None
+    )
+
+    n_static = train_ds.items[0]["static"].size(-1)
+    n_snapshot = train_ds.items[0]["seq"].size(-1)
+
+    # Build taxonomy vocab sizes list for model
+    tax_vocab_sizes = None
+    if use_taxonomy:
+        tax_vocab_sizes = [
+            len(v)
+            for v in [
+                taxonomy_vocab.get("TAXONOMY_phylum", {}),
+                taxonomy_vocab.get("TAXONOMY_class", {}),
+                taxonomy_vocab.get("TAXONOMY_order", {}),
+                taxonomy_vocab.get("TAXONOMY_family", {}),
+                taxonomy_vocab.get("genus", {}),
+            ]
+        ]
+
+    model = SovereignX(
+        n_static=n_static,
+        n_snapshot=n_snapshot,
+        taxonomy_vocab_sizes=tax_vocab_sizes,
+        taxonomy_embed_dim=cfg.model.taxonomy_embed_dim,
+        static_dim=cfg.model.static_dim,
+        temporal_dim=cfg.model.temporal_dim,
+        hidden_dim=cfg.model.gru_hidden,
+        num_layers=cfg.model.gru_layers,
+        n_hazard=cfg.model.n_hazard_steps,
+        dropout=cfg.model.dropout,
+    )
+
+    device = "mps" if torch.backends.mps.is_available() else "cpu"
+    if torch.cuda.is_available():
+        device = "cuda"
+
+    trainer = SovereignXTrainer(
+        model,
+        device=device,
+        lr=cfg.training.lr,
+        weight_decay=cfg.training.weight_decay,
+        epochs=cfg.training.epochs,
+        patience=cfg.training.patience,
+        warmup_epochs=cfg.training.warmup_epochs,
+        grad_clip=cfg.training.grad_clip,
+        lambda_count=cfg.training.lambda_count,
+        lambda_rank=cfg.training.lambda_rank,
+        lambda_cold=cfg.training.lambda_cold,
+        lambda_all=cfg.training.lambda_all,
+        lambda_gate=cfg.training.lambda_gate,
+        temporal_masking_prob=cfg.training.temporal_masking_prob,
+        gaussian_noise_std=cfg.training.gaussian_noise_std,
+        gate_entropy_target=cfg.training.gate_entropy_target,
+        calibrate=cfg.training.calibrate,
+        calibrate_cold=cfg.training.calibrate_cold,
+    )
+
+    logger.info(
+        "Starting Sovereign-X training on %s (%d train, %d val, %d cal-temp, %d cal-cold, taxonomy=%s)",
+        device,
+        len(train_ds),
+        len(val_ds),
+        len(cal_temp_ds) if cal_temp_ds else 0,
+        len(cal_cold_ds) if cal_cold_ds else 0,
+        use_taxonomy,
+    )
+    artifact_dir = trainer.fit(train_loader, val_loader, cal_loader=cal_temp_loader, cold_cal_loader=cal_cold_loader)
+    logger.info("Training complete. Best model in %s", artifact_dir)
+
 
 @cli.command()
-@click.option('--model-path', required=True)
-@click.option('--tokenizer-path', required=True)
-@click.option('--input-path', required=True)
-@click.option('--config', default='config/default.yaml')
-def evaluate(model_path, tokenizer_path, input_path, config):
-    """Evaluate FusionNetV3 performance."""
+@click.option("--model-path", required=True)
+@click.option("--config", default="config/default.yaml")
+@click.option("--feature-dir", default="data/sovereign_features")
+@click.option("--output-path", default=None)
+def evaluate(model_path: str, config: str, feature_dir: str, output_path: str):
+    """Evaluate Sovereign-X on temporal and cold-start splits."""
     cfg = load_config(config)
-    tokenizer = GeneTokenizer.load(Path(tokenizer_path))
-    func_tokenizer = FunctionalTokenizer()
-    
-    df = pl.read_csv(input_path, separator='\t')
-    
-    extra_path = Path("data/piu_extra_features.json")
-    extra_features = None
-    if extra_path.exists():
-        with open(extra_path, "r") as f:
-            extra_features = {k: np.array(v, dtype=np.float32) for k, v in json.load(f).items()}
+    feature_dir = Path(feature_dir)
+    seq_df = pl.read_csv(feature_dir / "sequences.tsv", separator="\t")
+    with open(feature_dir / "split.json") as f:
+        split = json.load(f)
 
-    pipeline = DataPipeline(cfg)
-    genetic_map_df = pipeline.load_genetic_map()
-    genetic_map = dict(zip(genetic_map_df["backbone_id"], genetic_map_df["gene_list"]))
-    
-    ds = BioDataset(df, genetic_map, extra_features=extra_features, max_genes=cfg.model.max_genes)
-    collate = partial(bio_collate_fn, tokenizer=tokenizer, max_genes=cfg.model.max_genes)
-    loader = DataLoader(ds, batch_size=cfg.training.batch_size, collate_fn=collate)
-    
-    model = FusionNetV3(
-        vocab_size=tokenizer.get_vocab_size(),
-        func_dim=func_tokenizer.get_dim(),
-        history_dim=len(ds.history_cols),
-        extra_dim=30,
-        emb_dim=cfg.model.emb_dim,
-        hidden_dim=cfg.model.hidden_dim,
-        num_heads=cfg.model.num_heads,
-        num_layers=1,
-        time_freqs=cfg.model.time_freqs
-    )
-    model.load_state_dict(torch.load(model_path, map_location="cpu"))
-    
-    trainer = EvidentialTrainer(model, cfg.model_dump())
-    metrics = trainer.evaluate(loader)
-    print_report(metrics)
+    seq_means, seq_stds = load_normalizers(feature_dir / "normalizers.npz")
+    static_means, static_stds = load_normalizers(feature_dir / "static_normalizers.npz")
+
+    device = "mps" if torch.backends.mps.is_available() else "cpu"
+    if torch.cuda.is_available():
+        device = "cuda"
+
+    results = {}
+    for mode, flag in [("temporal", "val"), ("cold_start", "test")]:
+        bids = split.get(flag, [])
+        if not bids:
+            results[mode] = {"error": f"no {flag} backbones"}
+            continue
+        mode_df = seq_df.filter(pl.col("backbone_id").is_in(set(bids)) & (pl.col("observed") == 1.0))
+        mode_bids = mode_df["backbone_id"].unique().to_list()
+        if not mode_bids:
+            results[mode] = {"error": "empty after filtering"}
+            continue
+
+        max_seq_len = cfg.model.max_seq_len
+
+        taxonomy_vocab = load_taxonomy_vocab(feature_dir / "taxonomy_vocab.json")
+        use_taxonomy = bool(taxonomy_vocab)
+
+        ds = SovereignSequenceDataset(
+            mode_df,
+            mode_bids,
+            max_seq_len,
+            normalizer=(seq_means, seq_stds),
+            static_normalizer=(static_means, static_stds),
+            use_taxonomy=use_taxonomy,
+        )
+
+        def _eval_collate(b):
+            return sequence_collate(b, max_seq_len)
+
+        loader = DataLoader(
+            ds,
+            batch_size=cfg.training.batch_size,
+            collate_fn=_eval_collate,
+        )
+
+        n_static = ds.items[0]["static"].size(-1)
+        n_snapshot = ds.items[0]["seq"].size(-1)
+        tax_vocab_sizes = None
+        if use_taxonomy:
+            tax_vocab_sizes = [
+                len(v)
+                for v in [
+                    taxonomy_vocab.get("TAXONOMY_phylum", {}),
+                    taxonomy_vocab.get("TAXONOMY_class", {}),
+                    taxonomy_vocab.get("TAXONOMY_order", {}),
+                    taxonomy_vocab.get("TAXONOMY_family", {}),
+                    taxonomy_vocab.get("genus", {}),
+                ]
+            ]
+        model = SovereignX(
+            n_static=n_static,
+            n_snapshot=n_snapshot,
+            taxonomy_vocab_sizes=tax_vocab_sizes,
+            taxonomy_embed_dim=cfg.model.taxonomy_embed_dim,
+            static_dim=cfg.model.static_dim,
+            temporal_dim=cfg.model.temporal_dim,
+            hidden_dim=cfg.model.gru_hidden,
+            num_layers=cfg.model.gru_layers,
+            n_hazard=cfg.model.n_hazard_steps,
+            dropout=cfg.model.dropout,
+        )
+        model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
+        model.to(device)
+
+        # Load appropriate Platt scaler
+        platt_path = Path(model_path).with_name("platt.pt")
+        platt_cold_path = Path(model_path).with_name("platt_cold.pt")
+        trainer = SovereignXTrainer(model, device=device, calibrate=False)
+        use_cold = mode == "cold_start"
+        if use_cold and platt_cold_path.exists():
+            trainer.cold_platt_scaler.load_state_dict(
+                torch.load(platt_cold_path, map_location=device, weights_only=True)
+            )
+            logger.info("Loaded cold-start Platt scaler")
+        elif platt_path.exists():
+            trainer.platt_scaler.load_state_dict(torch.load(platt_path, map_location=device, weights_only=True))
+        metrics = trainer.evaluate(loader, use_cold_scaler=use_cold)
+        results[mode] = {
+            "n_backbones": len(mode_bids),
+            "n_snapshots": len(mode_df),
+            "roc_auc": metrics.get("roc_auc", 0.0),
+            "pr_auc": metrics.get("pr_auc", 0.0),
+            "f1": metrics.get("f1", 0.0),
+            "ece": metrics.get("ece", 0.0),
+            "positive_rate": metrics.get("positive_rate", 0.0),
+            "n_eval": metrics.get("n", 0),
+        }
+
+    output = {"model_path": model_path, "split_year": cfg.data.split_year, "results": results}
+    out_path = output_path or str(Path(model_path).with_name("evaluation.json"))
+    Path(out_path).write_text(json.dumps(output, indent=2))
+    click.echo(f"Evaluation saved to {out_path}")
+
 
 if __name__ == "__main__":
     cli()

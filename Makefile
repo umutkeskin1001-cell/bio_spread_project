@@ -1,4 +1,4 @@
-.PHONY: install train test predict lint clean
+.PHONY: install train test lint evaluate prepare clean
 
 install:
 	pip install -e .
@@ -7,19 +7,16 @@ train:
 	python3 -m bio_spread_reborn.cli.main train --config config/default.yaml
 
 test:
-	pytest tests/
+	python3 -m pytest tests/ -v
 
 lint:
-	ruff check src/
-
-predict:
-	python3 -m bio_spread_reborn.cli.main predict --input-path $(INPUT) --output-path $(OUTPUT) --model-path $(MODEL) --tokenizer-path $(TOKENIZER)
+	ruff check src/ && ruff format --check src/
 
 evaluate:
-	python3 -m bio_spread_reborn.cli.main evaluate --input-path $(INPUT) --model-path $(MODEL) --tokenizer-path $(TOKENIZER)
+	python3 -m bio_spread_reborn.cli.main evaluate --model-path $(MODEL) --config config/default.yaml --feature-dir data/sovereign_features
 
-snapshot:
-	python3 -m bio_spread_reborn.cli.main snapshot --config config/default.yaml
+prepare:
+	python3 -m bio_spread_reborn.cli.main sovereign-prepare --config config/default.yaml
 
 clean:
-	rm -rf *.pt predictions.json .pytest_cache .ruff_cache artifacts/
+	rm -rf artifacts/ .pytest_cache .ruff_cache __pycache__

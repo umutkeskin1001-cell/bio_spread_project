@@ -1,1 +1,9 @@
-genus	family	class	is_pathogen	environment_primary	gram_stain	metabolism
+genus	is_pathogen	gram_stain	metabolism
+Escherichia	1	negative	facultative
+Klebsiella	1	negative	facultative
+Salmonella	1	negative	facultative
+Enterococcus	1	positive	aerobe
+Staphylococcus	1	positive	aerobe
+Pseudomonas	1	negative	aerobe
+Acinetobacter	1	negative	aerobe
+other	0	negative	facultative

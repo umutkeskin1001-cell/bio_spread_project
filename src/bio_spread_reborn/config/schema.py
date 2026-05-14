@@ -1,30 +1,57 @@
+"""
+Sovereign-X: Clean, immutable config. No runtime mutation.
+"""
+
 from pydantic import BaseModel, Field
-from typing import Optional
-from pathlib import Path
+
 
 class DataConfig(BaseModel):
-    backbones_path: str = Field(..., description="Path to plasmid_backbones.tsv")
-    amr_path: str = Field(..., description="Path to amr.tsv")
-    records_path: str = Field(..., description="Path to raw backbone records")
-    split_year: int = Field(2020, description="Year to split train and validation")
-    snapshot_cache_dir: str = Field("data/snapshots", description="Directory to cache temporal snapshots")
+    backbones_path: str = "data/project_inputs/silver/plasmid_backbones.tsv"
+    amr_hits_path: str = "data/project_inputs/silver/plasmid_amr_hits.tsv"
+    amr_consensus_path: str = "data/project_inputs/silver/plasmid_amr_consensus.tsv"
+    split_year: int = 2020
+    val_backbone_frac: float = 0.15
+    test_backbone_frac: float = 0.15
+    spread_horizon: int = 3
+    min_new_countries: int = 1
+    require_country_history: bool = True
+    feature_dir: str = "data/sovereign_features"
+
 
 class ModelConfig(BaseModel):
-    emb_dim: int = Field(256, description="Gene embedding dimension")
-    hidden_dim: int = Field(512, description="Hidden layer dimension")
-    max_genes: int = Field(300, description="Maximum number of genes per backbone")
-    num_heads: int = Field(4, description="Number of attention heads for GeneEncoder")
-    num_layers: int = Field(2, description="Number of Transformer layers for GeneEncoder")
-    time_freqs: int = Field(12, description="Number of Fourier frequencies for TimeGate")
+    static_dim: int = 128  # static expert output
+    temporal_dim: int = 128  # temporal expert projection
+    gru_hidden: int = 192  # GRU hidden dimension
+    gru_layers: int = 2  # GRU layers
+    gru_dropout: float = 0.15
+    dropout: float = 0.15
+    max_seq_len: int = 45  # padded sequence length
+    n_hazard_steps: int = 3  # 3-year hazard horizon
+    taxonomy_embed_dim: int = 8  # per-level embedding dim (5*8=40 total)
+
 
 class TrainingConfig(BaseModel):
-    batch_size: int = Field(128, description="Batch size for training")
-    lr: float = Field(0.003, description="Learning rate")
-    epochs: int = Field(50, description="Maximum number of epochs")
-    patience: int = Field(5, description="Early stopping patience")
-    kl_annealing: float = Field(0.1, description="KL divergence annealing coefficient")
+    batch_size: int = 64
+    lr: float = 3e-4
+    weight_decay: float = 1e-2
+    epochs: int = 50
+    patience: int = 10
+    warmup_epochs: int = 5
+    grad_clip: float = 1.0
+    lambda_count: float = 0.15
+    lambda_rank: float = 0.10
+    lambda_cold: float = 0.25  # cold-start auxiliary loss weight
+    lambda_all: float = 1.0  # per-timestep (all snapshots) loss weight
+    lambda_gate: float = 0.05  # gate entropy penalty weight
+    temporal_masking_prob: float = 0.3  # fraction of batch to mask temporal features
+    gaussian_noise_std: float = 0.05  # std of noise added to temporal features
+    gate_entropy_target: float = 0.4  # min entropy before penalty kicks in
+    calibrate: bool = True  # post-training Platt scaling
+    calibrate_cold: bool = True  # separate Platt scaler for cold-start
+    seed: int = 42
+
 
 class Config(BaseModel):
-    data: DataConfig
-    model: ModelConfig
-    training: TrainingConfig
+    data: DataConfig = Field(default_factory=DataConfig)
+    model: ModelConfig = Field(default_factory=ModelConfig)
+    training: TrainingConfig = Field(default_factory=TrainingConfig)
