@@ -1,0 +1,38 @@
+data:
+  backbones_path: "data/project_inputs/silver/plasmid_backbones.tsv"
+  split_year: 2020
+  val_backbone_frac: 0.15
+  test_backbone_frac: 0.15
+  spread_horizon: 3
+  require_country_history: true
+  feature_dir: "data/sovereign_features"
+
+model:
+  static_dim: 128
+  temporal_dim: 128
+  gru_hidden: 192
+  gru_layers: 2
+  dropout: 0.15
+  max_seq_len: 45
+  n_hazard_steps: 3
+  taxonomy_embed_dim: 8
+
+training:
+  batch_size: 64
+  lr: 3e-4
+  weight_decay: 1e-2
+  epochs: 1
+  patience: 10
+  warmup_epochs: 0
+  grad_clip: 1.0
+  lambda_count: 0.15
+  lambda_rank: 0.10
+  lambda_cold: 0.25
+  lambda_all: 1.0
+  lambda_gate: 0.05
+  temporal_masking_prob: 0.3
+  gaussian_noise_std: 0.05
+  gate_entropy_target: 0.4
+  calibrate: false
+  calibrate_cold: false
+  seed: 42

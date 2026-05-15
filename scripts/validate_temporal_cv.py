@@ -24,8 +24,9 @@ from bio_spread_reborn.data.dataset import (
     SNAPSHOT_FEATURE_COLS, STATIC_COLS,
 )
 from bio_spread_reborn.data.snapshot import build_sequences, disjoint_backbone_split, load_taxonomy_vocab
-from bio_spread_reborn.models.sovereign import SovereignX
+from bio_spread_reborn.models import create_model
 from bio_spread_reborn.models.trainer import SovereignXTrainer
+from bio_spread_reborn.utils.config import set_seed
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,8 @@ def expanding_window_cv(
     df = df.filter(pl.col("observed") > 0)
     logger.info("Loaded %d sequences with %d backbones",
                 len(df), df["backbone_id"].n_unique())
+
+    set_seed(cfg.training.seed)
 
     # Load split
     with open(feature_dir / "split.json") as f:
@@ -126,22 +129,8 @@ def expanding_window_cv(
         # Initialize model
         n_static = train_ds[0]["static"].size(0)
         n_snapshot = train_ds[0]["seq"].size(1)
-        tax_vocab_sizes = None
-        if tax_vocab:
-            tax_vocab_sizes = [len(v) for v in tax_vocab.values()]
+        model = create_model(n_static, n_snapshot, cfg.model, taxonomy_vocab=tax_vocab)
 
-        model = SovereignX(
-            n_static=n_static,
-            n_snapshot=n_snapshot,
-            taxonomy_vocab_sizes=tax_vocab_sizes,
-            static_dim=cfg.model.static_dim,
-            temporal_dim=cfg.model.temporal_dim,
-            hidden_dim=cfg.model.gru_hidden,
-            num_layers=cfg.model.gru_layers,
-            n_hazard=cfg.model.n_hazard_steps,
-            max_seq_len=cfg.model.max_seq_len,
-            dropout=cfg.model.dropout,
-        )
 
         trainer = SovereignXTrainer(
             model, device=device,

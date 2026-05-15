@@ -45,16 +45,27 @@ def classification_metrics(y_true: np.ndarray, y_prob: np.ndarray) -> Dict:
 
 
 def expected_calibration_error(y_true: np.ndarray, y_prob: np.ndarray, n_bins: int = 10) -> float:
-    """ECE for binary classification."""
+    """ECE for binary classification using adaptive binning.
+
+    Uses confidence-weighted binning: each bin spans equal probability mass
+    rather than equal-width intervals, ensuring bins contain roughly
+    the same number of samples.
+    """
     y_true = np.asarray(y_true, dtype=np.float32)
-    y_prob = np.asarray(y_prob, dtype=np.float32)
-    if len(y_true) == 0:
+    y_prob = np.asarray(y_prob, dtype=np.float32).clip(0, 1)
+    if len(y_true) < n_bins:
         return 0.0
-    bins = np.linspace(0, 1, n_bins + 1)
-    ids = np.clip(np.digitize(y_prob, bins, right=True) - 1, 0, n_bins - 1)
+    # Adaptive bin edges based on probability quantiles
+    bin_edges = np.percentile(y_prob, np.linspace(0, 100, n_bins + 1))
+    bin_edges[0] = 0.0
+    bin_edges[-1] = 1.0
+    ids = np.digitize(y_prob, bin_edges, right=False) - 1
+    ids = ids.clip(0, n_bins - 1)
     ece = 0.0
     for i in range(n_bins):
         mask = ids == i
         if mask.any():
-            ece += abs(y_true[mask].mean() - y_prob[mask].mean()) * mask.mean()
+            bin_acc = y_true[mask].mean()
+            bin_conf = y_prob[mask].mean()
+            ece += abs(bin_acc - bin_conf) * mask.mean()
     return float(ece)

@@ -7,13 +7,10 @@ from pydantic import BaseModel, Field
 
 class DataConfig(BaseModel):
     backbones_path: str = "data/project_inputs/silver/plasmid_backbones.tsv"
-    amr_hits_path: str = "data/project_inputs/silver/plasmid_amr_hits.tsv"
-    amr_consensus_path: str = "data/project_inputs/silver/plasmid_amr_consensus.tsv"
     split_year: int = 2020
     val_backbone_frac: float = 0.15
     test_backbone_frac: float = 0.15
     spread_horizon: int = 3
-    min_new_countries: int = 1
     require_country_history: bool = True
     feature_dir: str = "data/sovereign_features"
 
@@ -23,7 +20,6 @@ class ModelConfig(BaseModel):
     temporal_dim: int = 128  # temporal expert projection
     gru_hidden: int = 192  # GRU hidden dimension
     gru_layers: int = 2  # GRU layers
-    gru_dropout: float = 0.15
     dropout: float = 0.15
     max_seq_len: int = 45  # padded sequence length
     n_hazard_steps: int = 3  # 3-year hazard horizon

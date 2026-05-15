@@ -19,6 +19,7 @@ import polars as pl
 logger = logging.getLogger(__name__)
 
 # Columns exported for use by dataset module
+# Time-varying snapshot features — purely epidemiological, no static overlap
 SNAPSHOT_FEATURE_COLS = [
     "n_countries",
     "n_hosts",
@@ -30,12 +31,8 @@ SNAPSHOT_FEATURE_COLS = [
     "expansion_ratio",
     "spread_velocity",
     "niche_breadth",
-    "log_size",
-    "gc",
-    "n_replicon_types",
-    "n_relaxase_types",
-    "mobility_score",
 ]
+# Static backbone-level features — time-invariant biological properties
 STATIC_COLS = [
     "log_size",
     "gc",
@@ -256,29 +253,42 @@ class FeatureBuilder:
             "niche_breadth": float(n_hosts) / max(float(n_countries), 1.0),
         }
 
-    def hazard_targets(self, backbone_id: str, cutoff_year: int, raw: pl.DataFrame, max_year: int) -> Dict[str, float]:
-        """Hazard: P(spread within years 1, 2, 3 after cutoff)."""
-        past = _unique_nonnull(
-            raw.filter((pl.col("backbone_id") == backbone_id) & (pl.col("year") <= cutoff_year))["country"].to_list()
-            if "country" in raw.columns
-            else []
-        )
-        targets = {}
+    def hazard_targets(
+        self, cutoff_year: int, max_year: int,
+        country_progression: dict[int, set[str]] | None = None,
+    ) -> Dict[str, float]:
+        """Hazard: P(spread within years 1, 2, 3 after cutoff).
+
+        Uses pre-computed country progression dict for O(1) lookups
+        instead of re-filtering the full DataFrame per (backbone, year).
+
+        Args:
+            cutoff_year: the "present" year for this snapshot.
+            max_year: latest year in the full dataset (for censoring detection).
+            country_progression: dict year → set of countries seen up to that year.
+                If None, all targets are -1 (censored).
+
+        Returns:
+            Dict with hazard_1, hazard_2, hazard_3, n_new_countries, observed.
+        """
+        targets: Dict[str, float] = {}
+
+        if country_progression is None or cutoff_year not in country_progression:
+            for h in range(1, self.horizon + 1):
+                targets[f"hazard_{h}"] = -1.0
+            targets["n_new_countries"] = -1.0
+            targets["observed"] = 0.0
+            return targets
+
+        past = country_progression[cutoff_year]
+
         for horizon in range(1, self.horizon + 1):
             window_end = int(cutoff_year) + horizon
             if window_end > max_year:
-                targets[f"hazard_{horizon}"] = -1.0  # right-censored, mask out
+                targets[f"hazard_{horizon}"] = -1.0  # right-censored
                 continue
-            future = _unique_nonnull(
-                raw.filter(
-                    (pl.col("backbone_id") == backbone_id)
-                    & (pl.col("year") > cutoff_year)
-                    & (pl.col("year") <= window_end)
-                )["country"].to_list()
-                if "country" in raw.columns
-                else []
-            )
-            n_new = len(future - past)
+            future_until = country_progression.get(window_end, set())
+            n_new = len(future_until - past)
             targets[f"hazard_{horizon}"] = float(n_new > 0)
 
         # Count of new countries in full horizon
@@ -286,15 +296,7 @@ class FeatureBuilder:
         if window_end_3 > max_year:
             targets["n_new_countries"] = -1.0
         else:
-            future_3 = _unique_nonnull(
-                raw.filter(
-                    (pl.col("backbone_id") == backbone_id)
-                    & (pl.col("year") > cutoff_year)
-                    & (pl.col("year") <= window_end_3)
-                )["country"].to_list()
-                if "country" in raw.columns
-                else []
-            )
+            future_3 = country_progression.get(window_end_3, set())
             targets["n_new_countries"] = float(len(future_3 - past))
 
         is_observed = all(v >= 0 for v in targets.values())
@@ -310,7 +312,7 @@ class FeatureBuilder:
             "new_countries_2y_ago": 0.0,
             "n_records": 0.0,
             "acceleration": 0.0,
-            "expansion_ratio": 1.0,
+            "expansion_ratio": 0.0,
             "spread_velocity": 0.0,
             "niche_breadth": 0.0,
         }
@@ -347,6 +349,26 @@ def build_sequences(
         for bid in backbone_ids:
             taxonomy_cache[bid] = get_dominant_taxonomy(raw, bid, taxonomy_vocab, tax_columns_raw)
 
+    # Pre-compute country progression per backbone for O(1) hazard lookups
+    # country_cache[backbone_id] = { year: set_of_countries_seen_up_to_year }
+    country_cache: dict[str, dict[int, set[str]]] = {}
+    for bid in backbone_ids:
+        bid_raw = raw.filter(pl.col("backbone_id") == bid).sort("year")
+        bid_years = bid_raw["year"].unique().to_list()
+        if len(bid_years) < min_snapshots:
+            continue
+        progression: dict[int, set[str]] = {}
+        seen: set[str] = set()
+        for year in bid_years:
+            year_countries = _unique_nonnull(
+                bid_raw.filter(pl.col("year") == year)["country"].to_list()
+                if "country" in bid_raw.columns
+                else []
+            )
+            seen = seen | year_countries
+            progression[year] = seen
+        country_cache[bid] = progression
+
     rows = []
     for bid in backbone_ids:
         bid_raw = raw.filter(pl.col("backbone_id") == bid).sort("year")
@@ -354,13 +376,14 @@ def build_sequences(
         if len(bid_years) < min_snapshots:
             continue
 
+        progression = country_cache.get(bid, {})
         s = static_dict.get(bid, {})
         tax = taxonomy_cache.get(bid, {})
 
         for year in bid_years:
             history = bid_raw.filter(pl.col("year") <= year)
             bf = builder.backcast_features(history, year)
-            ht = builder.hazard_targets(bid, year, raw, max_year)
+            ht = builder.hazard_targets(year, max_year, country_progression=progression)
 
             row = {
                 "backbone_id": bid,

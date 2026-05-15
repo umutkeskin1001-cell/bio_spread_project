@@ -1,12 +1,9 @@
 data:
   backbones_path: "data/project_inputs/silver/plasmid_backbones.tsv"
-  amr_hits_path: "data/project_inputs/silver/plasmid_amr_hits.tsv"
-  amr_consensus_path: "data/project_inputs/silver/plasmid_amr_consensus.tsv"
   split_year: 2020
   val_backbone_frac: 0.15
   test_backbone_frac: 0.15
   spread_horizon: 3
-  min_new_countries: 1
   require_country_history: true
   feature_dir: "data/sovereign_features"
 
@@ -15,7 +12,6 @@ model:
   temporal_dim: 128        # temporal expert projection
   gru_hidden: 192          # GRU hidden dimension
   gru_layers: 2            # GRU layers
-  gru_dropout: 0.15
   dropout: 0.15
   max_seq_len: 45          # padded sequence length
   n_hazard_steps: 3        # 3-year hazard horizon

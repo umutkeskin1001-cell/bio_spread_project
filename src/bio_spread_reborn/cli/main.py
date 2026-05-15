@@ -31,7 +31,7 @@ from bio_spread_reborn.data.snapshot import (
     load_taxonomy_vocab,
     save_taxonomy_vocab,
 )
-from bio_spread_reborn.models.sovereign import SovereignX
+from bio_spread_reborn.models import create_model
 from bio_spread_reborn.models.trainer import SovereignXTrainer
 from bio_spread_reborn.utils.config import load_config
 
@@ -81,8 +81,8 @@ def sovereign_prepare(config: str, output_dir: str):
     for bid in test_bids:
         all_bids[bid] = "test"
 
-    # Build taxonomy vocabulary from ALL raw data
-    taxonomy_vocab = build_taxonomy_vocab(raw)
+    # Build taxonomy vocabulary from TRAIN backbones ONLY (leakage prevention)
+    taxonomy_vocab = build_taxonomy_vocab(raw.filter(pl.col("backbone_id").is_in(train_bids)))
     save_taxonomy_vocab(taxonomy_vocab, output_dir / "taxonomy_vocab.json")
 
     sequences = build_sequences(raw, meta, set(all_bids.keys()), taxonomy_vocab=taxonomy_vocab, **seq_kwargs)
@@ -215,32 +215,7 @@ def train(config: str, feature_dir: str):
     n_static = train_ds.items[0]["static"].size(-1)
     n_snapshot = train_ds.items[0]["seq"].size(-1)
 
-    # Build taxonomy vocab sizes list for model
-    tax_vocab_sizes = None
-    if use_taxonomy:
-        tax_vocab_sizes = [
-            len(v)
-            for v in [
-                taxonomy_vocab.get("TAXONOMY_phylum", {}),
-                taxonomy_vocab.get("TAXONOMY_class", {}),
-                taxonomy_vocab.get("TAXONOMY_order", {}),
-                taxonomy_vocab.get("TAXONOMY_family", {}),
-                taxonomy_vocab.get("genus", {}),
-            ]
-        ]
-
-    model = SovereignX(
-        n_static=n_static,
-        n_snapshot=n_snapshot,
-        taxonomy_vocab_sizes=tax_vocab_sizes,
-        taxonomy_embed_dim=cfg.model.taxonomy_embed_dim,
-        static_dim=cfg.model.static_dim,
-        temporal_dim=cfg.model.temporal_dim,
-        hidden_dim=cfg.model.gru_hidden,
-        num_layers=cfg.model.gru_layers,
-        n_hazard=cfg.model.n_hazard_steps,
-        dropout=cfg.model.dropout,
-    )
+    model = create_model(n_static, n_snapshot, cfg.model, taxonomy_vocab=taxonomy_vocab if use_taxonomy else None)
 
     device = "mps" if torch.backends.mps.is_available() else "cpu"
     if torch.cuda.is_available():
@@ -337,30 +312,7 @@ def evaluate(model_path: str, config: str, feature_dir: str, output_path: str):
 
         n_static = ds.items[0]["static"].size(-1)
         n_snapshot = ds.items[0]["seq"].size(-1)
-        tax_vocab_sizes = None
-        if use_taxonomy:
-            tax_vocab_sizes = [
-                len(v)
-                for v in [
-                    taxonomy_vocab.get("TAXONOMY_phylum", {}),
-                    taxonomy_vocab.get("TAXONOMY_class", {}),
-                    taxonomy_vocab.get("TAXONOMY_order", {}),
-                    taxonomy_vocab.get("TAXONOMY_family", {}),
-                    taxonomy_vocab.get("genus", {}),
-                ]
-            ]
-        model = SovereignX(
-            n_static=n_static,
-            n_snapshot=n_snapshot,
-            taxonomy_vocab_sizes=tax_vocab_sizes,
-            taxonomy_embed_dim=cfg.model.taxonomy_embed_dim,
-            static_dim=cfg.model.static_dim,
-            temporal_dim=cfg.model.temporal_dim,
-            hidden_dim=cfg.model.gru_hidden,
-            num_layers=cfg.model.gru_layers,
-            n_hazard=cfg.model.n_hazard_steps,
-            dropout=cfg.model.dropout,
-        )
+        model = create_model(n_static, n_snapshot, cfg.model, taxonomy_vocab=taxonomy_vocab if use_taxonomy else None)
         model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
         model.to(device)
 

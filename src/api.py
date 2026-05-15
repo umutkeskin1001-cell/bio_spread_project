@@ -17,7 +17,6 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from bio_spread_reborn.models.components import PlattScaler
-from bio_spread_reborn.models.sovereign import SovereignX
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("BioSpreadAPI")
@@ -34,10 +33,11 @@ DEVICE = os.getenv("DEVICE", "cpu")
 app = FastAPI(title="BioSpread Sovereign-X Pro")
 
 # Lazy-loaded model artifacts
-model: Optional[SovereignX] = None
+model: Optional[torch.nn.Module] = None  # SovereignX instance
 platt_scaler: Optional[PlattScaler] = None
 cfg = None
 feature_dims = None
+_norm_cache: dict[str, np.ndarray] = {}  # normalizer cache (loaded once at startup)
 
 
 class SnapshotFeatures(BaseModel):
@@ -51,13 +51,7 @@ class SnapshotFeatures(BaseModel):
     n_records: float = 0.0
     acceleration: float = 0.0
     expansion_ratio: float = 1.0
-    spread_velocity: float = 0.0
     niche_breadth: float = 0.0
-    log_size: float = 0.0
-    gc: float = 0.5
-    n_replicon_types: float = 0.0
-    n_relaxase_types: float = 0.0
-    mobility_score: float = 0.0
 
 
 class StaticFeatures(BaseModel):
@@ -102,7 +96,6 @@ class PredictResponse(BaseModel):
     hazard_year1: float
     hazard_year2: float
     hazard_year3: float
-    spread_velocity: float = 0.0
     n_snapshots: int = 0
 
 
@@ -188,13 +181,19 @@ def _features_to_tensor(
 
 @app.on_event("startup")
 def load_artifacts():
-    global model, platt_scaler, cfg, feature_dims
+    global model, platt_scaler, cfg, feature_dims, _norm_cache
 
     with open(CONFIG_PATH) as f:
         cfg = yaml.safe_load(f)
 
     feature_dir = Path(FEATURE_DIR)
     s_means, s_stds, st_means, st_stds = _load_normalizers(feature_dir)
+    _norm_cache = {
+        "s_means": s_means,
+        "s_stds": s_stds,
+        "st_means": st_means,
+        "st_stds": st_stds,
+    }
 
     from bio_spread_reborn.data.dataset import SNAPSHOT_FEATURE_COLS, STATIC_COLS
 
@@ -209,27 +208,14 @@ def load_artifacts():
         from bio_spread_reborn.data.snapshot import load_taxonomy_vocab
 
         tax_vocab = load_taxonomy_vocab(tax_vocab_path)
-        # Explicit ordering matching TaxonomyEncoder's expected [phylum, class, order, family, genus]
-        tax_vocab_sizes = [len(tax_vocab.get(k, {})) for k in _TAXONOMY_RAW_COLS]
-        logger.info("Taxonomy vocab loaded: %s", tax_vocab_sizes)
-    else:
-        tax_vocab_sizes = None
+        logger.info("Taxonomy vocab loaded")
 
-    # Build model
-    model_cfg = cfg.get("model", {})
-    model = SovereignX(
-        n_static=n_static,
-        n_snapshot=n_snapshot,
-        taxonomy_vocab_sizes=tax_vocab_sizes,
-        taxonomy_embed_dim=model_cfg.get("taxonomy_embed_dim", 8),
-        static_dim=model_cfg.get("static_dim", 128),
-        temporal_dim=model_cfg.get("temporal_dim", 128),
-        hidden_dim=model_cfg.get("gru_hidden", 192),
-        num_layers=model_cfg.get("gru_layers", 2),
-        n_hazard=model_cfg.get("n_hazard_steps", 3),
-        max_seq_len=model_cfg.get("max_seq_len", 50),
-        dropout=model_cfg.get("dropout", 0.15),
-    )
+    # Build model using the factory
+    from bio_spread_reborn.models import create_model
+    from bio_spread_reborn.config.schema import ModelConfig as _ModelConfig
+    model_cfg_raw = cfg.get("model", {})
+    model_cfg = _ModelConfig(**model_cfg_raw)
+    model = create_model(n_static, n_snapshot, model_cfg, taxonomy_vocab=tax_vocab)
     model.eval()
 
     state = torch.load(MODEL_PATH, map_location=DEVICE, weights_only=True)
@@ -257,26 +243,27 @@ def predict(req: PredictRequest):
     if model is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
 
-    feature_dir = Path(FEATURE_DIR)
-    s_means, s_stds, st_means, st_stds = _load_normalizers(feature_dir)
+    # Use cached normalizers (loaded at startup)
+    s_means = _norm_cache.get("s_means", np.zeros(10))
+    s_stds = _norm_cache.get("s_stds", np.ones(10))
+    st_means = _norm_cache.get("st_means", np.zeros(10))
+    st_stds = _norm_cache.get("st_stds", np.ones(10))
     static, seq, mask, taxonomy = _features_to_tensor(req, s_means, s_stds, st_means, st_stds, DEVICE)
 
     with torch.no_grad():
-        hazard_logits, hazard_logits_all, count_pred, cold_logits, fused, weights, mask_out = model(
-            static, seq, mask, taxonomy
-        )
+        out = model(static, seq, mask, taxonomy)
 
         # Apply Platt scaling if available
+        logits = out.hazard_logits
         if platt_scaler is not None:
-            hazard_logits = platt_scaler(hazard_logits)
+            logits = platt_scaler(logits)
 
-        probs = torch.sigmoid(hazard_logits).cpu().numpy().flatten()
+        probs = torch.sigmoid(logits).cpu().numpy().flatten()
 
     return PredictResponse(
         hazard_year1=float(probs[0]),
         hazard_year2=float(probs[1]),
         hazard_year3=float(probs[2]),
-        spread_velocity=float(probs[2] - probs[0]),  # velocity = change in hazard
         n_snapshots=len(req.snapshots),
     )
 

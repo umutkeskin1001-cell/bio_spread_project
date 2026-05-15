@@ -260,29 +260,19 @@ class SovereignXTrainer:
                     )
 
                 # ================================================================
-                # LOSS 6: Ranking loss — ALL 3 hazard horizons averaged
+                # LOSS 6: Ranking loss — within-sample temporal monotonicity
+                # Uses ranking_loss() which compares consecutive timesteps
+                # within each sample, NOT across different backbones
                 # ================================================================
-                scores = torch.sigmoid(hazard_logits)  # (B, 3)
-                # Use last-snapshot's targets for ranking: (B, L, 3) → (B, 3)
-                rank_targets = last_targets  # (B, 3)
+                probs_all = torch.sigmoid(hazard_logits_all)  # (B, L, 3)
                 loss_rank = torch.tensor(0.0, device=self.device)
                 n_rank = 0
                 for h in range(3):
-                    valid_h = (rank_targets[:, h] >= 0) & (last_targets[:, h] >= 0)
-                    if valid_h.any():
-                        # For ranking, we need per-sample pairs
-                        # Simplification: compare predictions across samples
-                        # Positive samples should have higher scores than negative
-                        pos_mask = rank_targets[:, h] > 0.5
-                        neg_mask = ~pos_mask
-                        if pos_mask.any() and neg_mask.any():
-                            pos_scores = scores[pos_mask, h]
-                            neg_scores = scores[neg_mask, h]
-                            margin_diff = pos_scores.unsqueeze(1) - neg_scores.unsqueeze(0)
-                            loss_rank_h = F.relu(0.1 - margin_diff).mean()
-                            loss_rank = loss_rank + loss_rank_h
-                            n_rank += 1
-
+                    # ranking_loss expects (B, L) — will only use valid pairs
+                    if targets[..., h].numel() > 0:
+                        rl = ranking_loss(probs_all[..., h], targets[..., h])
+                        loss_rank = loss_rank + rl
+                        n_rank += 1
                 if n_rank > 0:
                     loss_rank = loss_rank / n_rank
 
@@ -299,6 +289,7 @@ class SovereignXTrainer:
                 )
 
                 if torch.isnan(loss) or torch.isinf(loss):
+                    logger.warning("NaN/Inf loss encountered — skipping batch")
                     self.optimizer.zero_grad(set_to_none=True)
                     continue
 
@@ -340,10 +331,10 @@ class SovereignXTrainer:
         if best_path.exists():
             self.model.load_state_dict(torch.load(best_path, map_location=self.device, weights_only=True))
 
-        # Platt calibration
+        # Platt calibration (merged: same method, different scaler + optional temporal mask)
         cal_data = cal_loader if cal_loader is not None else val_loader
         if self.calibrate and cal_data is not None:
-            self._learn_platt(cal_data)
+            self._learn_platt(cal_data, self.platt_scaler, force_temporal_mask=False)
             a_val = float(self.platt_scaler.a.cpu().item())
             b_val = float(self.platt_scaler.b.cpu().item())
             logger.info(f"Platt scaling: a={a_val:.3f}, b={b_val:.3f}")
@@ -351,7 +342,7 @@ class SovereignXTrainer:
 
         cold_cal = cold_cal_loader if cold_cal_loader is not None else cal_data
         if self.calibrate_cold and cold_cal is not None:
-            self._learn_cold_platt(cold_cal)
+            self._learn_platt(cold_cal, self.cold_platt_scaler, force_temporal_mask=True)
             ca_val = float(self.cold_platt_scaler.a.cpu().item())
             cb_val = float(self.cold_platt_scaler.b.cpu().item())
             logger.info(f"Cold Platt scaling: a={ca_val:.3f}, b={cb_val:.3f}")
@@ -359,11 +350,19 @@ class SovereignXTrainer:
 
         return artifact_dir
 
-    def _learn_cold_platt(self, loader: DataLoader, max_steps: int = 500):
-        """Learn Platt scaling for cold-start predictions (temporal masking forced)."""
+    def _learn_platt(self, loader: DataLoader, scaler: PlattScaler, max_steps: int = 500,
+                     force_temporal_mask: bool = False) -> None:
+        """Learn Platt scaling (a, b) on a calibration set via L-BFGS.
+
+        Args:
+            loader: calibration data.
+            scaler: PlattScaler instance to train.
+            max_steps: max L-BFGS iterations.
+            force_temporal_mask: if True, masks temporal features for cold-start calibration.
+        """
         self.model.eval()
-        self.cold_platt_scaler.train()
-        opt = optim.LBFGS(self.cold_platt_scaler.parameters(), lr=0.01, max_iter=50)
+        scaler.train()
+        opt = optim.LBFGS(scaler.parameters(), lr=0.01, max_iter=50)
 
         all_logits, all_targets = [], []
         with torch.no_grad():
@@ -378,64 +377,12 @@ class SovereignXTrainer:
                     taxonomy_idxs = taxonomy_idxs.to(self.device)
 
                 B = static.size(0)
-                temporal_mask = torch.ones(B, dtype=torch.bool, device=self.device)
+                temporal_mask = torch.ones(B, dtype=torch.bool, device=self.device) if force_temporal_mask else None
 
-                hazard_logits, _, _, _, _, _, _ = self.model(
-                    static,
-                    seq,
-                    mask,
-                    taxonomy_idxs,
-                    temporal_mask=temporal_mask,
-                )
+                out = self.model(static, seq, mask, taxonomy_idxs, temporal_mask=temporal_mask)
                 idx = (lengths - 1).clamp(min=0)
-                last_logits = hazard_logits[:, 2]
+                last_logits = out.hazard_logits[:, 2]
                 last_targets = targets[range(B), idx, 2]
-                valid = last_targets >= 0
-                if valid.any():
-                    all_logits.append(last_logits[valid])
-                    all_targets.append(last_targets[valid])
-
-        if not all_logits:
-            logger.warning("No valid samples for cold-start Platt calibration")
-            return
-
-        logits = torch.cat(all_logits)
-        targets = torch.cat(all_targets)
-
-        def closure():
-            opt.zero_grad()
-            scaled = self.cold_platt_scaler(logits)
-            loss = F.binary_cross_entropy_with_logits(scaled, targets)
-            loss.backward()
-            return loss
-
-        for _ in range(max_steps):
-            loss = opt.step(closure)
-            if loss is None:
-                break
-
-    def _learn_platt(self, loader: DataLoader, max_steps: int = 500):
-        """Learn Platt scaling (a, b) on a calibration set."""
-        self.model.eval()
-        self.platt_scaler.train()
-        opt = optim.LBFGS(self.platt_scaler.parameters(), lr=0.01, max_iter=50)
-
-        all_logits, all_targets = [], []
-        with torch.no_grad():
-            for batch in loader:
-                static = batch["static"].to(self.device)
-                seq = batch["seq"].to(self.device)
-                mask = batch["mask"].to(self.device)
-                lengths = batch["seq_len"].to(self.device)
-                targets = batch["hazard"].to(self.device)
-                taxonomy_idxs = batch.get("taxonomy")
-                if taxonomy_idxs is not None:
-                    taxonomy_idxs = taxonomy_idxs.to(self.device)
-
-                hazard_logits, _, _, _, _, _, _ = self.model(static, seq, mask, taxonomy_idxs)
-                idx = (lengths - 1).clamp(min=0)
-                last_logits = hazard_logits[:, 2]
-                last_targets = targets[range(static.size(0)), idx, 2]
                 valid = last_targets >= 0
                 if valid.any():
                     all_logits.append(last_logits[valid])
@@ -450,7 +397,7 @@ class SovereignXTrainer:
 
         def closure():
             opt.zero_grad()
-            scaled = self.platt_scaler(logits)
+            scaled = scaler(logits)
             loss = F.binary_cross_entropy_with_logits(scaled, targets)
             loss.backward()
             return loss
@@ -461,8 +408,16 @@ class SovereignXTrainer:
                 break
 
     def _calibrated_probs(self, logits: torch.Tensor, use_cold_scaler: bool = False) -> torch.Tensor:
+        """Apply Platt scaling to h3 logits (scaler is trained on h3 only).
+
+        Returns all 3 probs with scaling applied only to the third horizon.
+        """
         scaler = self.cold_platt_scaler if use_cold_scaler else self.platt_scaler
-        scaled = scaler(logits)
+        B, H = logits.shape
+        if H < 3:
+            return torch.sigmoid(logits)
+        scaled = logits.clone()
+        scaled[:, 2] = scaler(scaled[:, 2:3]).squeeze(-1)
         return torch.sigmoid(scaled)
 
     @torch.no_grad()
@@ -487,8 +442,8 @@ class SovereignXTrainer:
             if taxonomy_idxs is not None:
                 taxonomy_idxs = taxonomy_idxs.to(self.device)
 
-            hazard_logits, _, _, _, _, _, _ = self.model(static, seq, mask, taxonomy_idxs)
-            probs = self._calibrated_probs(hazard_logits, use_cold_scaler=use_cold_scaler)
+            out = self.model(static, seq, mask, taxonomy_idxs)
+            probs = self._calibrated_probs(out.hazard_logits, use_cold_scaler=use_cold_scaler)
 
             idx = (lengths - 1).clamp(min=0)
             for h in range(3):

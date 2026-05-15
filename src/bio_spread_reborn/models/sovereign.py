@@ -1,33 +1,57 @@
 """
-Sovereign-X Pro: Dual-expert (static / GRU) + MoE gate + per-timestep hazard heads.
-
-Key innovation — Per-timestep hazard prediction:
-    Instead of only predicting hazard from the LAST snapshot's pooled representation,
-    we predict hazard at EVERY timestep using the GRU's hidden state at that point.
-    This means ALL snapshot targets contribute to training, multiplying effective
-    training data by ~avg sequence length (3-8x).
+Sovereign-X: Dual-expert hazard model with per-timestep training.
 
 Architecture:
     StaticExpert: backbone-level time-invariant features → 128
-    TemporalExpert: GRU over snapshot sequences → 192 (all hidden states + pooled)
-    MoE Gate: context-dependent weighting for final prediction
-    HazardHead: fused → hazard probabilities (y1..y3) + count
-    TimestepHead: per-timestep static+temporal → hazard (y1..y3) — trained on ALL snapshots
-
-Improvements:
-    - Position-aware GRU with learned position embeddings
-    - Per-timestep hazard head for multi-snapshot training
-    - Temporal masking for cold-start robustness (unchanged)
-    - Clean, minimal, no dead code
+    TemporalExpert: GRU over snapshot sequences → 192
+    ContextGate: context-dependent weighting for final prediction
+    TimestepHead: per-timestep hazard predictions (trained on all snapshots)
 """
 
 from __future__ import annotations
+
+from dataclasses import dataclass
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from bio_spread_reborn.models.components import MLP, ColdStartHead, GatedMLP, TaxonomyEncoder
+
+
+@dataclass
+class ModelOutput:
+    """SovereignX forward output container.
+
+    Attributes:
+        hazard_logits: (B, n_hazard) gated final prediction.
+        hazard_logits_all: (B, L, n_hazard) per-timestep predictions.
+        count_logits: (B,) log1p(n_new_countries) prediction.
+        cold_logits: (B, n_hazard) static-only prediction.
+        fused: (B, static_dim) fused embedding.
+        gate_weights: (B, 2) static/temporal expert weights.
+        mask: (B, L) padding mask.
+    """
+
+    hazard_logits: torch.Tensor
+    hazard_logits_all: torch.Tensor
+    count_logits: torch.Tensor
+    cold_logits: torch.Tensor
+    fused: torch.Tensor
+    gate_weights: torch.Tensor
+    mask: torch.Tensor
+
+    def __iter__(self):
+        """Allow tuple unpacking for backward compatibility."""
+        return iter((
+            self.hazard_logits,
+            self.hazard_logits_all,
+            self.count_logits,
+            self.cold_logits,
+            self.fused,
+            self.gate_weights,
+            self.mask,
+        ))
 
 
 class StaticExpert(nn.Module):
@@ -106,17 +130,13 @@ class TemporalExpert(nn.Module):
         weights = F.softmax(scores, dim=-1)
         h_pooled = (h_all * weights.unsqueeze(-1)).sum(dim=1)  # (B, hidden_dim)
 
-        # Replace ALL timesteps' hidden states with null_embed for masked samples
+        # Replace hidden states with null_embed for temporally masked samples
+        # Uses broadcasting instead of explicit expand to avoid extra allocation
         if temporal_mask is not None and temporal_mask.any():
-            h_all = torch.where(
-                temporal_mask.unsqueeze(1).unsqueeze(-1),
-                self.null_embed.unsqueeze(0).expand(B, L, -1),
-                h_all,
-            )
+            mask_t = temporal_mask.unsqueeze(1).unsqueeze(-1)  # (B, 1, 1)
+            h_all = torch.where(mask_t, self.null_embed.unsqueeze(0), h_all)
             h_pooled = torch.where(
-                temporal_mask.unsqueeze(-1),
-                self.null_embed.expand(B, -1),
-                h_pooled,
+                temporal_mask.unsqueeze(-1), self.null_embed, h_pooled
             )
 
         return h_all, h_pooled
@@ -141,11 +161,18 @@ class ContextGate(nn.Module):
 
 
 class CountHead(nn.Module):
-    """Predicts log1p(n_new_countries) from fused embedding."""
+    """Predicts log1p(n_new_countries) from fused embedding.
+
+    2-layer MLP for non-linear count regression.
+    """
 
     def __init__(self, input_dim: int):
         super().__init__()
-        self.net = nn.Linear(input_dim, 1)
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, max(input_dim // 2, 1)),
+            nn.ReLU(),
+            nn.Linear(max(input_dim // 2, 1), 1),
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.net(x).squeeze(-1)
@@ -226,50 +253,45 @@ class SovereignX(nn.Module):
         mask: torch.Tensor,
         taxonomy_idxs: torch.Tensor | None = None,
         temporal_mask: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Returns:
-            hazard_logits: (B, n_hazard) — gated (fused) final prediction
-            hazard_logits_all: (B, L, n_hazard) — per-timestep predictions (for multi-snapshot loss)
-            count_logits: (B,) — count prediction
-            cold_logits: (B, n_hazard) — static-only prediction (for cold-start aux loss)
-            fused: (B, static_dim) — fused embedding
-            gate_weights: (B, 2) — static/temporal gate weights
-            mask: (B, L) — padding mask (for per-timestep loss masking)
-        """
+    ) -> ModelOutput:
         B, L = snapshots.shape[:2]
 
-        # === Static expert ===
+        # Static expert
         if self.use_taxonomy and taxonomy_idxs is not None:
-            tax_emb = self.taxonomy_encoder(taxonomy_idxs)  # (B, 5*embed_dim)
+            tax_emb = self.taxonomy_encoder(taxonomy_idxs)
             static_input = torch.cat([static, tax_emb], dim=-1)
         else:
             static_input = static
+        z_static = self.static_expert(static_input)
 
-        z_static = self.static_expert(static_input)  # (B, static_dim)
-
-        # === Temporal expert — returns ALL hidden states + pooled ===
+        # Temporal expert
         h_all, h_pooled = self.temporal_expert(snapshots, mask, temporal_mask)
-        # h_all: (B, L, hidden_dim), h_pooled: (B, hidden_dim)
 
-        # === Per-timestep predictions (train on ALL snapshots) ===
-        # Static expert output is constant per backbone, broadcast to each timestep
-        z_static_exp = z_static.unsqueeze(1).expand(-1, L, -1)  # (B, L, static_dim)
-        h_all_proj = self.timestep_proj(h_all)  # (B, L, temporal_dim)
-        ts_input = torch.cat([z_static_exp, h_all_proj], dim=-1)  # (B, L, static_dim+temporal_dim)
-        hazard_logits_all = self.timestep_head(ts_input)  # (B, L, n_hazard)
+        # Per-timestep predictions
+        z_static_exp = z_static.unsqueeze(1).expand(-1, L, -1)
+        h_all_proj = self.timestep_proj(h_all)
+        ts_input = torch.cat([z_static_exp, h_all_proj], dim=-1)
+        hazard_logits_all = self.timestep_head(ts_input)
 
-        # === Final prediction (pooled, for evaluation / backward compat) ===
-        h_pooled_proj = self.temporal_proj(h_pooled)  # (B, temporal_dim)
-        fused, weights = self.gate(z_static, h_pooled_proj)
+        # Final prediction (pooled)
+        h_pooled_proj = self.temporal_proj(h_pooled)
+        fused, gate_weights = self.gate(z_static, h_pooled_proj)
         h = self.hazard_proj(fused)
-        hazard_logits = self.hazard_head(h)  # (B, n_hazard)
+        hazard_logits = self.hazard_head(h)
         count_logits = self.count_head(h)
 
-        # === Cold-start head (static expert only, no MoE) ===
+        # Cold-start head
         cold_logits = self.cold_start_head(z_static)
 
-        return hazard_logits, hazard_logits_all, count_logits, cold_logits, fused, weights, mask
+        return ModelOutput(
+            hazard_logits=hazard_logits,
+            hazard_logits_all=hazard_logits_all,
+            count_logits=count_logits,
+            cold_logits=cold_logits,
+            fused=fused,
+            gate_weights=gate_weights,
+            mask=mask,
+        )
 
     def get_embedding(
         self,

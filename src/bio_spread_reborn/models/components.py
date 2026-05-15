@@ -12,13 +12,13 @@ class MLP(nn.Module):
     """Minimal MLP with configurable depth and dropout."""
 
     def __init__(
-        self, dims: list[int], dropout: float = 0.1, activation: type[nn.Module] = nn.ReLU, final_act: bool = False
+        self, dims: list[int], dropout: float = 0.1, activation: type[nn.Module] = nn.ReLU
     ):
         super().__init__()
         layers = []
         for i in range(len(dims) - 1):
             layers.append(nn.Linear(dims[i], dims[i + 1]))
-            if i < len(dims) - 2 or final_act:
+            if i < len(dims) - 2:
                 layers.append(activation())
                 if dropout > 0:
                     layers.append(nn.Dropout(dropout))
@@ -50,7 +50,7 @@ class ColdStartHead(nn.Module):
 
     def __init__(self, static_dim: int, n_hazard: int = 3, dropout: float = 0.1):
         super().__init__()
-        self.net = MLP([static_dim, static_dim // 2, n_hazard], dropout=dropout, final_act=False)
+        self.net = MLP([static_dim, static_dim // 2, n_hazard], dropout=dropout)
 
     def forward(self, z_static: torch.Tensor) -> torch.Tensor:
         return self.net(z_static)  # (B, n_hazard)

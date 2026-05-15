@@ -66,11 +66,19 @@ def test_feature_builder_hazard():
             "host_genus": ["Escherichia"] * 5,
         }
     )
+    # Build country progression cache for backbone A
+    progression: dict[int, set[str]] = {}
+    seen: set[str] = set()
+    for year in sorted(raw["year"].unique().to_list()):
+        yc = set(raw.filter((pl.col("backbone_id") == "A") & (pl.col("year") == year))["country"].to_list())
+        seen = seen | yc
+        progression[year] = seen
+
     # Cutoff at 2019: past countries = {US}, future by 2022 = {UK, DE}
     # hazard_1: by 2020 → no new → 0
     # hazard_2: by 2021 → {UK} → new → 1
     # hazard_3: by 2022 → {UK, DE} → new → 1
-    targets = fb.hazard_targets("A", 2019, raw, max_year=2022)
+    targets = fb.hazard_targets(2019, max_year=2022, country_progression=progression)
     assert targets["hazard_1"] == 0.0
     assert targets["hazard_2"] == 1.0
     assert targets["hazard_3"] == 1.0
@@ -88,9 +96,17 @@ def test_hazard_censored():
             "host_genus": ["Escherichia"] * 3,
         }
     )
+    # Build country progression for A
+    progression: dict[int, set[str]] = {}
+    seen: set[str] = set()
+    for year in sorted(raw["year"].unique().to_list()):
+        yc = set(raw.filter((pl.col("backbone_id") == "A") & (pl.col("year") == year))["country"].to_list())
+        seen = seen | yc
+        progression[year] = seen
+
     # Cutoff at 2022: needs future data through 2025, but max_year=2022
     # All targets should be -1 (right-censored)
-    targets = fb.hazard_targets("A", 2022, raw, max_year=2022)
+    targets = fb.hazard_targets(2022, max_year=2022, country_progression=progression)
     assert targets["hazard_1"] == -1.0
     assert targets["hazard_2"] == -1.0
     assert targets["hazard_3"] == -1.0
@@ -239,7 +255,7 @@ def test_sequence_collate():
     )
     items = [ds[i] for i in range(len(ds))]
     batch = sequence_collate(items, max_seq_len=10)
-    assert batch["seq"].shape == (2, 10, 15)  # B, max_seq_len, n_features=15 (SNAPSHOT_FEATURE_COLS)
+    assert batch["seq"].shape == (2, 10, 10)  # B, max_seq_len, n_features=10 (SNAPSHOT_FEATURE_COLS)
     assert batch["static"].shape == (2, 10)
     assert batch["hazard"].shape == (2, 10, 3)
     assert batch["mask"].shape == (2, 10)
@@ -248,11 +264,15 @@ def test_sequence_collate():
 
 
 def test_sovereignx_forward():
-    model = SovereignX(n_static=5, n_snapshot=15, static_dim=64, temporal_dim=64, hidden_dim=64, n_hazard=3)
+    model = SovereignX(n_static=5, n_snapshot=10, static_dim=64, temporal_dim=64, hidden_dim=64, n_hazard=3)
     static = torch.randn(4, 5)
-    snapshots = torch.randn(4, 10, 15)
+    snapshots = torch.randn(4, 10, 10)
     mask = torch.ones(4, 10)
-    hazard, hazard_all, count, cold_logits, fused, weights, mask_out = model(static, snapshots, mask)
+    out = model(static, snapshots, mask)
+    hazard, hazard_all, count, cold_logits, fused, weights, mask_out = out
+    assert isinstance(out.hazard_logits, torch.Tensor)
+    assert isinstance(out.hazard_logits_all, torch.Tensor)
+    _ = out.hazard_logits  # confirm attribute access works
     assert hazard.shape == (4, 3), f"hazard.shape={hazard.shape}"
     assert hazard_all.shape == (4, 10, 3), f"hazard_all.shape={hazard_all.shape}"
     assert count.shape == (4,), f"count.shape={count.shape}"
@@ -276,9 +296,9 @@ def test_sovereignx_forward():
 
 
 def test_sovereignx_gradient_flow():
-    model = SovereignX(n_static=5, n_snapshot=15, static_dim=64, temporal_dim=64, hidden_dim=64, n_hazard=3)
+    model = SovereignX(n_static=5, n_snapshot=10, static_dim=64, temporal_dim=64, hidden_dim=64, n_hazard=3)
     static = torch.randn(4, 5)
-    snapshots = torch.randn(4, 5, 15)
+    snapshots = torch.randn(4, 5, 10)
     mask = torch.ones(4, 5)
     # Include temporal_mask to trigger null_embed gradient
     temporal_mask = torch.tensor([True, False, True, False])
