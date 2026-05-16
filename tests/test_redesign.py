@@ -1,18 +1,19 @@
-"""Tests for Sovereign-X: dual-expert temporal hazard model."""
+"""Tests for BioSpread: dual-expert temporal hazard model."""
 
 import numpy as np
 import polars as pl
 import torch
 
-from bio_spread_reborn.data.dataset import (
-    SovereignSequenceDataset,
+from bio_spread.data.dataset import (
+    SequenceDataset,
     fit_normalizers,
     fit_static_normalizers,
     sequence_collate,
 )
-from bio_spread_reborn.data.snapshot import FeatureBuilder, build_sequences, disjoint_backbone_split
-from bio_spread_reborn.models.sovereign import SovereignX
-from bio_spread_reborn.models.trainer import ranking_loss
+from bio_spread.data.snapshot import FeatureBuilder, build_sequences, disjoint_backbone_split
+from bio_spread.constants import SNAPSHOT_FEATURE_COLS, SNAPSHOT_NAN_COLS, STATIC_COLS
+from bio_spread.models.sovereign import BioSpreadModel
+from bio_spread.models.trainer import ranking_loss
 
 
 def test_feature_builder_static():
@@ -172,8 +173,6 @@ def test_dataset_construction():
             "new_countries_2y_ago": [0.0, 0.0, 0.0, 0.0, 0.0],
             "n_records": [1.0, 2.0, 3.0, 1.0, 2.0],
             "acceleration": [0.0, 0.0, 1.0, 0.0, 0.0],
-            "expansion_ratio": [1.0, 1.0, 2.0, 1.0, 1.0],
-            "spread_velocity": [1.0, 0.5, 0.67, 1.0, 0.5],
             "niche_breadth": [1.0, 1.0, 0.5, 1.0, 1.0],
             "log_size": [8.5, 8.5, 8.5, 9.2, 9.2],
             "gc": [0.5, 0.5, 0.5, 0.6, 0.6],
@@ -194,7 +193,7 @@ def test_dataset_construction():
     )
     normalizer = fit_normalizers(df)
     static_normalizer = fit_static_normalizers(df)
-    ds = SovereignSequenceDataset(
+    ds = SequenceDataset(
         df,
         ["A", "B"],
         max_seq_len=10,
@@ -209,7 +208,7 @@ def test_dataset_construction():
     assert "count" in item
     assert "seq_len" in item
     assert item["seq"].shape[0] <= 10
-    assert item["static"].shape[0] == 10  # len(STATIC_COLS)
+    assert item["static"].shape[0] == len(STATIC_COLS)  # 12
 
 
 def test_sequence_collate():
@@ -224,8 +223,6 @@ def test_sequence_collate():
             "new_countries_2y_ago": [0.0] * 5,
             "n_records": [1.0, 2.0, 1.0, 2.0, 3.0],
             "acceleration": [0.0] * 5,
-            "expansion_ratio": [1.0] * 5,
-            "spread_velocity": [1.0, 0.5, 1.0, 0.5, 0.33],
             "niche_breadth": [1.0] * 5,
             "log_size": [8.5, 8.5, 9.2, 9.2, 9.2],
             "gc": [0.5, 0.5, 0.6, 0.6, 0.6],
@@ -246,7 +243,7 @@ def test_sequence_collate():
     )
     normalizer = fit_normalizers(df)
     static_normalizer = fit_static_normalizers(df)
-    ds = SovereignSequenceDataset(
+    ds = SequenceDataset(
         df,
         ["A", "B"],
         max_seq_len=10,
@@ -255,55 +252,53 @@ def test_sequence_collate():
     )
     items = [ds[i] for i in range(len(ds))]
     batch = sequence_collate(items, max_seq_len=10)
-    assert batch["seq"].shape == (2, 10, 10)  # B, max_seq_len, n_features=10 (SNAPSHOT_FEATURE_COLS)
-    assert batch["static"].shape == (2, 10)
+    n_base = len(SNAPSHOT_FEATURE_COLS)
+    n_nan = len(SNAPSHOT_NAN_COLS)
+    assert batch["seq"].shape == (2, 10, n_base + n_nan)
+    assert batch["static"].shape == (2, len(STATIC_COLS))
     assert batch["hazard"].shape == (2, 10, 3)
     assert batch["mask"].shape == (2, 10)
-    assert batch["seq_len"][0].item() == 2  # A has 2 snapshots
-    assert batch["seq_len"][1].item() == 3  # B has 3 snapshots
+    assert batch["seq_len"][0].item() == 2
+    assert batch["seq_len"][1].item() == 3
 
 
-def test_sovereignx_forward():
-    model = SovereignX(n_static=5, n_snapshot=10, static_dim=64, temporal_dim=64, hidden_dim=64, n_hazard=3)
+def test_biospread_model_forward():
+    model = BioSpreadModel(n_static=5, n_snapshot=10, static_dim=64, temporal_dim=64, hidden_dim=64, n_hazard=3)
     static = torch.randn(4, 5)
     snapshots = torch.randn(4, 10, 10)
     mask = torch.ones(4, 10)
     out = model(static, snapshots, mask)
-    hazard, hazard_all, count, cold_logits, fused, weights, mask_out = out
     assert isinstance(out.hazard_logits, torch.Tensor)
     assert isinstance(out.hazard_logits_all, torch.Tensor)
     _ = out.hazard_logits  # confirm attribute access works
-    assert hazard.shape == (4, 3), f"hazard.shape={hazard.shape}"
-    assert hazard_all.shape == (4, 10, 3), f"hazard_all.shape={hazard_all.shape}"
-    assert count.shape == (4,), f"count.shape={count.shape}"
-    assert cold_logits.shape == (4, 3), f"cold_logits.shape={cold_logits.shape}"
-    assert fused.shape == (4, 64), f"fused.shape={fused.shape}"
-    assert weights.shape == (4, 2), f"weights.shape={weights.shape}"
-    assert not torch.isnan(hazard).any()
-    assert not torch.isnan(hazard_all).any()
-    assert not torch.isnan(count).any()
-    assert not torch.isnan(cold_logits).any()
+    assert out.hazard_logits.shape == (4, 3), f"hazard.shape={out.hazard_logits.shape}"
+    assert out.hazard_logits_all.shape == (4, 10, 3), f"hazard_all.shape={out.hazard_logits_all.shape}"
+    assert out.count_logits.shape == (4,), f"count.shape={out.count_logits.shape}"
+    assert out.cold_logits.shape == (4, 3), f"cold_logits.shape={out.cold_logits.shape}"
+    assert out.fused.shape == (4, 64), f"fused.shape={out.fused.shape}"
+    assert out.gate_weights.shape == (4, 2), f"weights.shape={out.gate_weights.shape}"
+    assert not torch.isnan(out.hazard_logits).any()
+    assert not torch.isnan(out.hazard_logits_all).any()
+    assert not torch.isnan(out.count_logits).any()
+    assert not torch.isnan(out.cold_logits).any()
     # Per-timestep predictions produce values for all timesteps
     # Masking is applied in the loss function, not in model output
-    assert mask_out.shape == (4, 10)
-    # Check that all-timestep predictions include the final timestep values
-    # For sample 0, last timestep final prediction ≈ per-timestep prediction at L-1
-    final_proj = hazard[0]  # (3,)
-    last_ts = hazard_all[0, 9]  # (3,) — last timestep prediction
-    # These should be correlated (same backbone, different processing paths)
+    assert out.mask.shape == (4, 10)
+    final_proj = out.hazard_logits[0]
+    last_ts = out.hazard_logits_all[0, 9]
     assert not torch.isnan(final_proj).any()
     assert not torch.isnan(last_ts).any()
 
 
-def test_sovereignx_gradient_flow():
-    model = SovereignX(n_static=5, n_snapshot=10, static_dim=64, temporal_dim=64, hidden_dim=64, n_hazard=3)
+def test_biospread_model_gradient_flow():
+    model = BioSpreadModel(n_static=5, n_snapshot=10, static_dim=64, temporal_dim=64, hidden_dim=64, n_hazard=3)
     static = torch.randn(4, 5)
     snapshots = torch.randn(4, 5, 10)
     mask = torch.ones(4, 5)
     # Include temporal_mask to trigger null_embed gradient
     temporal_mask = torch.tensor([True, False, True, False])
-    hazard, hazard_all, count, cold_logits, _, _, _ = model(static, snapshots, mask, temporal_mask=temporal_mask)
-    loss = hazard.mean() + hazard_all.mean() + count.mean() + cold_logits.mean()
+    out = model(static, snapshots, mask, temporal_mask=temporal_mask)
+    loss = out.hazard_logits.mean() + out.hazard_logits_all.mean() + out.count_logits.mean() + out.cold_logits.mean()
     loss.backward()
     for name, param in model.named_parameters():
         assert param.grad is not None, f"{name} has no gradient"
@@ -361,13 +356,13 @@ def test_pipeline_integration():
     static_norm = fit_static_normalizers(seqs)
 
     # Dataset
-    ds = SovereignSequenceDataset(seqs, ["A", "B", "C"], max_seq_len=10, normalizer=norm, static_normalizer=static_norm)
+    ds = SequenceDataset(seqs, ["A", "B", "C"], max_seq_len=10, normalizer=norm, static_normalizer=static_norm)
     assert len(ds) == 3
 
     # Model forward
     items = [ds[i] for i in range(len(ds))]
     batch = sequence_collate(items, max_seq_len=10)
-    model = SovereignX(
+    model = BioSpreadModel(
         n_static=batch["static"].size(-1),
         n_snapshot=batch["seq"].size(-1),
         static_dim=32,
@@ -375,13 +370,11 @@ def test_pipeline_integration():
         hidden_dim=32,
         n_hazard=3,
     )
-    hazard, hazard_all, count, cold_logits, fused, weights, mask_out = model(
-        batch["static"], batch["seq"], batch["mask"]
-    )
-    assert hazard.shape == (3, 3), f"hazard.shape={hazard.shape}"
-    assert hazard_all.shape == (3, 10, 3), f"hazard_all.shape={hazard_all.shape}"
-    assert count.shape == (3,), f"count.shape={count.shape}"
-    assert cold_logits.shape == (3, 3), f"cold_logits.shape={cold_logits.shape}"
-    assert not torch.isnan(cold_logits).any()
-    assert mask_out.shape == (3, 10)
-    assert not torch.isnan(cold_logits).any()
+    out = model(batch["static"], batch["seq"], batch["mask"])
+    assert out.hazard_logits.shape == (3, 3), f"hazard.shape={out.hazard_logits.shape}"
+    assert out.hazard_logits_all.shape == (3, 10, 3), f"hazard_all.shape={out.hazard_logits_all.shape}"
+    assert out.count_logits.shape == (3,), f"count.shape={out.count_logits.shape}"
+    assert out.cold_logits.shape == (3, 3), f"cold_logits.shape={out.cold_logits.shape}"
+    assert not torch.isnan(out.cold_logits).any()
+    assert out.mask.shape == (3, 10)
+    assert not torch.isnan(out.cold_logits).any()

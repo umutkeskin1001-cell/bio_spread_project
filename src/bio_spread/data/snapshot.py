@@ -1,51 +1,30 @@
-"""
-Sovereign-X: Temporal snapshot builder with hazard targets.
-
-Key change from V7: targets are now hazard probabilities for years 1, 2, 3
-and backbone-disjoint splits replace temporal-only splits.
-"""
-
 from __future__ import annotations
 
 import json
 import logging
+import math
 from collections import Counter
 from pathlib import Path
-from typing import Dict, Set, Tuple
+from typing import Dict, List, Set, Tuple
 
 import numpy as np
 import polars as pl
 
+from bio_spread.constants import CATEGORICAL_COLS, TAXONOMY_RAW_COLS
+
 logger = logging.getLogger(__name__)
 
-# Columns exported for use by dataset module
-# Time-varying snapshot features — purely epidemiological, no static overlap
-SNAPSHOT_FEATURE_COLS = [
-    "n_countries",
-    "n_hosts",
-    "years_since_first",
-    "new_countries_recent",
-    "new_countries_2y_ago",
-    "n_records",
-    "acceleration",
-    "expansion_ratio",
-    "spread_velocity",
-    "niche_breadth",
-]
-# Static backbone-level features — time-invariant biological properties
-STATIC_COLS = [
-    "log_size",
-    "gc",
-    "n_replicon_types",
-    "n_relaxase_types",
-    "mobility_score",
-    "is_conjugative",
-    "is_mobilizable",
-    "topology",
-    "n_orit_types",
-    "host_range_rank",
-]
-TAXONOMY_COLS = ["phylum_idx", "class_idx", "order_idx", "family_idx", "genus_idx"]
+MULTI_VALUE_COLS = {"replicon_types", "relaxase_types", "ecosystem_tags", "disease_tags"}
+
+CAT_VOCAB_LIMITS = {
+    "replicon_types": 100,
+    "relaxase_types": 30,
+    "mpf_type": 10,
+    "plasmidfinder_dominant_type": 100,
+    "predicted_host_range_overall_name": 100,
+    "ecosystem_tags": 50,
+    "disease_tags": 50,
+}
 
 
 def _nonnull(values: list[str | None]) -> list[str]:
@@ -57,14 +36,7 @@ def _unique_nonnull(values: list[str | None]) -> set[str]:
 
 
 def build_taxonomy_vocab(df: pl.DataFrame) -> dict[str, dict[str, int]]:
-    """Build integer vocabularies from taxonomy columns in the raw DataFrame.
-
-    Returns nested dict:
-        {"TAXONOMY_phylum": {"Pseudomonadota": 1, ...}, "TAXONOMY_class": {...}, ...}
-    Index 0 is reserved for "unknown/UNKNOWN".
-    Returns empty dict if taxonomy columns not found.
-    """
-    tax_columns = ["TAXONOMY_phylum", "TAXONOMY_class", "TAXONOMY_order", "TAXONOMY_family", "genus"]
+    tax_columns = TAXONOMY_RAW_COLS
     missing = [c for c in tax_columns if c not in df.columns]
     if missing:
         logger.warning("Taxonomy columns missing: %s. Skipping taxonomy encoding.", missing)
@@ -74,10 +46,14 @@ def build_taxonomy_vocab(df: pl.DataFrame) -> dict[str, dict[str, int]]:
     for col in tax_columns:
         values = df[col].drop_nulls().unique().to_list()
         values = [str(v).strip() for v in values if v is not None and str(v).strip()]
-        # Sort for deterministic ordering
         values = sorted(set(values))
-        mapping = {"UNKNOWN": 0}
-        mapping.update({v: i + 1 for i, v in enumerate(values)})
+        if "UNKNOWN" in values:
+            raise ValueError(
+                f"Taxonomy column '{col}' contains literal 'UNKNOWN' which conflicts with sentinel"
+            )
+        mapping = {}
+        mapping["UNKNOWN"] = 1
+        mapping.update({v: i + 2 for i, v in enumerate(values)})
         vocab[col] = mapping
     logger.info(
         "Built taxonomy vocab: phyla=%d, classes=%d, orders=%d, families=%d, genera=%d",
@@ -93,23 +69,20 @@ def build_taxonomy_vocab(df: pl.DataFrame) -> dict[str, dict[str, int]]:
 def get_dominant_taxonomy(
     df: pl.DataFrame, backbone_id: str, vocab: dict[str, dict[str, int]], tax_columns: list[str]
 ) -> dict[str, int]:
-    """Get the most common taxonomy value for a backbone at each level.
-    Returns indices into the vocab."""
     rows = df.filter(pl.col("backbone_id") == backbone_id)
     result = {}
     for col in tax_columns:
         mapping = vocab.get(col, {})
         if rows.is_empty():
-            result[col] = 0
+            result[col] = 1
         else:
             vals = rows[col].drop_nulls().to_list()
             vals = [str(v).strip() for v in vals if v is not None and str(v).strip()]
             if not vals:
-                result[col] = 0
+                result[col] = 1
             else:
-                # Mode (most common value)
                 mode_val = Counter(vals).most_common(1)[0][0]
-                result[col] = mapping.get(mode_val, 0)
+                result[col] = mapping.get(mode_val, 1)
     return result
 
 
@@ -123,19 +96,67 @@ def load_taxonomy_vocab(path: Path) -> dict:
         return json.load(f)
 
 
+def build_categorical_vocabs(
+    df: pl.DataFrame, cols: list[str] | None = None, max_vocab: int = 100
+) -> dict[str, dict[str, int]]:
+    if cols is None:
+        cols = CATEGORICAL_COLS
+    vocabs = {}
+    for col in cols:
+        if col not in df.columns:
+            continue
+        limit = CAT_VOCAB_LIMITS.get(col, max_vocab)
+        values = df[col].drop_nulls().to_list()
+        all_tokens = []
+        for v in values:
+            s = str(v).strip()
+            if not s:
+                continue
+            if col in MULTI_VALUE_COLS:
+                tokens = [t.strip() for t in s.split(",") if t.strip()]
+                all_tokens.extend(tokens)
+            else:
+                all_tokens.append(s)
+        counts = Counter(all_tokens)
+        top = counts.most_common(limit)
+        mapping = {"UNKNOWN": 0}
+        for i, (token, _) in enumerate(top):
+            mapping[token] = i + 1
+        vocabs[col] = mapping
+        logger.info("Categorical vocab '%s': %d tokens (top %d)", col, len(mapping), limit)
+    return vocabs
+
+
+def save_categorical_vocabs(vocabs: dict, path: Path):
+    with open(path, "w") as f:
+        json.dump(vocabs, f, indent=2)
+
+
+def load_categorical_vocabs(path: Path) -> dict:
+    with open(path) as f:
+        return json.load(f)
+
+
+def encode_categorical_value(
+    value: str | None, col: str, vocab: dict[str, int]
+) -> List[int]:
+    if value is None or not str(value).strip():
+        return [0]
+    s = str(value).strip()
+    if col in MULTI_VALUE_COLS:
+        tokens = [t.strip() for t in s.split(",") if t.strip()]
+        indices = [vocab.get(t, 0) for t in tokens]
+        return indices if indices else [0]
+    else:
+        return [vocab.get(s, 0)]
+
+
 class FeatureBuilder:
-    """Computes static + temporal features from raw plasmid records.
-
-    Stateless: all data passed in, pure computation out.
-    """
-
     def __init__(self, horizon: int = 3, require_country_history: bool = True):
         self.horizon = horizon
         self.require_country_history = require_country_history
 
     def static_features(self, meta: pl.DataFrame) -> pl.DataFrame:
-        """Per-backbone time-invariant features."""
-        # Compute mobility score from meta before select (to avoid column loss)
         if "predicted_mobility" in meta.columns:
             mobility_expr = (
                 pl.col("predicted_mobility")
@@ -149,10 +170,6 @@ class FeatureBuilder:
         else:
             mobility_expr = pl.lit(0.0, dtype=pl.Float64).alias("mobility_score")
 
-        # Enrich static features with backbone-level biologically informative attributes
-        # is_conjugative, is_mobilizable, topology: 100% coverage from meta
-        # n_orit_types: 100% coverage (0-3 range)
-        # host_range_rank: 86.9% coverage (1-7, filled to 0 for unknown)
         if "is_conjugative" in meta.columns:
             conj_expr = pl.col("is_conjugative").cast(pl.Int64).fill_null(0).cast(pl.Float64).alias("is_conjugative")
         else:
@@ -172,6 +189,16 @@ class FeatureBuilder:
             )
         else:
             topo_expr = pl.lit(0.0, dtype=pl.Float64).alias("topology")
+
+        if "has_orit" in meta.columns:
+            has_orit_expr = pl.col("has_orit").cast(pl.Int64).fill_null(0).cast(pl.Float64).alias("has_orit")
+        else:
+            has_orit_expr = pl.lit(0.0, dtype=pl.Float64).alias("has_orit")
+
+        if "has_relaxase" in meta.columns:
+            has_relaxase_expr = pl.col("has_relaxase").cast(pl.Int64).fill_null(0).cast(pl.Float64).alias("has_relaxase")
+        else:
+            has_relaxase_expr = pl.lit(0.0, dtype=pl.Float64).alias("has_relaxase")
 
         if "n_orit_types" in meta.columns:
             orit_expr = pl.col("n_orit_types").cast(pl.Int64).fill_null(0).cast(pl.Float64).alias("n_orit_types")
@@ -196,6 +223,8 @@ class FeatureBuilder:
                 pl.col("gc").fill_null(0.5).cast(pl.Float64),
                 pl.col("n_replicon_types").fill_null(0).cast(pl.Float64),
                 pl.col("n_relaxase_types").fill_null(0).cast(pl.Float64),
+                has_orit_expr,
+                has_relaxase_expr,
                 mobility_expr,
                 conj_expr,
                 mob_expr,
@@ -207,19 +236,14 @@ class FeatureBuilder:
         return df
 
     def backcast_features(self, history: pl.DataFrame, cutoff_year: int) -> Dict[str, float]:
-        """Compute epidemiologic features using ONLY data <= cutoff_year."""
         if history.is_empty():
             return self._zero_features()
 
         first_year = history["year"].min()
         countries = _unique_nonnull(history["country"].to_list() if "country" in history.columns else [])
-        hosts = _unique_nonnull(history["host_genus"].to_list() if "host_genus" in history.columns else [])
-
         n_countries = len(countries)
-        n_hosts = len(hosts)
         years_since = float(cutoff_year - first_year)
 
-        # Velocity: new countries in last 2 years
         last_2y = history.filter(pl.col("year") >= (cutoff_year - 2))
         older = history.filter(pl.col("year") < (cutoff_year - 2))
         new_recent = len(
@@ -227,7 +251,6 @@ class FeatureBuilder:
             - _unique_nonnull(older["country"].to_list() if "country" in older.columns else [])
         )
 
-        # Velocity 2 years ago
         last_4y_to_2y = history.filter((pl.col("year") >= (cutoff_year - 4)) & (pl.col("year") < (cutoff_year - 2)))
         older_than_4y = history.filter(pl.col("year") < (cutoff_year - 4))
         new_2y_ago = len(
@@ -235,42 +258,35 @@ class FeatureBuilder:
             - _unique_nonnull(older_than_4y["country"].to_list() if "country" in older_than_4y.columns else [])
         )
 
-        countries_2y_ago = len(
-            _unique_nonnull(older_than_4y["country"].to_list() if "country" in older_than_4y.columns else [])
-            | _unique_nonnull(last_4y_to_2y["country"].to_list() if "country" in last_4y_to_2y.columns else [])
-        )
+        spread_velocity = float(new_recent) / max(years_since, 1.0)
+        spread_norm = math.tanh(spread_velocity)
+
+        n_hosts_val = 0.0
+        if "host_genus" in history.columns:
+            n_hosts_val = float(len(_unique_nonnull(history["host_genus"].to_list())))
+        elif "n_hosts" in history.columns:
+            n_hosts_val = float(history["n_hosts"].to_list()[-1])
+
+        niche_breadth_val = 0.0
+        if "niche_breadth" in history.columns:
+            niche_breadth_val = float(history["niche_breadth"].to_list()[-1])
 
         return {
             "n_countries": float(n_countries),
-            "n_hosts": float(n_hosts),
+            "n_hosts": n_hosts_val,
             "years_since_first": years_since,
             "new_countries_recent": float(new_recent),
             "new_countries_2y_ago": float(new_2y_ago),
             "n_records": float(len(history)),
             "acceleration": float(new_recent - new_2y_ago),
-            "expansion_ratio": float(n_countries) / max(float(countries_2y_ago), 1.0),
-            "spread_velocity": float(n_countries) / max(years_since, 1.0),
-            "niche_breadth": float(n_hosts) / max(float(n_countries), 1.0),
+            "spread_velocity_norm": spread_norm,
+            "niche_breadth": niche_breadth_val,
         }
 
     def hazard_targets(
         self, cutoff_year: int, max_year: int,
         country_progression: dict[int, set[str]] | None = None,
     ) -> Dict[str, float]:
-        """Hazard: P(spread within years 1, 2, 3 after cutoff).
-
-        Uses pre-computed country progression dict for O(1) lookups
-        instead of re-filtering the full DataFrame per (backbone, year).
-
-        Args:
-            cutoff_year: the "present" year for this snapshot.
-            max_year: latest year in the full dataset (for censoring detection).
-            country_progression: dict year → set of countries seen up to that year.
-                If None, all targets are -1 (censored).
-
-        Returns:
-            Dict with hazard_1, hazard_2, hazard_3, n_new_countries, observed.
-        """
         targets: Dict[str, float] = {}
 
         if country_progression is None or cutoff_year not in country_progression:
@@ -285,13 +301,12 @@ class FeatureBuilder:
         for horizon in range(1, self.horizon + 1):
             window_end = int(cutoff_year) + horizon
             if window_end > max_year:
-                targets[f"hazard_{horizon}"] = -1.0  # right-censored
+                targets[f"hazard_{horizon}"] = -1.0
                 continue
             future_until = country_progression.get(window_end, set())
             n_new = len(future_until - past)
             targets[f"hazard_{horizon}"] = float(n_new > 0)
 
-        # Count of new countries in full horizon
         window_end_3 = int(cutoff_year) + self.horizon
         if window_end_3 > max_year:
             targets["n_new_countries"] = -1.0
@@ -312,8 +327,7 @@ class FeatureBuilder:
             "new_countries_2y_ago": 0.0,
             "n_records": 0.0,
             "acceleration": 0.0,
-            "expansion_ratio": 0.0,
-            "spread_velocity": 0.0,
+            "spread_velocity_norm": 0.0,
             "niche_breadth": 0.0,
         }
 
@@ -326,64 +340,111 @@ def build_sequences(
     min_snapshots: int = 2,
     require_country_history: bool = True,
     taxonomy_vocab: dict | None = None,
+    categorical_vocabs: dict | None = None,
 ) -> pl.DataFrame:
-    """Build backbone-level snapshot sequences. Returns one row per (backbone_id, year).
-
-    Each backbone's snapshots are sorted by year. Only backbones with
-    >= min_snapshots observations are kept.
-
-    If taxonomy_vocab is provided, adds taxonomy index columns.
-    """
     builder = FeatureBuilder(horizon, require_country_history)
-    max_year = int(raw["year"].max()) if not raw.is_empty() else 0
 
-    # Static features
     static = builder.static_features(meta)
     static_dict = {row["backbone_id"]: row for row in static.to_dicts()}
 
-    # Pre-compute taxonomy indices if vocab provided
-    tax_columns_raw = ["TAXONOMY_phylum", "TAXONOMY_class", "TAXONOMY_order", "TAXONOMY_family", "genus"]
     use_taxonomy = taxonomy_vocab is not None and bool(taxonomy_vocab)
+    use_categorical = categorical_vocabs is not None and bool(categorical_vocabs)
+
+    # Pre-compute backbone groups ONCE — replaces O(N*M) per-backbone filter
+    raw_groups: dict[str, pl.DataFrame] = {
+        bid: group.sort("year")
+        for bid, group in raw.group_by("backbone_id", maintain_order=True)
+        if bid in backbone_ids
+    }
+
+    # Taxonomy cache from pre-grouped data (no per-backbone filter)
     taxonomy_cache: dict[str, dict[str, int]] = {}
     if use_taxonomy:
-        for bid in backbone_ids:
-            taxonomy_cache[bid] = get_dominant_taxonomy(raw, bid, taxonomy_vocab, tax_columns_raw)
+        for bid, group in raw_groups.items():
+            tax_result = {}
+            for col in TAXONOMY_RAW_COLS:
+                mapping = taxonomy_vocab.get(col, {})
+                vals = group[col].drop_nulls().to_list()
+                vals = [str(v).strip() for v in vals if v is not None and str(v).strip()]
+                if vals:
+                    mode_val = Counter(vals).most_common(1)[0][0]
+                    tax_result[col] = mapping.get(mode_val, 1)
+                else:
+                    tax_result[col] = 1
+            taxonomy_cache[bid] = tax_result
 
-    # Pre-compute country progression per backbone for O(1) hazard lookups
-    # country_cache[backbone_id] = { year: set_of_countries_seen_up_to_year }
-    country_cache: dict[str, dict[int, set[str]]] = {}
-    for bid in backbone_ids:
-        bid_raw = raw.filter(pl.col("backbone_id") == bid).sort("year")
-        bid_years = bid_raw["year"].unique().to_list()
-        if len(bid_years) < min_snapshots:
-            continue
-        progression: dict[int, set[str]] = {}
-        seen: set[str] = set()
-        for year in bid_years:
-            year_countries = _unique_nonnull(
-                bid_raw.filter(pl.col("year") == year)["country"].to_list()
-                if "country" in bid_raw.columns
-                else []
-            )
-            seen = seen | year_countries
-            progression[year] = seen
-        country_cache[bid] = progression
+    # Categorical cache from pre-grouped meta
+    cat_cache: dict[str, dict[str, list[int]]] = {}
+    if use_categorical:
+        meta_groups: dict[str, pl.DataFrame] = {
+            bid: group
+            for bid, group in meta.group_by("backbone_id", maintain_order=True)
+            if bid in backbone_ids
+        }
+        for bid in backbone_ids:
+            meta_group = meta_groups.get(bid)
+            if meta_group is None or meta_group.is_empty():
+                cat_cache[bid] = {}
+                continue
+            cat_cache[bid] = {}
+            for col, vocab in categorical_vocabs.items():
+                if col in meta_group.columns:
+                    val = meta_group[col].to_list()[0]
+                    cat_cache[bid][col] = encode_categorical_value(val, col, vocab)
+                else:
+                    cat_cache[bid][col] = [0]
 
     rows = []
+    country_col = "country" if "country" in raw.columns else None
+
     for bid in backbone_ids:
-        bid_raw = raw.filter(pl.col("backbone_id") == bid).sort("year")
+        bid_raw = raw_groups.get(bid)
+        if bid_raw is None:
+            continue
+
         bid_years = bid_raw["year"].unique().to_list()
         if len(bid_years) < min_snapshots:
             continue
 
-        progression = country_cache.get(bid, {})
+        # Build progression using index-based year slicing
+        years_arr = bid_raw["year"].to_numpy()
+        unique_years, year_counts = np.unique(years_arr, return_counts=True)
+        year_ends = np.cumsum(year_counts)
+        year_starts = np.concatenate([[0], year_ends[:-1]])
+
+        progression: dict[int, set[str]] = {}
+        seen: set[str] = set()
+        if country_col:
+            for i, year in enumerate(unique_years):
+                year_countries = _unique_nonnull(bid_raw[country_col].to_list()[year_starts[i]:year_ends[i]])
+                seen = seen | year_countries
+                progression[year] = seen
+        else:
+            for year in unique_years:
+                progression[year] = seen
+
+        if progression:
+            min_y, max_y = int(min(progression)), int(max(progression))
+            last_seen = progression[min_y]
+            for y in range(min_y, max_y + 1):
+                if y in progression:
+                    last_seen = progression[y]
+                else:
+                    progression[y] = last_seen
+
+        bid_max_year = int(bid_raw["year"].max())
         s = static_dict.get(bid, {})
         tax = taxonomy_cache.get(bid, {})
+        cat = cat_cache.get(bid, {})
 
-        for year in bid_years:
-            history = bid_raw.filter(pl.col("year") <= year)
+        year_to_last_idx = {yr: i for i, yr in enumerate(bid_years)}
+        year_count = len(bid_years)
+
+        for yi, year in enumerate(bid_years):
+            last_idx = year_to_last_idx[year]
+            history = bid_raw[:last_idx + 1]
             bf = builder.backcast_features(history, year)
-            ht = builder.hazard_targets(year, max_year, country_progression=progression)
+            ht = builder.hazard_targets(year, bid_max_year, country_progression=progression)
 
             row = {
                 "backbone_id": bid,
@@ -396,6 +457,8 @@ def build_sequences(
                 "is_conjugative": float(s.get("is_conjugative", 0.0)),
                 "is_mobilizable": float(s.get("is_mobilizable", 0.0)),
                 "topology": float(s.get("topology", 0.0)),
+                "has_orit": float(s.get("has_orit", 0.0)),
+                "has_relaxase": float(s.get("has_relaxase", 0.0)),
                 "n_orit_types": float(s.get("n_orit_types", 0.0)),
                 "host_range_rank": float(s.get("host_range_rank", 0.0)),
                 **bf,
@@ -406,19 +469,25 @@ def build_sequences(
                 "observed": ht["observed"],
             }
             if use_taxonomy:
-                row["phylum_idx"] = tax.get("TAXONOMY_phylum", 0)
-                row["class_idx"] = tax.get("TAXONOMY_class", 0)
-                row["order_idx"] = tax.get("TAXONOMY_order", 0)
-                row["family_idx"] = tax.get("TAXONOMY_family", 0)
-                row["genus_idx"] = tax.get("genus", 0)
+                row["phylum_idx"] = tax.get("TAXONOMY_phylum", 1)
+                row["class_idx"] = tax.get("TAXONOMY_class", 1)
+                row["order_idx"] = tax.get("TAXONOMY_order", 1)
+                row["family_idx"] = tax.get("TAXONOMY_family", 1)
+                row["genus_idx"] = tax.get("genus", 1)
+
+            if use_categorical:
+                for col in CATEGORICAL_COLS:
+                    indices = cat.get(col, [0])
+                    row[f"cat_{col}"] = json.dumps(indices)
 
             rows.append(row)
 
     result = pl.DataFrame(rows)
-    # Enforce dtypes
     casts = {}
     for col in result.columns:
         if col in ("backbone_id",):
+            continue
+        if col.startswith("cat_"):
             continue
         if result[col].dtype == pl.Utf8:
             casts[col] = pl.Float64
@@ -431,40 +500,58 @@ def build_sequences(
     return result
 
 
-def disjoint_backbone_split(
-    raw: pl.DataFrame, split_year: int, val_frac: float = 0.15, test_frac: float = 0.15
+def random_backbone_split(
+    raw: pl.DataFrame, train_frac: float = 0.70, val_frac: float = 0.15, seed: int = 42
 ) -> Tuple[Set[str], Set[str], Set[str]]:
-    """Split backbones by first observation year. Clean leakage prevention."""
-    first_year = raw.group_by("backbone_id").agg(pl.col("year").min().alias("first_year"))
-
-    # Backbones first seen before split_year → train candidates
-    train_candidates = set(first_year.filter(pl.col("first_year") < split_year)["backbone_id"].to_list())
-    # Backbones first seen at or after split_year → test (cold-start) candidates
-    test_candidates = set(first_year.filter(pl.col("first_year") >= split_year)["backbone_id"].to_list())
-
-    # For val: sample from train candidates that have sufficient temporal coverage
-    # This gives us temporal continuity evaluation
-    rng = np.random.default_rng(42)
-    train_list = sorted(train_candidates)
-    rng.shuffle(train_list)
-    n_val = max(1, int(len(train_list) * val_frac))
-    val_ids = set(train_list[:n_val])
-    train_ids = set(train_list[n_val:])
-
-    # For test: sample from test candidates
-    test_list = sorted(test_candidates)
-    rng.shuffle(test_list)
-    n_test = max(1, int(len(test_list) * (test_frac / (val_frac + test_frac))))
-    test_ids = set(test_list[:n_test])
-    # Add remaining test candidates back to training
-    extra_train = set(test_list[n_test:])
-
-    train_ids |= extra_train
-
+    all_bids = raw["backbone_id"].unique().to_list()
+    if len(all_bids) < 4:
+        raise ValueError(f"Need >= 4 backbones, got {len(all_bids)}")
+    rng = np.random.default_rng(seed)
+    bid_list = sorted(all_bids)
+    rng.shuffle(bid_list)
+    n = len(bid_list)
+    n_train = max(1, int(n * train_frac))
+    n_val = max(1, int(n * val_frac))
+    train_ids = set(bid_list[:n_train])
+    val_ids = set(bid_list[n_train:n_train + n_val])
+    test_ids = set(bid_list[n_train + n_val:])
     logger.info(
-        "Disjoint split: %d train, %d val, %d test backbones",
-        len(train_ids),
-        len(val_ids),
-        len(test_ids),
+        "Random split: %d train, %d val, %d test backbones (test = truly unseen)",
+        len(train_ids), len(val_ids), len(test_ids),
     )
     return train_ids, val_ids, test_ids
+
+
+# Year-disjoint split for backward compatibility (backbones first seen >= split_year → test)
+def disjoint_backbone_split(
+    raw: pl.DataFrame, split_year: int = 2020, val_frac: float = 0.15, test_frac: float = 0.15, seed: int = 42
+) -> Tuple[Set[str], Set[str], Set[str]]:
+    all_bids = raw["backbone_id"].unique().to_list()
+    if len(all_bids) < 4:
+        raise ValueError(f"Need >= 4 backbones, got {len(all_bids)}")
+
+    first_years = raw.group_by("backbone_id").agg(pl.col("year").min())
+    train_candidates = []
+    test_bids_list = []
+    for row in first_years.to_dicts():
+        if row["year"] < split_year:
+            train_candidates.append(row["backbone_id"])
+        else:
+            test_bids_list.append(row["backbone_id"])
+
+    if not train_candidates:
+        raise ValueError(f"No backbones first seen before {split_year}")
+    test_bids = set(test_bids_list)
+
+    rng = np.random.default_rng(seed)
+    rng.shuffle(train_candidates)
+    n_val = max(1, int(len(train_candidates) * val_frac))
+    val_ids = set(train_candidates[:n_val])
+    train_ids = set(train_candidates[n_val:])
+
+    logger.info(
+        "Disjoint split: %d train, %d val, %d test (split_year=%d, pre-%d=%d, post=%d)",
+        len(train_ids), len(val_ids), len(test_bids),
+        split_year, split_year, len(train_candidates), len(test_bids),
+    )
+    return train_ids, val_ids, test_bids

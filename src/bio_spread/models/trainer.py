@@ -1,0 +1,678 @@
+from __future__ import annotations
+
+import json
+import logging
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, Optional
+
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
+from torch.utils.data import DataLoader
+
+from bio_spread.models.components import AdaptiveLossWeighting, PlattScaler
+from bio_spread.models.sovereign import BioSpreadModel, ModelOutput
+from bio_spread.utils.metrics import bootstrap_metrics, classification_metrics, expected_calibration_error
+
+logger = logging.getLogger(__name__)
+
+
+def ranking_loss(probs: torch.Tensor, targets: torch.Tensor, margin: float = 0.1) -> torch.Tensor:
+    diff = probs[:, 1:] - probs[:, :-1]
+    target_diff = targets[:, 1:] - targets[:, :-1]
+    valid = (target_diff > 0) & (targets[:, :-1] >= 0) & (targets[:, 1:] >= 0)
+    if not valid.any():
+        return torch.tensor(0.0, device=probs.device, requires_grad=True)
+    return F.relu(margin - diff[valid]).mean()
+
+
+def hazard_masked_bce(logits: torch.Tensor, targets: torch.Tensor, pos_weight: torch.Tensor) -> torch.Tensor:
+    valid = targets >= 0
+    if not valid.any():
+        return torch.tensor(0.0, device=logits.device, requires_grad=True)
+    return F.binary_cross_entropy_with_logits(
+        logits[valid],
+        targets[valid].clamp(min=0),
+        pos_weight=pos_weight,
+    )
+
+
+def cold_start_hard_negative_loss(
+    cold_logits: torch.Tensor,
+    targets: torch.Tensor,
+    pos_weight: torch.Tensor,
+    hard_ratio: float = 0.2,
+    fn_penalty: float = 0.5,
+) -> torch.Tensor:
+    B = cold_logits.size(0)
+    cold_probs = torch.sigmoid(cold_logits.detach())
+    per_sample_loss = F.binary_cross_entropy_with_logits(
+        cold_logits, targets, reduction="none", pos_weight=pos_weight,
+    )
+    if per_sample_loss.dim() > 1:
+        per_sample_loss = per_sample_loss.mean(dim=-1)
+
+    k = max(1, int(B * hard_ratio))
+    hard_indices = torch.topk(per_sample_loss, min(k, B)).indices
+    weights = torch.ones_like(per_sample_loss)
+    weights[hard_indices] = 2.0
+
+    fn_mask = (cold_probs < 0.5) & (targets == 1.0)
+    fn_weight = fn_mask.float()
+    if fn_weight.dim() > 1:
+        fn_weight = fn_weight.mean(dim=-1)
+    fn_weight = fn_weight * fn_penalty
+    weights = weights + fn_weight
+
+    return (per_sample_loss * weights).mean()
+
+
+class BioSpreadTrainer:
+
+    def __init__(
+        self,
+        model: BioSpreadModel,
+        device: str = "cpu",
+        lr: float = 3e-4,
+        weight_decay: float = 1e-2,
+        epochs: int = 50,
+        patience: int = 10,
+        warmup_epochs: int = 5,
+        grad_clip: float = 1.0,
+        lambda_count: float = 0.15,
+        lambda_rank: float = 0.10,
+        lambda_cold: float = 0.25,
+        lambda_kd: float = 1.0,
+        lambda_all: float = 1.0,
+        lambda_gate: float = 0.05,
+        temporal_masking_prob: float = 0.3,
+        gaussian_noise_std: float = 0.05,
+        gate_entropy_target: float = 0.4,
+        pos_weight: Optional[float] = None,
+        calibrate: bool = True,
+        calibrate_cold: bool = True,
+        use_adaptive_loss: bool = False,
+        use_hard_negative_mining: bool = False,
+        use_curriculum: bool = False,
+    ):
+        self.model = model.to(device)
+        self.device = device
+        self.epochs = epochs
+        self.patience = patience
+        self.warmup_epochs = warmup_epochs
+        self.grad_clip = grad_clip
+        self.lambda_count = lambda_count
+        self.lambda_rank = lambda_rank
+        self.lambda_cold = lambda_cold
+        self.lambda_kd = lambda_kd
+        self.lambda_all = lambda_all
+        self.lambda_gate = lambda_gate
+        self.temporal_masking_prob = temporal_masking_prob
+        self.gaussian_noise_std = gaussian_noise_std
+        self.gate_entropy_target = gate_entropy_target
+        self.calibrate = calibrate
+        self.calibrate_cold = calibrate_cold
+        self.use_adaptive_loss = use_adaptive_loss
+        self.use_hard_negative_mining = use_hard_negative_mining
+        self.use_curriculum = use_curriculum
+
+        self.platt_scalers = nn.ModuleList([PlattScaler().to(device) for _ in range(3)])
+        self.cold_platt_scalers = nn.ModuleList([PlattScaler().to(device) for _ in range(3)])
+
+        self.base_lr = lr
+        self.optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+        warmup_end = max(epochs - warmup_epochs, 1)
+        self.scheduler = optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=warmup_end, eta_min=lr * 0.01)
+        self.pos_weight = torch.full((3,), pos_weight or 1.0, device=device)
+        self.loss_scale_factors = None
+        self._zero = torch.tensor(0.0, device=self.device)
+
+        self.adaptive_loss: AdaptiveLossWeighting | None = None
+        if use_adaptive_loss:
+            self.adaptive_loss = AdaptiveLossWeighting(n_losses=6).to(device)
+            self.optimizer.add_param_group({"params": self.adaptive_loss.parameters(), "lr": lr * 0.1})
+
+    def _get_curriculum_params(self, epoch: int) -> dict:
+        if not self.use_curriculum:
+            return {
+                "temporal_masking_prob": self.temporal_masking_prob,
+                "lambda_cold": self.lambda_cold,
+                "lambda_kd": self.lambda_kd,
+                "lambda_rank": self.lambda_rank,
+                "noise_std": self.gaussian_noise_std,
+                "gate_entropy_target": self.gate_entropy_target,
+            }
+
+        progress = epoch / max(self.epochs, 1)
+
+        if epoch <= 3:
+            return {
+                "temporal_masking_prob": 0.0,
+                "lambda_cold": 0.0,
+                "lambda_kd": 0.0,
+                "lambda_rank": 0.0,
+                "noise_std": 0.0,
+                "gate_entropy_target": 0.5,
+            }
+        elif epoch <= 8:
+            phase_progress = (epoch - 3) / 5
+            return {
+                "temporal_masking_prob": 0.1 + 0.2 * phase_progress,
+                "lambda_cold": 0.1 + 0.15 * phase_progress,
+                "lambda_kd": 0.2 * phase_progress,
+                "lambda_rank": 0.05,
+                "noise_std": 0.02,
+                "gate_entropy_target": 0.4 * (1 - phase_progress * 0.5),
+            }
+        else:
+            phase_progress = min((epoch - 8) / (self.epochs - 8), 1.0)
+            return {
+                "temporal_masking_prob": 0.3 + 0.3 * phase_progress,
+                "lambda_cold": 0.5,
+                "lambda_kd": self.lambda_kd,
+                "lambda_rank": 0.15,
+                "noise_std": 0.05 + 0.03 * phase_progress,
+                "gate_entropy_target": 0.2 * (1 - phase_progress * 0.5),
+            }
+
+    def _get_adaptive_temporal_mask(
+        self, seq_lens: torch.Tensor, epoch: int
+    ) -> torch.Tensor:
+        B = seq_lens.size(0)
+        params = self._get_curriculum_params(epoch)
+        base_prob = params["temporal_masking_prob"]
+
+        if base_prob <= 0:
+            return torch.zeros(B, dtype=torch.bool, device=self.device)
+
+        history_weight = torch.clamp(1.0 / (seq_lens.float().sqrt() + 0.1), min=0.5, max=2.0)
+        probs = base_prob * history_weight
+        probs = torch.clamp(probs, min=0.05, max=0.9)
+        mask = torch.rand(B, device=self.device) < probs
+        return mask
+
+    def _compute_all_losses(
+        self,
+        out: ModelOutput,
+        batch: Dict[str, torch.Tensor],
+        epoch: int,
+    ) -> Dict[str, torch.Tensor]:
+        targets = batch["hazard"]
+        count_targets = batch["count"]
+        lengths = batch["seq_len"]
+        mask = batch["mask"]
+        temporal_mask = batch.get("temporal_mask")
+        if temporal_mask is None:
+            temporal_mask = torch.zeros(targets.size(0), dtype=torch.bool, device=targets.device)
+        params = self._get_curriculum_params(epoch)
+
+        B = targets.size(0)
+        idx = (lengths - 1).clamp(min=0)
+
+        last_targets = targets[range(B), idx]
+        loss_final = self._zero
+        for h in range(3):
+            loss_final = loss_final + hazard_masked_bce(
+                out.hazard_logits[:, h], last_targets[:, h], self.pos_weight[h:h+1]
+            )
+
+        pad_free = mask.bool()
+        loss_all = self._zero
+        for h in range(3):
+            loss_all = loss_all + hazard_masked_bce(
+                out.hazard_logits_all[..., h][pad_free],
+                targets[..., h][pad_free],
+                self.pos_weight[h:h+1],
+            )
+
+        loss_cold = self._zero
+        if out.cold_logits is not None:
+            if self.use_hard_negative_mining:
+                for h in range(3):
+                    loss_cold = loss_cold + cold_start_hard_negative_loss(
+                        out.cold_logits[:, h], last_targets[:, h], self.pos_weight[h:h+1],
+                    )
+            else:
+                for h in range(3):
+                    loss_cold = loss_cold + hazard_masked_bce(
+                        out.cold_logits[:, h], last_targets[:, h], self.pos_weight[h:h+1]
+                    )
+
+        loss_kd = self._zero
+        if out.cold_logits is not None and not temporal_mask.all():
+            teacher_probs = torch.sigmoid(out.hazard_logits.detach())
+            for h in range(3):
+                valid = ~temporal_mask & (last_targets[:, h] >= 0)
+                if valid.any():
+                    loss_kd = loss_kd + F.binary_cross_entropy_with_logits(
+                        out.cold_logits[valid, h], teacher_probs[valid, h], reduction="mean",
+                    )
+
+        count_valid = count_targets >= 0
+        loss_count = self._zero
+        if count_valid.any():
+            loss_count = F.smooth_l1_loss(
+                out.count_logits[count_valid],
+                torch.log1p(count_targets[count_valid].clamp(min=0)),
+                reduction="mean",
+            )
+
+        loss_rank = self._zero
+        n_rank = 0
+        for h in range(3):
+            if targets[..., h].numel() > 0:
+                rl = ranking_loss(out.hazard_logits_all[..., h], targets[..., h])
+                loss_rank = loss_rank + rl
+                n_rank += 1
+        if n_rank > 0:
+            loss_rank = loss_rank / n_rank
+
+        progress = (epoch - 1) / max(self.epochs - 1, 1)
+        current_gate_target = params["gate_entropy_target"] * (1 - progress) + 0.1 * progress
+        gate_entropy = -(out.gate_weights * torch.log(out.gate_weights.clamp(min=1e-8))).sum(dim=1).mean()
+        loss_gate = (current_gate_target - gate_entropy) ** 2
+
+        if self.use_adaptive_loss and self.adaptive_loss is not None:
+            losses_dict = {
+                "loss_final": loss_final,
+                "loss_all": loss_all,
+                "loss_cold": loss_cold,
+                "loss_count": loss_count,
+                "loss_rank": loss_rank,
+                "loss_gate": loss_gate,
+            }
+            total = self.adaptive_loss(losses_dict)
+        else:
+            scale_factors = self.loss_scale_factors or {}
+            total = (
+                loss_final * scale_factors.get("loss_final", 1.0)
+                + self.lambda_all * loss_all * scale_factors.get("loss_all", 1.0)
+                + self.lambda_count * loss_count * scale_factors.get("loss_count", 1.0)
+                + params["lambda_rank"] * loss_rank * scale_factors.get("loss_rank", 1.0)
+                + params["lambda_cold"] * loss_cold * scale_factors.get("loss_cold", 1.0)
+                + params["lambda_kd"] * loss_kd * scale_factors.get("loss_kd", 1.0)
+                + self.lambda_gate * loss_gate * scale_factors.get("loss_gate", 1.0)
+            )
+
+        return {
+            "loss_final": loss_final,
+            "loss_all": loss_all,
+            "loss_cold": loss_cold,
+            "loss_kd": loss_kd,
+            "loss_count": loss_count,
+            "loss_rank": loss_rank,
+            "loss_gate": loss_gate,
+            "total": total,
+        }
+
+    def _measure_loss_scales(self, loader: DataLoader, n_batches: int = 50) -> Dict[str, float]:
+        self.model.train()
+        accum = {
+            "loss_final": 0.0,
+            "loss_all": 0.0,
+            "loss_cold": 0.0,
+            "loss_kd": 0.0,
+            "loss_count": 0.0,
+            "loss_rank": 0.0,
+            "loss_gate": 0.0,
+        }
+        counts = {k: 0 for k in accum}
+
+        with torch.no_grad():
+            for i, batch in enumerate(loader):
+                if i >= n_batches:
+                    break
+
+                static = batch["static"].to(self.device)
+                seq = batch["seq"].to(self.device)
+                mask = batch["mask"].to(self.device)
+                lengths = batch["seq_len"].to(self.device)
+                targets = batch["hazard"].to(self.device)
+                counts_t = batch["count"].to(self.device)
+                taxonomy_idxs = batch.get("taxonomy")
+                if taxonomy_idxs is not None:
+                    taxonomy_idxs = taxonomy_idxs.to(self.device)
+
+                out = self.model(static, seq, mask, taxonomy_idxs, cat_inputs=batch.get("cat_inputs"))
+
+                device_batch = {
+                    "hazard": targets,
+                    "count": counts_t,
+                    "seq_len": lengths,
+                    "mask": mask,
+                }
+                losses = self._compute_all_losses(out, device_batch, epoch=1)
+
+                for k in accum:
+                    val = losses[k].item()
+                    accum[k] += val
+                    counts[k] += 1
+
+        scale_factors = {}
+        for k in accum:
+            mean_val = accum[k] / max(counts[k], 1)
+            scale_factors[k] = 1.0 / max(mean_val, 1e-8)
+
+        ref = scale_factors.get("loss_final", 1.0)
+        for k in scale_factors:
+            scale_factors[k] = scale_factors[k] / ref
+
+        return scale_factors
+
+    def _compute_pos_weight(self, loader: DataLoader) -> torch.Tensor:
+        total = torch.zeros(3, device=self.device)
+        pos = torch.zeros(3, device=self.device)
+        for batch in loader:
+            targets = batch["hazard"]
+            mask = batch["mask"]
+            valid = (targets >= 0) & mask.unsqueeze(-1).bool()
+            for h in range(3):
+                pos_h = (targets[..., h][valid[..., h]] > 0).sum()
+                total_h = valid[..., h].sum()
+                pos[h] += pos_h
+                total[h] += total_h
+        total = total.clamp(min=1)
+        pos = pos.clamp(min=1)
+        neg = total - pos
+        return (neg / pos).clamp(max=100.0)
+
+    def _train_epoch(self, train_loader: DataLoader, epoch: int) -> float:
+        self.model.train()
+        loss_total = 0.0
+        n_masked = 0
+        skipped_batches = 0
+        params = self._get_curriculum_params(epoch)
+
+        if epoch <= self.warmup_epochs:
+            lr_scale = 0.1 + 0.9 * (epoch - 1) / max(self.warmup_epochs, 1)
+            for pg in self.optimizer.param_groups:
+                if pg["lr"] > 0:
+                    pg["lr"] = self.base_lr * lr_scale
+
+        for batch in train_loader:
+            static = batch["static"].to(self.device)
+            seq = batch["seq"].to(self.device)
+            mask = batch["mask"].to(self.device)
+            lengths = batch["seq_len"].to(self.device)
+            targets = batch["hazard"].to(self.device)
+            count_targets = batch["count"].to(self.device)
+            taxonomy_idxs = batch.get("taxonomy")
+            if taxonomy_idxs is not None:
+                taxonomy_idxs = taxonomy_idxs.to(self.device)
+
+            B = seq.shape[0]
+
+            seq_noised = seq
+            if params["noise_std"] > 0:
+                noise = torch.randn_like(seq) * params["noise_std"]
+                seq_noised = seq + noise * mask.unsqueeze(-1)
+
+            temporal_mask = self._get_adaptive_temporal_mask(lengths, epoch)
+            n_masked += temporal_mask.sum().item()
+
+            out = self.model(
+                static, seq_noised, mask, taxonomy_idxs, temporal_mask=temporal_mask,
+                cat_inputs=batch.get("cat_inputs"),
+            )
+
+            device_batch = {
+                "hazard": targets,
+                "count": count_targets,
+                "seq_len": lengths,
+                "mask": mask,
+                "temporal_mask": temporal_mask,
+            }
+            losses = self._compute_all_losses(out, device_batch, epoch)
+            loss = losses["total"]
+
+            if not torch.isfinite(loss):
+                skipped_batches += 1
+                logger.warning("NaN/Inf loss encountered -- skipping batch")
+                self.optimizer.zero_grad(set_to_none=True)
+                continue
+
+            self.optimizer.zero_grad(set_to_none=True)
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
+            self.optimizer.step()
+            loss_total += loss.item()
+
+        if epoch >= self.warmup_epochs:
+            self.scheduler.step()
+
+        avg_loss = loss_total / max(len(train_loader), 1)
+        lr_now = self.optimizer.param_groups[0]["lr"]
+        mask_pct = 100.0 * n_masked / max(len(train_loader.dataset), 1)
+        logger.info(
+            "Epoch %3d | Loss: %.4f | Mask: %.0f%% | LR: %.2e",
+            epoch, avg_loss, mask_pct, lr_now,
+        )
+
+        if skipped_batches > 0:
+            logger.warning("Epoch %d: Skipped %d batches due to NaN/Inf loss", epoch, skipped_batches)
+
+        return avg_loss
+
+    def _should_stop(self) -> bool:
+        return self._patience_counter >= self.patience
+
+    def _save_checkpoint(self, metrics: Dict) -> None:
+        torch.save(self.model.state_dict(), self._artifact_dir / "best_model.pt")
+        with open(self._artifact_dir / "metrics.json", "w") as f:
+            json.dump(metrics, f, indent=2, default=str)
+
+    def fit(
+        self,
+        train_loader: DataLoader,
+        val_loader: Optional[DataLoader] = None,
+        cal_loader: Optional[DataLoader] = None,
+        cold_cal_loader: Optional[DataLoader] = None,
+    ) -> Path:
+        if len(train_loader) == 0:
+            raise ValueError("Empty training loader")
+
+        self.loss_scale_factors = None
+
+        self.pos_weight = self._compute_pos_weight(train_loader)
+        self.loss_scale_factors = self._measure_loss_scales(train_loader)
+        logger.info("Loss scale factors: %s", self.loss_scale_factors)
+        run_id = "BS_%s" % datetime.now().strftime("%Y%m%d_%H%M%S")
+        self._artifact_dir = Path("artifacts") / run_id
+        self._artifact_dir.mkdir(parents=True, exist_ok=True)
+        best_auc = -1.0
+        self._patience_counter = 0
+
+        for epoch in range(1, self.epochs + 1):
+            self._train_epoch(train_loader, epoch)
+
+            if val_loader is not None:
+                metrics = self.evaluate(val_loader)
+                auc_h1 = metrics.get("roc_auc_h1", 0.0)
+                auc_h2 = metrics.get("roc_auc_h2", 0.0)
+                auc_h3 = metrics.get("roc_auc_h3", 0.0)
+                val_auc = 0.5 * auc_h3 + 0.25 * auc_h1 + 0.25 * auc_h2
+                logger.info(
+                    "  Val | Composite: %.4f | AUC(h1): %.4f "
+                    "AUC(h2): %.4f "
+                    "AUC(h3): %.4f | "
+                    "F1: %.4f | ECE: %.4f",
+                    val_auc, auc_h1, auc_h2, auc_h3,
+                    metrics.get("f1", 0.0), metrics.get("ece", 0.0),
+                )
+                if val_auc > best_auc:
+                    best_auc = val_auc
+                    self._patience_counter = 0
+                    self._save_checkpoint(metrics)
+                    logger.info("  -> New best (AUC: %.4f)", best_auc)
+                else:
+                    self._patience_counter += 1
+                    if self._should_stop():
+                        logger.info("Early stop at epoch %d", epoch)
+                        break
+
+        best_path = self._artifact_dir / "best_model.pt"
+        if best_path.exists():
+            self.model.load_state_dict(torch.load(best_path, map_location=self.device, weights_only=True))
+
+        cal_data = cal_loader if cal_loader is not None else val_loader
+        if self.calibrate and cal_data is not None:
+            self._learn_platt(cal_data, self.platt_scalers, force_temporal_mask=False)
+            torch.save(
+                {f"scaler_h{h}": self.platt_scalers[h].state_dict() for h in range(3)},
+                self._artifact_dir / "platt.pt",
+            )
+
+        cold_cal = cold_cal_loader if cold_cal_loader is not None else cal_data
+        if self.calibrate_cold and cold_cal is not None:
+            self._learn_platt(cold_cal, self.cold_platt_scalers, force_temporal_mask=True)
+            torch.save(
+                {f"scaler_h{h}": self.cold_platt_scalers[h].state_dict() for h in range(3)},
+                self._artifact_dir / "platt_cold.pt",
+            )
+
+        return self._artifact_dir
+
+    def _learn_platt(self, loader: DataLoader, scalers: nn.ModuleList,
+                     force_temporal_mask: Optional[bool] = None) -> None:
+        self.model.eval()
+        for scaler in scalers:
+            scaler.train()
+
+        all_logits = {h: [] for h in range(3)}
+        all_targets = {h: [] for h in range(3)}
+        with torch.no_grad():
+            for batch in loader:
+                static = batch["static"].to(self.device)
+                seq = batch["seq"].to(self.device)
+                mask = batch["mask"].to(self.device)
+                lengths = batch["seq_len"].to(self.device)
+                targets = batch["hazard"].to(self.device)
+                taxonomy_idxs = batch.get("taxonomy")
+                if taxonomy_idxs is not None:
+                    taxonomy_idxs = taxonomy_idxs.to(self.device)
+
+                temporal_mask = torch.ones(static.size(0), dtype=torch.bool, device=self.device) if force_temporal_mask else None
+
+                out = self.model(static, seq, mask, taxonomy_idxs, temporal_mask=temporal_mask,
+                                 cat_inputs=batch.get("cat_inputs"))
+                idx = (lengths - 1).clamp(min=0)
+                last_logits = out.hazard_logits
+                last_targets = targets[range(static.size(0)), idx]
+                valid = last_targets >= 0
+                for h in range(3):
+                    v = valid[:, h]
+                    if v.any():
+                        all_logits[h].append(last_logits[v, h])
+                        all_targets[h].append(last_targets[v, h])
+
+        for h in range(3):
+            if not all_logits[h]:
+                logger.warning("No valid samples for Platt calibration (horizon %d)", h + 1)
+                continue
+
+            logits = torch.cat(all_logits[h])
+            targets = torch.cat(all_targets[h])
+            scaler = scalers[h]
+
+            opt = optim.SGD(scaler.parameters(), lr=0.1)
+            for _ in range(100):
+                opt.zero_grad()
+                scaled = scaler(logits)
+                loss = F.binary_cross_entropy_with_logits(scaled, targets)
+                loss.backward()
+                opt.step()
+
+            a_val = float(scaler.a.cpu().item())
+            b_val = float(scaler.b.cpu().item())
+            logger.info("Platt scaling (h%d): a=%.3f, b=%.3f", h + 1, a_val, b_val)
+
+    def _calibrated_probs(self, logits: torch.Tensor, use_cold_scaler: bool = False) -> torch.Tensor:
+        scalers = self.cold_platt_scalers if use_cold_scaler else self.platt_scalers
+        probs = torch.zeros_like(logits)
+        for h in range(3):
+            scaled = scalers[h](logits[:, h])
+            probs[:, h] = torch.sigmoid(scaled)
+        return probs
+
+    @torch.no_grad()
+    def evaluate(self, loader: DataLoader, use_cold_scaler: bool = False,
+                 force_temporal_mask: bool = False) -> Dict:
+        self.model.eval()
+        all_probs = {h: [] for h in range(3)}
+        all_targets = {h: [] for h in range(3)}
+
+        for batch in loader:
+            static = batch["static"].to(self.device)
+            seq = batch["seq"].to(self.device)
+            mask = batch["mask"].to(self.device)
+            lengths = batch["seq_len"].to(self.device)
+            targets = batch["hazard"].to(self.device)
+            taxonomy_idxs = batch.get("taxonomy")
+            if taxonomy_idxs is not None:
+                taxonomy_idxs = taxonomy_idxs.to(self.device)
+
+            temporal_mask = torch.ones(static.size(0), dtype=torch.bool, device=self.device) if force_temporal_mask else None
+            out = self.model(static, seq, mask, taxonomy_idxs, temporal_mask=temporal_mask,
+                             cat_inputs=batch.get("cat_inputs"))
+
+            if force_temporal_mask and out.cold_logits is not None:
+                logits = out.cold_logits
+            else:
+                logits = out.hazard_logits
+            probs = self._calibrated_probs(logits, use_cold_scaler=use_cold_scaler)
+
+            B = static.size(0)
+            idx = (lengths - 1).clamp(min=0)
+            for h in range(3):
+                prob_h = probs[:, h].cpu().numpy()
+                target_h = targets[range(B), idx, h].cpu().numpy()
+                valid = target_h >= 0
+                if valid.any():
+                    all_probs[h].append(prob_h[valid])
+                    all_targets[h].append(target_h[valid])
+
+        if not any(len(v) > 0 for v in all_probs.values()):
+            return {"roc_auc": 0.5, "f1": 0.0, "ece": 0.0, "n": 0}
+
+        metrics = {}
+        for h in range(3):
+            if all_probs[h]:
+                y_prob = np.concatenate(all_probs[h])
+                y_true = np.concatenate(all_targets[h])
+                if len(np.unique(y_true)) > 1:
+                    m = classification_metrics(y_true, y_prob)
+                    metrics[f"roc_auc_h{h + 1}"] = m["roc_auc"]
+                    metrics[f"pr_auc_h{h + 1}"] = m["pr_auc"]
+                    metrics[f"ece_h{h + 1}"] = expected_calibration_error(y_true, y_prob)
+                else:
+                    metrics[f"roc_auc_h{h + 1}"] = 0.5
+                    metrics[f"pr_auc_h{h + 1}"] = float(y_true.mean())
+                    metrics[f"ece_h{h + 1}"] = 0.0
+
+        if all_probs[2]:
+            y_prob = np.concatenate(all_probs[2])
+            y_true = np.concatenate(all_targets[2])
+            if len(np.unique(y_true)) > 1:
+                cls_metrics = classification_metrics(y_true, y_prob)
+                metrics.update(cls_metrics)
+                metrics["ece"] = expected_calibration_error(y_true, y_prob)
+                ci = bootstrap_metrics(y_true, y_prob)
+                if ci:
+                    metrics["roc_auc_ci_low"] = ci.get("ci_low", 0.0)
+                    metrics["roc_auc_ci_high"] = ci.get("ci_high", 0.0)
+            else:
+                metrics["roc_auc"] = 0.5
+                metrics["f1"] = 0.0
+                metrics["ece"] = 0.0
+                metrics["positive_rate"] = float(y_true.mean())
+            metrics["n"] = int(len(y_true))
+        else:
+            metrics.setdefault("roc_auc", 0.5)
+            metrics.setdefault("f1", 0.0)
+            metrics.setdefault("ece", 0.0)
+            metrics["n"] = 0
+
+        return metrics

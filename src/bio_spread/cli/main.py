@@ -1,7 +1,3 @@
-"""
-Sovereign-X: Thin CLI. Three commands: sovereign-prepare, train, evaluate.
-"""
-
 from __future__ import annotations
 
 import json
@@ -14,41 +10,44 @@ import polars as pl
 import torch
 from torch.utils.data import DataLoader
 
-from bio_spread_reborn.data.dataset import (
+from bio_spread.constants import TAXONOMY_COLS
+from bio_spread.data.loader import get_device
+from bio_spread.data.dataset import (
     SequenceBatchSampler,
-    SovereignSequenceDataset,
+    SequenceDataset,
     fit_normalizers,
     fit_static_normalizers,
     load_normalizers,
     save_normalizers,
     sequence_collate,
 )
-from bio_spread_reborn.data.snapshot import (
-    TAXONOMY_COLS,
+from bio_spread.data.snapshot import (
+    build_categorical_vocabs,
     build_sequences,
     build_taxonomy_vocab,
-    disjoint_backbone_split,
+    load_categorical_vocabs,
     load_taxonomy_vocab,
+    random_backbone_split,
+    save_categorical_vocabs,
     save_taxonomy_vocab,
 )
-from bio_spread_reborn.models import create_model
-from bio_spread_reborn.models.trainer import SovereignXTrainer
-from bio_spread_reborn.utils.config import load_config
+from bio_spread.models import create_model
+from bio_spread.models.trainer import BioSpreadTrainer
+from bio_spread.utils.config import load_config
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("sovereign")
+logger = logging.getLogger("biospread")
 
 
 @click.group()
 def cli():
-    """Sovereign-X: Dual-expert temporal hazard model for plasmid spread."""
+    ...
 
 
 @cli.command()
 @click.option("--config", default="config/default.yaml")
-@click.option("--output-dir", default="data/sovereign_features")
-def sovereign_prepare(config: str, output_dir: str):
-    """Build sequences + disjoint backbone split + save normalizers."""
+@click.option("--output-dir", default="data/features")
+def prepare(config: str, output_dir: str):
     cfg = load_config(config)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -59,13 +58,13 @@ def sovereign_prepare(config: str, output_dir: str):
     meta = raw.unique(subset=["backbone_id"])
     split_year = cfg.data.split_year
 
-    # Disjoint backbone split
-    train_bids, val_bids, test_bids = disjoint_backbone_split(
+    train_bids, val_bids, test_bids = random_backbone_split(
         raw,
-        split_year,
+        train_frac=1.0 - cfg.data.val_backbone_frac - cfg.data.test_backbone_frac,
         val_frac=cfg.data.val_backbone_frac,
-        test_frac=cfg.data.test_backbone_frac,
+        seed=42,
     )
+    _ = split_year  # kept for compatibility
 
     seq_kwargs = {
         "horizon": cfg.data.spread_horizon,
@@ -81,18 +80,26 @@ def sovereign_prepare(config: str, output_dir: str):
     for bid in test_bids:
         all_bids[bid] = "test"
 
-    # Build taxonomy vocabulary from TRAIN backbones ONLY (leakage prevention)
     taxonomy_vocab = build_taxonomy_vocab(raw.filter(pl.col("backbone_id").is_in(train_bids)))
     save_taxonomy_vocab(taxonomy_vocab, output_dir / "taxonomy_vocab.json")
 
-    sequences = build_sequences(raw, meta, set(all_bids.keys()), taxonomy_vocab=taxonomy_vocab, **seq_kwargs)
+    categorical_vocabs = build_categorical_vocabs(
+        raw.filter(pl.col("backbone_id").is_in(train_bids))
+    )
+    save_categorical_vocabs(categorical_vocabs, output_dir / "categorical_vocabs.json")
+
+    sequences = build_sequences(
+        raw, meta, set(all_bids.keys()),
+        taxonomy_vocab=taxonomy_vocab,
+        categorical_vocabs=categorical_vocabs,
+        **seq_kwargs,
+    )
     sequences = sequences.with_columns(
         pl.col("backbone_id")
         .map_elements(lambda bid: all_bids.get(bid, "unknown"), return_dtype=pl.Utf8)
         .alias("split")
     )
 
-    # Fit normalizers on TRAIN only (leakage prevention)
     train_seq = sequences.filter(pl.col("split") == "train")
     seq_means, seq_stds = fit_normalizers(train_seq)
     static_means, static_stds = fit_static_normalizers(train_seq)
@@ -125,9 +132,8 @@ def sovereign_prepare(config: str, output_dir: str):
 
 @cli.command()
 @click.option("--config", default="config/default.yaml")
-@click.option("--feature-dir", default="data/sovereign_features")
+@click.option("--feature-dir", default="data/features")
 def train(config: str, feature_dir: str):
-    """Train Sovereign-X model."""
     cfg = load_config(config)
     feature_dir = Path(feature_dir)
 
@@ -135,10 +141,12 @@ def train(config: str, feature_dir: str):
     taxonomy_vocab = load_taxonomy_vocab(feature_dir / "taxonomy_vocab.json")
     use_taxonomy = bool(taxonomy_vocab)
 
+    categorical_vocabs = load_categorical_vocabs(feature_dir / "categorical_vocabs.json")
+    use_categorical = bool(categorical_vocabs)
+
     train_df = seq_df.filter((pl.col("split") == "train") & (pl.col("observed") == 1.0))
     val_df = seq_df.filter((pl.col("split") == "val") & (pl.col("observed") == 1.0))
 
-    # Split val into early-stop (70%), cal-temp (15%), cal-cold (15%)
     val_bids = val_df["backbone_id"].unique().to_list()
     np.random.seed(cfg.training.seed)
     np.random.shuffle(val_bids)
@@ -149,50 +157,53 @@ def train(config: str, feature_dir: str):
     cal_cold_bids = set(val_bids[n_cal_temp : n_cal_temp + n_cal_cold])
     early_stop_bids = set(val_bids[n_cal_temp + n_cal_cold :])
 
-    # Load normalizers fitted on train
     seq_means, seq_stds = load_normalizers(feature_dir / "normalizers.npz")
     static_means, static_stds = load_normalizers(feature_dir / "static_normalizers.npz")
 
     max_seq_len = cfg.model.max_seq_len
 
-    train_ds = SovereignSequenceDataset(
+    train_ds = SequenceDataset(
         train_df,
         train_df["backbone_id"].unique().to_list(),
         max_seq_len,
         normalizer=(seq_means, seq_stds),
         static_normalizer=(static_means, static_stds),
         use_taxonomy=use_taxonomy,
+        use_categorical=use_categorical,
     )
-    val_ds = SovereignSequenceDataset(
+    val_ds = SequenceDataset(
         val_df.filter(pl.col("backbone_id").is_in(early_stop_bids)),
         list(early_stop_bids),
         max_seq_len,
         normalizer=(seq_means, seq_stds),
         static_normalizer=(static_means, static_stds),
         use_taxonomy=use_taxonomy,
+        use_categorical=use_categorical,
     )
-    cal_temp_ds = SovereignSequenceDataset(
+    cal_temp_ds = SequenceDataset(
         val_df.filter(pl.col("backbone_id").is_in(cal_temp_bids)),
         list(cal_temp_bids),
         max_seq_len,
         normalizer=(seq_means, seq_stds),
         static_normalizer=(static_means, static_stds),
         use_taxonomy=use_taxonomy,
+        use_categorical=use_categorical,
     )
-    cal_cold_ds = SovereignSequenceDataset(
+    cal_cold_ds = SequenceDataset(
         val_df.filter(pl.col("backbone_id").is_in(cal_cold_bids)),
         list(cal_cold_bids),
         max_seq_len,
         normalizer=(seq_means, seq_stds),
         static_normalizer=(static_means, static_stds),
         use_taxonomy=use_taxonomy,
+        use_categorical=use_categorical,
     )
 
     if len(train_ds) == 0 or len(val_ds) == 0:
         raise ValueError("Empty training or validation dataset")
 
     sampler = SequenceBatchSampler(
-        [item["seq_len"] for item in train_ds.items],
+        len(train_ds.items),
         batch_size=cfg.training.batch_size,
     )
 
@@ -215,13 +226,12 @@ def train(config: str, feature_dir: str):
     n_static = train_ds.items[0]["static"].size(-1)
     n_snapshot = train_ds.items[0]["seq"].size(-1)
 
-    model = create_model(n_static, n_snapshot, cfg.model, taxonomy_vocab=taxonomy_vocab if use_taxonomy else None)
+    model = create_model(n_static, n_snapshot, cfg.model,
+                         taxonomy_vocab=taxonomy_vocab if use_taxonomy else None,
+                         categorical_vocabs=categorical_vocabs if use_categorical else None)
+    device = get_device()
 
-    device = "mps" if torch.backends.mps.is_available() else "cpu"
-    if torch.cuda.is_available():
-        device = "cuda"
-
-    trainer = SovereignXTrainer(
+    trainer = BioSpreadTrainer(
         model,
         device=device,
         lr=cfg.training.lr,
@@ -233,6 +243,7 @@ def train(config: str, feature_dir: str):
         lambda_count=cfg.training.lambda_count,
         lambda_rank=cfg.training.lambda_rank,
         lambda_cold=cfg.training.lambda_cold,
+        lambda_kd=cfg.training.lambda_kd,
         lambda_all=cfg.training.lambda_all,
         lambda_gate=cfg.training.lambda_gate,
         temporal_masking_prob=cfg.training.temporal_masking_prob,
@@ -240,10 +251,13 @@ def train(config: str, feature_dir: str):
         gate_entropy_target=cfg.training.gate_entropy_target,
         calibrate=cfg.training.calibrate,
         calibrate_cold=cfg.training.calibrate_cold,
+        use_adaptive_loss=cfg.training.use_adaptive_loss,
+        use_hard_negative_mining=cfg.training.use_hard_negative_mining,
+        use_curriculum=cfg.training.use_curriculum,
     )
 
     logger.info(
-        "Starting Sovereign-X training on %s (%d train, %d val, %d cal-temp, %d cal-cold, taxonomy=%s)",
+        "Starting BioSpread training on %s (%d train, %d val, %d cal-temp, %d cal-cold, taxonomy=%s)",
         device,
         len(train_ds),
         len(val_ds),
@@ -255,13 +269,79 @@ def train(config: str, feature_dir: str):
     logger.info("Training complete. Best model in %s", artifact_dir)
 
 
+def _eval_split(
+    seq_df: pl.DataFrame, bids: list[str], model_path: str, cfg, device: str,
+    seq_means: np.ndarray, seq_stds: np.ndarray,
+    static_means: np.ndarray, static_stds: np.ndarray,
+    taxonomy_vocab: dict, categorical_vocabs: dict,
+    platt_path: Path, platt_cold_path: Path,
+    force_temporal_mask: bool = False, use_cold_scaler: bool = False,
+) -> dict:
+    mode_df = seq_df.filter(pl.col("backbone_id").is_in(set(bids)) & (pl.col("observed") == 1.0))
+    mode_bids = mode_df["backbone_id"].unique().to_list()
+    if not mode_bids:
+        return {"error": "empty after filtering", "n_backbones": len(bids), "n_snapshots": 0}
+
+    use_taxonomy = bool(taxonomy_vocab)
+    use_categorical = bool(categorical_vocabs)
+    max_seq_len = cfg.model.max_seq_len
+    ds = SequenceDataset(
+        mode_df, mode_bids, max_seq_len,
+        normalizer=(seq_means, seq_stds),
+        static_normalizer=(static_means, static_stds),
+        use_taxonomy=use_taxonomy,
+        use_categorical=use_categorical,
+    )
+    loader = DataLoader(
+        ds, batch_size=cfg.training.batch_size,
+        collate_fn=lambda b: sequence_collate(b, max_seq_len),
+    )
+
+    n_static = ds.items[0]["static"].size(-1)
+    n_snapshot = ds.items[0]["seq"].size(-1)
+    model = create_model(n_static, n_snapshot, cfg.model,
+                         taxonomy_vocab if use_taxonomy else None,
+                         categorical_vocabs if use_categorical else None)
+    model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
+    model.to(device)
+
+    trainer = BioSpreadTrainer(model, device=device, calibrate=False)
+    if use_cold_scaler and platt_cold_path.exists():
+        st = torch.load(platt_cold_path, map_location=device, weights_only=True)
+        for h in range(3):
+            if f"scaler_h{h}" in st:
+                trainer.cold_platt_scalers[h].load_state_dict(st[f"scaler_h{h}"])
+    elif platt_path.exists():
+        st = torch.load(platt_path, map_location=device, weights_only=True)
+        for h in range(3):
+            if f"scaler_h{h}" in st:
+                trainer.platt_scalers[h].load_state_dict(st[f"scaler_h{h}"])
+
+    metrics = trainer.evaluate(loader, use_cold_scaler=use_cold_scaler,
+                               force_temporal_mask=force_temporal_mask)
+    return {
+        "n_backbones": len(mode_bids),
+        "n_snapshots": len(mode_df),
+        "roc_auc": metrics.get("roc_auc", 0.0),
+        "roc_auc_h1": metrics.get("roc_auc_h1", 0.0),
+        "roc_auc_h2": metrics.get("roc_auc_h2", 0.0),
+        "roc_auc_h3": metrics.get("roc_auc_h3", 0.0),
+        "pr_auc": metrics.get("pr_auc", 0.0),
+        "f1": metrics.get("f1", 0.0),
+        "ece": metrics.get("ece", 0.0),
+        "positive_rate": metrics.get("positive_rate", 0.0),
+        "n_eval": metrics.get("n", 0),
+        "roc_auc_ci_low": metrics.get("roc_auc_ci_low", 0.0),
+        "roc_auc_ci_high": metrics.get("roc_auc_ci_high", 0.0),
+    }
+
+
 @cli.command()
 @click.option("--model-path", required=True)
 @click.option("--config", default="config/default.yaml")
-@click.option("--feature-dir", default="data/sovereign_features")
+@click.option("--feature-dir", default="data/features")
 @click.option("--output-path", default=None)
 def evaluate(model_path: str, config: str, feature_dir: str, output_path: str):
-    """Evaluate Sovereign-X on temporal and cold-start splits."""
     cfg = load_config(config)
     feature_dir = Path(feature_dir)
     seq_df = pl.read_csv(feature_dir / "sequences.tsv", separator="\t")
@@ -271,74 +351,46 @@ def evaluate(model_path: str, config: str, feature_dir: str, output_path: str):
     seq_means, seq_stds = load_normalizers(feature_dir / "normalizers.npz")
     static_means, static_stds = load_normalizers(feature_dir / "static_normalizers.npz")
 
-    device = "mps" if torch.backends.mps.is_available() else "cpu"
-    if torch.cuda.is_available():
-        device = "cuda"
+    device = get_device()
+    platt_path = Path(model_path).with_name("platt.pt")
+    platt_cold_path = Path(model_path).with_name("platt_cold.pt")
+    taxonomy_vocab = load_taxonomy_vocab(feature_dir / "taxonomy_vocab.json")
+    categorical_vocabs = load_categorical_vocabs(feature_dir / "categorical_vocabs.json")
 
     results = {}
-    for mode, flag in [("temporal", "val"), ("cold_start", "test")]:
-        bids = split.get(flag, [])
-        if not bids:
-            results[mode] = {"error": f"no {flag} backbones"}
-            continue
-        mode_df = seq_df.filter(pl.col("backbone_id").is_in(set(bids)) & (pl.col("observed") == 1.0))
-        mode_bids = mode_df["backbone_id"].unique().to_list()
-        if not mode_bids:
-            results[mode] = {"error": "empty after filtering"}
-            continue
 
-        max_seq_len = cfg.model.max_seq_len
+    val_bids = split.get("val", [])
+    test_bids = split.get("test", [])
 
-        taxonomy_vocab = load_taxonomy_vocab(feature_dir / "taxonomy_vocab.json")
-        use_taxonomy = bool(taxonomy_vocab)
+    # temporal: val backbones (seen during training, full temporal features)
+    if val_bids:
+        r = _eval_split(seq_df, val_bids, model_path, cfg, device,
+                        seq_means, seq_stds, static_means, static_stds,
+                        taxonomy_vocab, categorical_vocabs, platt_path, platt_cold_path,
+                        force_temporal_mask=False, use_cold_scaler=False)
+        results["temporal"] = r
+        logger.info("Temporal (val, n=%d): AUC=%.4f F1=%.4f ECE=%.4f",
+                     r.get("n_eval", 0), r.get("roc_auc", 0), r.get("f1", 0), r.get("ece", 0))
 
-        ds = SovereignSequenceDataset(
-            mode_df,
-            mode_bids,
-            max_seq_len,
-            normalizer=(seq_means, seq_stds),
-            static_normalizer=(static_means, static_stds),
-            use_taxonomy=use_taxonomy,
-        )
+    # unseen: test backbones (NEVER seen during training, full temporal features)
+    if test_bids:
+        r = _eval_split(seq_df, test_bids, model_path, cfg, device,
+                        seq_means, seq_stds, static_means, static_stds,
+                        taxonomy_vocab, categorical_vocabs, platt_path, platt_cold_path,
+                        force_temporal_mask=False, use_cold_scaler=False)
+        results["unseen"] = r
+        logger.info("Unseen (test, n=%d): AUC=%.4f F1=%.4f ECE=%.4f",
+                     r.get("n_eval", 0), r.get("roc_auc", 0), r.get("f1", 0), r.get("ece", 0))
 
-        def _eval_collate(b):
-            return sequence_collate(b, max_seq_len)
-
-        loader = DataLoader(
-            ds,
-            batch_size=cfg.training.batch_size,
-            collate_fn=_eval_collate,
-        )
-
-        n_static = ds.items[0]["static"].size(-1)
-        n_snapshot = ds.items[0]["seq"].size(-1)
-        model = create_model(n_static, n_snapshot, cfg.model, taxonomy_vocab=taxonomy_vocab if use_taxonomy else None)
-        model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
-        model.to(device)
-
-        # Load appropriate Platt scaler
-        platt_path = Path(model_path).with_name("platt.pt")
-        platt_cold_path = Path(model_path).with_name("platt_cold.pt")
-        trainer = SovereignXTrainer(model, device=device, calibrate=False)
-        use_cold = mode == "cold_start"
-        if use_cold and platt_cold_path.exists():
-            trainer.cold_platt_scaler.load_state_dict(
-                torch.load(platt_cold_path, map_location=device, weights_only=True)
-            )
-            logger.info("Loaded cold-start Platt scaler")
-        elif platt_path.exists():
-            trainer.platt_scaler.load_state_dict(torch.load(platt_path, map_location=device, weights_only=True))
-        metrics = trainer.evaluate(loader, use_cold_scaler=use_cold)
-        results[mode] = {
-            "n_backbones": len(mode_bids),
-            "n_snapshots": len(mode_df),
-            "roc_auc": metrics.get("roc_auc", 0.0),
-            "pr_auc": metrics.get("pr_auc", 0.0),
-            "f1": metrics.get("f1", 0.0),
-            "ece": metrics.get("ece", 0.0),
-            "positive_rate": metrics.get("positive_rate", 0.0),
-            "n_eval": metrics.get("n", 0),
-        }
+    # cold: test backbones (NEVER seen, temporal features MASKED)
+    if test_bids:
+        r = _eval_split(seq_df, test_bids, model_path, cfg, device,
+                        seq_means, seq_stds, static_means, static_stds,
+                        taxonomy_vocab, categorical_vocabs, platt_path, platt_cold_path,
+                        force_temporal_mask=True, use_cold_scaler=True)
+        results["cold"] = r
+        logger.info("Cold-start (test, n=%d): AUC=%.4f F1=%.4f ECE=%.4f",
+                     r.get("n_eval", 0), r.get("roc_auc", 0), r.get("f1", 0), r.get("ece", 0))
 
     output = {"model_path": model_path, "split_year": cfg.data.split_year, "results": results}
     out_path = output_path or str(Path(model_path).with_name("evaluation.json"))

@@ -5,17 +5,20 @@ data:
   test_backbone_frac: 0.15
   spread_horizon: 3
   require_country_history: true
-  feature_dir: "data/sovereign_features"
+  feature_dir: "data/features"
 
 model:
-  static_dim: 128          # static expert output
-  temporal_dim: 128        # temporal expert projection
+  static_dim: 128          # static encoder output
+  temporal_dim: 128        # temporal encoder projection
   gru_hidden: 192          # GRU hidden dimension
   gru_layers: 2            # GRU layers
   dropout: 0.15
   max_seq_len: 45          # padded sequence length
   n_hazard_steps: 3        # 3-year hazard horizon
   taxonomy_embed_dim: 8    # per-level embedding dim (5*8=40 total)
+  categorical_embed_dim: 16  # per-categorical-feature embedding dim
+  use_cross_attention: true   # static attends over temporal sequence
+  use_enhanced_cold_start: true  # cold-start head gets taxonomy embedding
 
 training:
   batch_size: 64
@@ -30,9 +33,13 @@ training:
   lambda_cold: 0.25          # cold-start auxiliary loss weight
   lambda_all: 1.0            # per-timestep (all snapshots) loss weight
   lambda_gate: 0.05          # gate entropy penalty weight
+
   temporal_masking_prob: 0.3 # fraction of batch to mask temporal features
   gaussian_noise_std: 0.05   # std of noise added to temporal features
   gate_entropy_target: 0.4   # min entropy before penalty kicks in
   calibrate: true            # post-training Platt scaling
   calibrate_cold: true       # separate Platt scaler for cold-start
+  use_adaptive_loss: true    # learn loss weights automatically
+  use_hard_negative_mining: true  # focus cold-start on hard examples
+  use_curriculum: true       # phase in objectives gradually
   seed: 42
