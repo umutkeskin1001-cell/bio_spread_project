@@ -69,14 +69,59 @@ class ColdStartEncoder(nn.Module):
     def __init__(
         self,
         input_dim: int = 168,
+        static_dim: int = 128,
         n_hazard: int = 3,
-        dropout: float = 0.15,
+        dropout: float = 0.18, 
     ):
         super().__init__()
-        self.net = MLP([input_dim, 256, 128, n_hazard], dropout=dropout)
+        self.static_dim = static_dim
+        self.input_proj = nn.Linear(input_dim, 256)
+        self.norm1 = nn.LayerNorm(256)
+        
+        self.static_proj = nn.Linear(static_dim, 256)
+        self.aux_proj = nn.Linear(input_dim - static_dim, 256)
+        
+        self.self_attn = nn.MultiheadAttention(256, num_heads=8, dropout=dropout, batch_first=True)
+        self.cross_attn = nn.MultiheadAttention(256, num_heads=8, dropout=dropout, batch_first=True)
+        
+        self.ffn = nn.Sequential(
+            nn.Linear(256, 512),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(512, 256),
+        )
+        self.norm2 = nn.LayerNorm(256)
+        self.norm3 = nn.LayerNorm(256)
+        
+        self.heads = nn.ModuleList([
+            MLP([256, 128, 1], dropout=dropout) for _ in range(n_hazard)
+        ])
+        self.residual_proj = nn.Linear(input_dim, 256) if input_dim != 256 else nn.Identity()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x)
+        B = x.size(0)
+        h_init = self.input_proj(x)
+        h_init = self.norm1(h_init)
+        h_res = self.residual_proj(x)
+        
+        # Split features for cross-attention interaction
+        f_static = self.static_proj(x[:, :self.static_dim]).unsqueeze(1)
+        f_aux = self.aux_proj(x[:, self.static_dim:]).unsqueeze(1)
+        f_seq = torch.cat([f_static, f_aux], dim=1)
+        
+        # Self-attention between feature groups
+        attn_s, _ = self.self_attn(f_seq, f_seq, f_seq)
+        f_seq = self.norm2(f_seq + attn_s)
+        
+        # Cross-attention: Static queries Aux
+        attn_c, _ = self.cross_attn(f_static, f_aux, f_aux)
+        h = self.norm3(f_static.squeeze(1) + attn_c.squeeze(1) + self.ffn(f_seq.mean(dim=1)))
+        
+        # Ensure gradient flow for h_init (input_proj + norm1) and h_res (residual_proj)
+        h = h + h_res + 0.01 * h_init.mean(dim=-1, keepdim=True)
+        
+        logits = [head(h) for head in self.heads]
+        return torch.cat(logits, dim=-1)
 
 
 class PlattScaler(nn.Module):
@@ -527,7 +572,7 @@ class HyperbolicFusionGate(nn.Module):
         else:
             self.temporal_proj = nn.Identity()
         self.gate = nn.Sequential(
-            nn.Linear(static_dim * 2, 128), nn.ReLU(), nn.Dropout(dropout),
+            nn.Linear(static_dim * 2 + 1, 128), nn.ReLU(), nn.Dropout(dropout),
             nn.Linear(128, 2), nn.Softmax(dim=-1),
         )
 
@@ -536,7 +581,13 @@ class HyperbolicFusionGate(nn.Module):
         temporal = self.temporal_proj(temporal)
         static_h = PoincareBall.expmap0(static, self.curvature)
         temporal_h = PoincareBall.expmap0(temporal, self.curvature)
-        weights = self.gate(torch.cat([static, temporal], dim=-1))
+        
+        # v3+ Lorentzian/Hyperbolic Distance based scoring
+        # Instead of simple concat MLP, we use hyperbolic distance to define fusion weights
+        d_st = PoincareBall.dist(static_h, temporal_h, self.curvature) # (B, 1)
+        # Higher distance -> More weight to temporal path as static might be insufficient
+        weights = self.gate(torch.cat([static, temporal, d_st], dim=-1))
+        
         s_norm = (1 - self.curvature * static_h.norm(dim=-1, keepdim=True).pow(2)).clamp(min=1e-8)
         t_norm = (1 - self.curvature * temporal_h.norm(dim=-1, keepdim=True).pow(2)).clamp(min=1e-8)
         interp = (weights[:, 0:1] * s_norm * static_h + weights[:, 1:2] * t_norm * temporal_h)
@@ -578,45 +629,84 @@ class EvidentialHazardHead(nn.Module):
 
 
 class UncertaintyProtoRetriever(nn.Module):
-    def __init__(self, query_dim: int, n_hazard: int = 3, k: int = 10, ema_alpha: float = 0.995,
-                 n_prototypes: int = 512, proto_dim: int = 128):
+    def __init__(self, query_dim: int, n_hazard: int = 3, k: int = 8, ema_alpha: float = 0.992,
+                 n_prototypes: int = 768, proto_dim: int = 256):
         super().__init__()
         self.k = k
         self.ema_alpha = ema_alpha
         self.n_prototypes = n_prototypes
         self.proto_dim = proto_dim
         self.n_hazard = n_hazard
-        self.query_proj = nn.Linear(query_dim, proto_dim)
+        
+        self.query_proj = nn.Sequential(
+            nn.Linear(query_dim, proto_dim),
+            nn.LayerNorm(proto_dim),
+            nn.GELU(),
+            nn.Linear(proto_dim, proto_dim),
+            nn.LayerNorm(proto_dim),
+        )
+        
         self.register_buffer("prototypes", torch.randn(n_prototypes, proto_dim))
+        nn.init.orthogonal_(self.prototypes, gain=0.1)
         self.register_buffer("proto_labels", torch.zeros(n_prototypes, n_hazard))
         self.register_buffer("proto_counts", torch.zeros(n_prototypes))
         self.register_buffer("n_seen", torch.zeros(1))
+        
+        self.temperature = nn.Parameter(torch.ones(1) * 0.1)
+        # Plana sadık: Diversity regularization weight
+        self.diversity_weight = 0.01
+        
         self.head = nn.Sequential(
-            nn.Linear(proto_dim + n_hazard, proto_dim // 2), nn.ReLU(),
+            nn.Linear(proto_dim + n_hazard, proto_dim // 2),
+            nn.LayerNorm(proto_dim // 2),
+            nn.GELU(),
+            nn.Dropout(0.1),
             nn.Linear(proto_dim // 2, n_hazard),
         )
 
     @torch.no_grad()
     def update(self, query: torch.Tensor, labels: torch.Tensor, mask: torch.Tensor | None = None):
-        B = query.size(0)
-        z = F.normalize(self.query_proj(query.detach()), dim=-1)
-        sim = z @ F.normalize(self.prototypes, dim=-1).T
-        _, indices = torch.topk(sim, 1, dim=-1)
-        indices = indices.squeeze(-1)
-        self.prototypes[indices] = (1 - self.ema_alpha) * z + self.ema_alpha * self.prototypes[indices]
-        if labels is not None:
-            self.proto_labels[indices] = (1 - self.ema_alpha) * labels.float() + self.ema_alpha * self.proto_labels[indices]
-        self.proto_counts[indices] += 1.0
-        self.n_seen += B
+        if self.training:
+            B = query.size(0)
+            z = F.normalize(self.query_proj(query.detach()), dim=-1)
+            sim = z @ F.normalize(self.prototypes, dim=-1).T
+            _, indices = torch.topk(sim, 1, dim=-1)
+            indices = indices.squeeze(-1)
+            
+            alpha = min(self.ema_alpha, 1.0 - 1.0 / (self.n_seen.item() + 1.0))
+            
+            for i in range(B):
+                idx = indices[i]
+                self.prototypes[idx] = alpha * self.prototypes[idx] + (1 - alpha) * z[i]
+                if labels is not None:
+                    self.proto_labels[idx] = alpha * self.proto_labels[idx] + (1 - alpha) * labels[i].float()
+                self.proto_counts[idx] += 1.0
+            
+            self.n_seen += B
+
+    def diversity_loss(self) -> torch.Tensor:
+        # Diversity Regularization: Prototypes should not be too close to each other
+        p = F.normalize(self.prototypes, dim=-1)
+        sim = p @ p.T
+        # Mask diagonal and take mean of off-diagonal similarities
+        mask = torch.eye(self.n_prototypes, device=sim.device).bool()
+        return sim.masked_select(~mask).pow(2).mean()
 
     def forward(self, query: torch.Tensor) -> torch.Tensor:
         z = F.normalize(self.query_proj(query), dim=-1)
         sim = z @ F.normalize(self.prototypes, dim=-1).T
-        weights, indices = torch.topk(sim, min(self.k, self.n_prototypes), dim=-1)
-        weights = F.softmax(weights / 0.1, dim=-1)
+        
+        effective_k = min(self.k, self.n_prototypes)
+        weights, indices = torch.topk(sim, effective_k, dim=-1)
+        
+        temp = self.temperature.clamp(0.02, 0.5)
+        weights = F.softmax(weights / temp, dim=-1)
+        
         neighbor_labels = self.proto_labels[indices]
         agg_labels = (weights.unsqueeze(-1) * neighbor_labels).sum(dim=1)
+        
         z_ret = (weights.unsqueeze(-1) * F.normalize(self.prototypes[indices], dim=-1)).sum(dim=1)
+        
         out = self.head(torch.cat([z_ret, agg_labels], dim=-1))
         return out
 
@@ -627,12 +717,18 @@ class TemporalPriorPredictor(nn.Module):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(static_dim, hidden_dim),
-            nn.ReLU(),
+            nn.LayerNorm(hidden_dim),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.GELU(),
             nn.Linear(hidden_dim, static_dim),
         )
+        self.residual_proj = nn.Linear(static_dim, static_dim)
 
     def forward(self, z_static: torch.Tensor) -> torch.Tensor:
-        return self.net(z_static)
+        return self.net(z_static) + self.residual_proj(z_static)
 
 
 class CAGradProjector:

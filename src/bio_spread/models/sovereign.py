@@ -111,10 +111,10 @@ class BioSpreadModel(nn.Module):
         n_static: int,
         n_snapshot: int,
         taxonomy_vocab_sizes: list[int] | None = None,
-        taxonomy_embed_dim: int = 8,
-        static_dim: int = 128,
-        temporal_dim: int = 128,
-        hidden_dim: int = 192,
+        taxonomy_embed_dim: int = 12,
+        static_dim: int = 144,
+        temporal_dim: int = 144,
+        hidden_dim: int = 144,
         num_layers: int = 2,
         n_hazard: int = 3,
         max_seq_len: int = 50,
@@ -130,14 +130,14 @@ class BioSpreadModel(nn.Module):
         mamba_d_state: int = 16,
         mamba_n_layers: int = 4,
         conv_kernel: int = 3,
-        tax_dim_per_level: int = 16,
+        tax_dim_per_level: int = 18,
         hyperbolic_curvature: float = -1.0,
         prototype_dim: int = 512,
-        prototype_k: int = 10,
-        ema_alpha: float = 0.995,
+        prototype_k: int = 8,
+        ema_alpha: float = 0.992,
         edl_lambda_kl: float = 0.1,
         edl_target_smoothing: float = 0.05,
-        fit_heads: int = 2,
+        fit_heads: int = 4,
     ):
         super().__init__()
         self.use_taxonomy = taxonomy_vocab_sizes is not None and len(taxonomy_vocab_sizes) > 0
@@ -216,8 +216,16 @@ class BioSpreadModel(nn.Module):
         cold_input_dim = static_dim * 2 + tax_embed_total + cat_embed_dim
         self.cold_start_encoder = ColdStartEncoder(
             input_dim=cold_input_dim,
+            static_dim=static_dim,
             n_hazard=n_hazard,
             dropout=dropout,
+        )
+        self.cold_aux_head = nn.Sequential(
+            nn.Linear(static_dim, static_dim // 2),
+            nn.LayerNorm(static_dim // 2),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(static_dim // 2, n_hazard),
         )
 
         # Uncertainty-guided prototypical retrieval (cold path)
@@ -228,6 +236,8 @@ class BioSpreadModel(nn.Module):
             )
             self.routing_tau = nn.Parameter(torch.ones(1) * 2.0)
             self.routing_thr = nn.Parameter(torch.tensor(0.5))
+            # v3+ Adaptive Beta for routing control
+            self.routing_beta = nn.Parameter(torch.ones(1) * 3.0)
 
         self.pretrain_head: PretrainHead | None = None
 
@@ -281,28 +291,51 @@ class BioSpreadModel(nn.Module):
 
         # --- Cold-start path (z_static + temporal prior + taxonomy) ---
         cold_prior_pred = self.cold_prior_predictor(z_static)
-        cold_prior_pred_d = cold_prior_pred.detach()
-        cold_input_parts = [z_static, cold_prior_pred_d]
+        cold_input_parts = [z_static, cold_prior_pred]
         if tax_emb is not None:
             cold_input_parts.append(tax_emb)
         if self.use_categorical and cat_inputs is not None:
             cat_emb = self.categorical_encoder(cat_inputs)
             cold_input_parts.append(cat_emb)
+        
         cold_input = torch.cat(cold_input_parts, dim=-1)
-        cold_logits = self.cold_start_encoder(cold_input)
+        cold_logits_main = self.cold_start_encoder(cold_input)
+        
+        # Enhanced Cold Aux Head with z_static interaction
+        cold_logits_aux = self.cold_aux_head(z_static)
+        cold_logits = 0.6 * cold_logits_main + 0.4 * cold_logits_aux
 
         # --- Retrieval-augmented cold path (if uncertain) ---
         h_cold = None
         routing_weight = None
         if self.use_retrieval:
             ret_logits = self.retriever(cold_input)
-            if self.use_evidential and epistemic_var is not None:
-                sigma_epi = epistemic_var.mean(dim=-1)
-                route_w = torch.sigmoid(self.routing_tau * (sigma_epi - self.routing_thr))
+            if self.use_evidential and epistemic_var is not None and alpha_pos is not None:
+                # v3 Soft-Gate: Balanced routing between paths
+                epistemic_score = epistemic_var.mean(dim=-1)
+                # evidence_strength: Higher means temporal path is very sure
+                evidence_strength = alpha_pos.sum(dim=-1) / (alpha_pos.sum(dim=-1) + 1.0)
+                
+                # v3+ Adaptive β-weighted soft routing: Trust cold-path ONLY if epistemic uncertainty is high AND temporal evidence is low
+                route_w = torch.sigmoid(self.routing_beta * (epistemic_score - 0.5) * (1.0 - evidence_strength))
+                route_w = route_w.clamp(min=0.01, max=0.90) 
+                
                 final_logits = (1 - route_w).unsqueeze(-1) * hazard_logits + route_w.unsqueeze(-1) * ret_logits
                 routing_weight = route_w
+                
                 if temporal_mask is not None:
-                    final_logits = torch.where(temporal_mask.unsqueeze(-1), cold_logits, final_logits)
+                    # For purely cold samples (forced), we still trust cold-path + retrieval more
+                    # but we keep a small residual from the prior-projected temporal head
+                    cold_conf = (1.0 - torch.sigmoid(epistemic_score * 2.0)).clamp(min=0.1, max=0.8)
+                    cold_blended = cold_conf.unsqueeze(-1) * cold_logits + (1 - cold_conf).unsqueeze(-1) * ret_logits
+                    
+                    final_logits = torch.where(
+                        temporal_mask.unsqueeze(-1),
+                        cold_blended,
+                        final_logits,
+                    )
+                    routing_weight = torch.where(temporal_mask, 1.0 - cold_conf, route_w)
+                
                 hazard_logits = final_logits
             h_cold = ret_logits
 
