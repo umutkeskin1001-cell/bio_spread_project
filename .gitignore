@@ -10,6 +10,7 @@ __pycache__/
 test_output.txt
 test_bio_spread_output.txt
 test_bio_spread_all_output.txt
+
 # Reports
 reports/**
 !reports/
@@ -27,7 +28,14 @@ artifacts/
 predictions.json
 data/snapshots/
 
-# Data and large files
+# Processed features (generated, not source)
+data/features/
+data/sovereign_features/
+
+# Docs / reports
+*.docx
+
+# Large raw/external data
 data/raw/
 data/holdouts/
 data/project_inputs/raw/
@@ -46,29 +54,7 @@ data/**/*.csv
 !data/sample_plasmid_records.csv
 !data/project_inputs/README.md
 
-# Keep source control lightweight.
-# Large raw/external/generated datasets can live locally.
-
-
-
-# Keep source control lightweight. Large raw/external/generated datasets can
-# live locally under data/ or be provided via BIO_SPREAD_DATA_ROOT.
-data/raw/*
-!data/raw/README.md
-data/holdouts/*.tsv
-data/project_inputs/raw/
-data/project_inputs/external/
-data/project_inputs/silver/
-data/project_inputs/scores/
-data/project_inputs/geo_spread/
-!data/project_inputs/README.md
-data/**/*.parquet
-data/**/*.tar
-data/**/*.tar.*
-data/**/*.gz
-data/**/*.dat
-
-# Lightweight fixtures intentionally tracked.
+# Lightweight fixtures
 !data/sample_plasmid_records.csv
 !tests/fixtures/
 !tests/fixtures/**
