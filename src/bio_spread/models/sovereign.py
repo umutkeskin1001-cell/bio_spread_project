@@ -22,6 +22,8 @@ from bio_spread.models.components import (
     TaxonomyEncoder,
     TemporalPriorPredictor,
     UncertaintyProtoRetriever,
+    FiLM,
+    TemporalProxyGenerator,
 )
 
 
@@ -43,6 +45,9 @@ class ModelOutput:
     h_cold: torch.Tensor | None = None
     cold_input: torch.Tensor | None = None
     cold_prior: torch.Tensor | None = None
+    # Phase 1 new fields
+    proxy_temporal: torch.Tensor | None = None
+    routing_w: torch.Tensor | None = None
 
 
 class StaticEncoder(nn.Module):
@@ -138,17 +143,20 @@ class BioSpreadModel(nn.Module):
         edl_lambda_kl: float = 0.1,
         edl_target_smoothing: float = 0.05,
         fit_heads: int = 4,
+        use_research: bool = True,
     ):
         super().__init__()
+        self.use_research = use_research
         self.use_taxonomy = taxonomy_vocab_sizes is not None and len(taxonomy_vocab_sizes) > 0
         self.use_cross_attention = use_cross_attention
         self.use_mamba = use_mamba
         self.use_hyperbolic = use_hyperbolic
         self.use_evidential = use_evidential
-        self.use_retrieval = use_retrieval
+        self.use_retrieval = use_retrieval if use_research else False
         self.n_hazard = n_hazard
         self.static_dim = static_dim
         self.temporal_dim = temporal_dim
+        self.max_seq_len = max_seq_len
 
         self.use_categorical = categorical_vocab_sizes is not None and len(categorical_vocab_sizes) > 0
         if self.use_categorical:
@@ -211,32 +219,26 @@ class BioSpreadModel(nn.Module):
             nn.Linear(static_dim // 2, n_hazard),
         )
 
-        # Cold-start encoder (uses z_static = static encoder output)
-        self.cold_prior_predictor = TemporalPriorPredictor(static_dim)
-        cold_input_dim = static_dim * 2 + tax_embed_total + cat_embed_dim
-        self.cold_start_encoder = ColdStartEncoder(
-            input_dim=cold_input_dim,
-            static_dim=static_dim,
-            n_hazard=n_hazard,
-            dropout=dropout,
-        )
-        self.cold_aux_head = nn.Sequential(
-            nn.Linear(static_dim, static_dim // 2),
-            nn.LayerNorm(static_dim // 2),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(static_dim // 2, n_hazard),
+        # --- Phase 1: Cold-Start Revolution ---
+        # Temporal Proxy Generator: Static + Taxonomy -> Proxy Temporal
+        self.proxy_generator = TemporalProxyGenerator(static_dim, tax_embed_total, temporal_dim, dropout)
+        
+        # Cold-Start Head: GatedResidualMLP + FiLM conditioning on taxonomy
+        # If no taxonomy, tax_embed_total is 0, FiLM acts on empty/identity
+        self.cold_film = FiLM(max(tax_embed_total, 1), static_dim)
+        self.cold_head = GatedResidualMLP(
+            [static_dim + temporal_dim, static_dim, n_hazard],
+            dropout=dropout
         )
 
-        # Uncertainty-guided prototypical retrieval (cold path)
-        if use_retrieval:
+        # Uncertainty-guided prototypical retrieval (Legacy/Research)
+        if self.use_retrieval:
             cold_query_dim = static_dim * 2 + tax_embed_total + cat_embed_dim
             self.retriever = UncertaintyProtoRetriever(
                 cold_query_dim, n_hazard, prototype_k, ema_alpha, prototype_dim, static_dim,
             )
             self.routing_tau = nn.Parameter(torch.ones(1) * 2.0)
             self.routing_thr = nn.Parameter(torch.tensor(0.5))
-            # v3+ Adaptive Beta for routing control
             self.routing_beta = nn.Parameter(torch.ones(1) * 3.0)
 
         self.pretrain_head: PretrainHead | None = None
@@ -289,58 +291,46 @@ class BioSpreadModel(nn.Module):
             alpha_pos = None
             epistemic_var = None
 
-        # --- Cold-start path (z_static + temporal prior + taxonomy) ---
-        cold_prior_pred = self.cold_prior_predictor(z_static)
-        cold_input_parts = [z_static, cold_prior_pred]
-        if tax_emb is not None:
-            cold_input_parts.append(tax_emb)
-        if self.use_categorical and cat_inputs is not None:
-            cat_emb = self.categorical_encoder(cat_inputs)
-            cold_input_parts.append(cat_emb)
+        # --- Phase 1: Cold-Start Path ---
+        proxy_temporal = self.proxy_generator(z_static, tax_emb if tax_emb is not None else torch.zeros(B, 0, device=z_static.device))
         
-        cold_input = torch.cat(cold_input_parts, dim=-1)
-        cold_logits_main = self.cold_start_encoder(cold_input)
+        # FiLM conditioning: cold path adapts to taxonomy
+        z_static_conditioned = self.cold_film(z_static, tax_emb if tax_emb is not None else torch.ones(B, 1, device=z_static.device))
         
-        # Enhanced Cold Aux Head with z_static interaction
-        cold_logits_aux = self.cold_aux_head(z_static)
-        cold_logits = 0.6 * cold_logits_main + 0.4 * cold_logits_aux
+        cold_combined = torch.cat([z_static_conditioned, proxy_temporal], dim=-1)
+        cold_logits = self.cold_head(cold_combined)
 
-        # --- Retrieval-augmented cold path (if uncertain) ---
+        # --- Deterministic Confidence-Gated Routing ---
+        # w = sigmoid(k*(thr - seq_len)) * (1 - entropy(temporal_logits))
+        seq_lens = mask.sum(dim=1)
+        # Use a soft threshold around 3 snapshots for "cold"
+        len_gate = torch.sigmoid(2.0 * (3.5 - seq_lens)) 
+        
+        # Calculate entropy of temporal prediction if possible, else 1.0 (max uncertainty)
+        if self.use_evidential and epistemic_var is not None:
+            # Normalized epistemic uncertainty as entropy proxy
+            entropy_proxy = epistemic_var.mean(dim=-1).clamp(0, 1)
+        else:
+            # Fallback to simple seq_len based gating if not evidential
+            entropy_proxy = torch.ones_like(len_gate)
+            
+        routing_w = (len_gate * entropy_proxy).unsqueeze(-1)
+        # Clamp routing to avoid complete cut-off during training
+        routing_w = routing_w.clamp(0.01, 0.99)
+        
+        final_hazard_logits = (1 - routing_w) * hazard_logits + routing_w * cold_logits
+        
+        # Research/Legacy Retrieval Fallback
         h_cold = None
-        routing_weight = None
-        if self.use_retrieval:
-            ret_logits = self.retriever(cold_input)
-            if self.use_evidential and epistemic_var is not None and alpha_pos is not None:
-                # v3 Soft-Gate: Balanced routing between paths
-                epistemic_score = epistemic_var.mean(dim=-1)
-                # evidence_strength: Higher means temporal path is very sure
-                evidence_strength = alpha_pos.sum(dim=-1) / (alpha_pos.sum(dim=-1) + 1.0)
-                
-                # v3+ Adaptive β-weighted soft routing: Trust cold-path ONLY if epistemic uncertainty is high AND temporal evidence is low
-                route_w = torch.sigmoid(self.routing_beta * (epistemic_score - 0.5) * (1.0 - evidence_strength))
-                route_w = route_w.clamp(min=0.01, max=0.90) 
-                
-                final_logits = (1 - route_w).unsqueeze(-1) * hazard_logits + route_w.unsqueeze(-1) * ret_logits
-                routing_weight = route_w
-                
-                if temporal_mask is not None:
-                    # For purely cold samples (forced), we still trust cold-path + retrieval more
-                    # but we keep a small residual from the prior-projected temporal head
-                    cold_conf = (1.0 - torch.sigmoid(epistemic_score * 2.0)).clamp(min=0.1, max=0.8)
-                    cold_blended = cold_conf.unsqueeze(-1) * cold_logits + (1 - cold_conf).unsqueeze(-1) * ret_logits
-                    
-                    final_logits = torch.where(
-                        temporal_mask.unsqueeze(-1),
-                        cold_blended,
-                        final_logits,
-                    )
-                    routing_weight = torch.where(temporal_mask, 1.0 - cold_conf, route_w)
-                
-                hazard_logits = final_logits
+        if self.use_research and self.use_retrieval:
+            # (Keeping old retrieval logic for research comparison if needed)
+            ret_input = torch.cat([z_static, proxy_temporal, tax_emb], dim=-1) if tax_emb is not None else torch.cat([z_static, proxy_temporal], dim=-1)
+            ret_logits = self.retriever(ret_input)
+            final_hazard_logits = 0.8 * final_hazard_logits + 0.2 * ret_logits
             h_cold = ret_logits
 
         return ModelOutput(
-            hazard_logits=hazard_logits,
+            hazard_logits=final_hazard_logits,
             hazard_logits_all=hazard_logits_all,
             count_logits=count_logits,
             cold_logits=cold_logits,
@@ -349,12 +339,11 @@ class BioSpreadModel(nn.Module):
             mask=mask,
             alpha_pos=alpha_pos,
             epistemic_var=epistemic_var,
-            routing_weight=routing_weight,
+            routing_weight=routing_w.squeeze(-1),
             h_static=z_static,
-            h_temporal=h_pooled,
+            h_temporal=h_pooled_proj,
             h_cold=h_cold,
-            cold_input=cold_input,
-            cold_prior=cold_prior_pred,
+            proxy_temporal=proxy_temporal,
         )
 
     def get_embedding(

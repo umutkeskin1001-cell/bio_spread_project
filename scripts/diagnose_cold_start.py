@@ -104,45 +104,41 @@ def evaluate_cold_vs_temporal(trainer, loader, device):
 
 def main():
     print("=" * 60)
-    print("COLD-START DIAGNOSTIC")
+    print("COLD-START DIAGNOSTIC (PHASE 1 OVERHAUL)")
     print("=" * 60)
 
-    B, L, n_static, n_snapshot = 200, 10, 12, 15
+    B, L, n_static, n_snapshot = 400, 10, 12, 15
     ds = ColdStartDiagnosticDataset(B=B, L=L, n_static=n_static, n_snapshot=n_snapshot)
-    loader = DataLoader(ds, batch_size=32, collate_fn=lambda b: syn_collate(b, L))
+    loader = DataLoader(ds, batch_size=64, collate_fn=lambda b: syn_collate(b, L))
 
     device = "cpu"
 
-    print("\n--- Configuration 1: All flags ON (evidential + retrieval + cagrad) ---")
+    print("\n--- Configuration 1: Phase 1 Production Design (use_research=False) ---")
     torch.manual_seed(42)
     model1 = BioSpreadModel(
         n_static=n_static, n_snapshot=n_snapshot,
-        static_dim=64, temporal_dim=64, hidden_dim=64, n_hazard=3,
-        use_evidential=True, use_retrieval=True,
-        prototype_dim=64, prototype_k=5,
+        static_dim=128, temporal_dim=128, hidden_dim=128, n_hazard=3,
+        use_evidential=True, use_retrieval=False, use_research=False,
     )
     trainer1 = BioSpreadTrainer(
-        model1, device=device, epochs=15, patience=20, warmup_epochs=2,
-        lambda_cold=1.0, lambda_kd=1.0, use_cagrad=True,
-        temporal_masking_prob=0.3, use_curriculum=True,
-        calibrate=False,
+        model1, device=device, epochs=20, patience=5, warmup_epochs=3,
+        use_adaptive_loss=True, use_curriculum=True, calibrate=False,
     )
     trainer1.fit(loader, val_loader=loader)
     cold_auc1, temporal_auc1 = evaluate_cold_vs_temporal(trainer1, loader, device)
     print(f"  AVG: Cold AUC={cold_auc1:.4f}, Temporal AUC={temporal_auc1:.4f}")
 
-    print("\n--- Configuration 2: Standard (no evidential, no retrieval) ---")
+    print("\n--- Configuration 2: Legacy Research Design (use_research=True) ---")
     torch.manual_seed(42)
     model2 = BioSpreadModel(
         n_static=n_static, n_snapshot=n_snapshot,
-        static_dim=64, temporal_dim=64, hidden_dim=64, n_hazard=3,
-        use_evidential=False, use_retrieval=False,
+        static_dim=128, temporal_dim=128, hidden_dim=128, n_hazard=3,
+        use_evidential=True, use_retrieval=True, use_research=True,
+        prototype_dim=128, prototype_k=8,
     )
     trainer2 = BioSpreadTrainer(
-        model2, device=device, epochs=15, patience=20, warmup_epochs=2,
-        lambda_cold=1.0, lambda_kd=1.0, use_cagrad=False,
-        temporal_masking_prob=0.3, use_curriculum=True,
-        calibrate=False,
+        model2, device=device, epochs=20, patience=5, warmup_epochs=3,
+        use_adaptive_loss=False, use_cagrad=True, use_curriculum=True, calibrate=False,
     )
     trainer2.fit(loader, val_loader=loader)
     cold_auc2, temporal_auc2 = evaluate_cold_vs_temporal(trainer2, loader, device)
@@ -151,17 +147,13 @@ def main():
     print("\n" + "=" * 60)
     print("SUMMARY")
     print("=" * 60)
-    print(f"  Config 1 (Full): Cold={cold_auc1:.4f}, Temporal={temporal_auc1:.4f}, Gap={temporal_auc1-cold_auc1:.4f}")
-    print(f"  Config 2 (Std):  Cold={cold_auc2:.4f}, Temporal={temporal_auc2:.4f}, Gap={temporal_auc2-cold_auc2:.4f}")
+    print(f"  Phase 1 (Prod): Cold={cold_auc1:.4f}, Temporal={temporal_auc1:.4f}, Gap={temporal_auc1-cold_auc1:.4f}")
+    print(f"  Research (Old): Cold={cold_auc2:.4f}, Temporal={temporal_auc2:.4f}, Gap={temporal_auc2-cold_auc2:.4f}")
 
-    if cold_auc1 > 0.75:
-        print("\n  Cold-start AUC > 0.75: EXCELLENT")
-    elif cold_auc1 > 0.70:
-        print("\n  Cold-start AUC > 0.70: GOOD")
-    elif cold_auc1 > 0.60:
-        print("\n  Cold-start AUC > 0.60: ACCEPTABLE")
+    if cold_auc1 > cold_auc2:
+        print(f"\n  SUCCESS: Phase 1 design improved cold-start AUC by {cold_auc1 - cold_auc2:.4f}")
     else:
-        print("\n  Cold-start AUC < 0.60: NEEDS IMPROVEMENT")
+        print("\n  Phase 1 design did not improve cold-start AUC on this synthetic set.")
 
 
 if __name__ == "__main__":

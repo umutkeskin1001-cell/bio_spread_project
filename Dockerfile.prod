@@ -1,0 +1,31 @@
+# BioSpread Sovereign-X Ultra Production Dockerfile
+FROM python:3.9-slim-buster
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements and install
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy source code
+COPY . .
+
+# Install the package in editable mode or standard mode
+RUN pip install -e .
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV BIOPREAD_CONFIG=config/prod.yaml
+
+# Expose API port
+EXPOSE 8000
+
+# Default command: Run the frontier inference service
+CMD ["python3", "scripts/serve_frontier.py"]

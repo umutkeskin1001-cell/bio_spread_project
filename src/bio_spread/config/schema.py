@@ -37,6 +37,7 @@ class ModelConfig(BaseModel):
     use_evidential: bool = False
     use_cagrad: bool = False
     use_retrieval: bool = False
+    use_research: bool = True
 
     # Mamba-2 + CausalConv hyperparams
     mamba_d_state: int = Field(default=16, gt=0)

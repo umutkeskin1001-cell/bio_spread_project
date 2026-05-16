@@ -169,63 +169,46 @@ class BioSpreadTrainer:
 
         self.adaptive_loss: AdaptiveLossWeighting | None = None
         if use_adaptive_loss:
-            self.adaptive_loss = AdaptiveLossWeighting(n_losses=9).to(device)
+            self.adaptive_loss = AdaptiveLossWeighting(n_losses=5).to(device)
             self.optimizer.add_param_group({"params": self.adaptive_loss.parameters(), "lr": lr * 0.1})
 
     def _get_curriculum_params(self, epoch: int) -> dict:
+        """Simplified production curriculum."""
         if not self.use_curriculum:
             return {
-                "temporal_masking_prob": self.temporal_masking_prob,
-                "lambda_cold": self.lambda_cold,
-                "lambda_kd": self.lambda_kd,
-                "lambda_rank": self.lambda_rank,
-                "lambda_edl": self.lambda_edl,
-                "lambda_phylo": self.lambda_phylo,
+                "lambda_proxy": 1.0,
+                "lambda_contrast": 0.5,
+                "lambda_kd": 0.5,
                 "noise_std": self.gaussian_noise_std,
-                "gate_entropy_target": self.gate_entropy_target,
-                "temporal_mask_pct": 0.0,
+                "temporal_masking_prob": self.temporal_masking_prob,
             }
 
-        if epoch <= 8:
+        # Early phase: Focus on backbone and proxy alignment
+        if epoch <= 5:
             return {
-                "temporal_masking_prob": 0.0,
-                "lambda_cold": 0.3,
-                "lambda_kd": 0.0, # Warm up backbone first
-                "lambda_rank": 0.0,
-                "lambda_edl": 0.0,
-                "lambda_phylo": 0.0,
-                "noise_std": 0.0,
-                "gate_entropy_target": 0.5,
-                "temporal_mask_pct": 0.0,
-                "use_retrieval": False, # v3 Curriculum: Delay retrieval
+                "lambda_proxy": 2.0,
+                "lambda_contrast": 1.0,
+                "lambda_kd": 0.1,
+                "noise_std": 0.01,
+                "temporal_masking_prob": 0.1,
             }
+        # Mid phase: Introduce KD and noise
         elif epoch <= 15:
-            phase_progress = (epoch - 8) / 7
             return {
-                "temporal_masking_prob": 0.2,
-                "lambda_cold": 0.45,
-                "lambda_kd": 0.5 * phase_progress,
-                "lambda_rank": 0.1,
-                "lambda_edl": 0.5 * phase_progress,
-                "lambda_phylo": 0.01,
+                "lambda_proxy": 1.0,
+                "lambda_contrast": 0.5,
+                "lambda_kd": 0.5,
                 "noise_std": 0.03,
-                "gate_entropy_target": 0.3,
-                "temporal_mask_pct": 0.2,
-                "use_retrieval": True,
+                "temporal_masking_prob": 0.2,
             }
+        # Final phase: Refinement
         else:
-            phase_progress = min((epoch - 15) / (self.epochs - 15), 1.0)
             return {
-                "temporal_masking_prob": 0.35,
-                "lambda_cold": 0.5,
-                "lambda_kd": self.lambda_kd,
-                "lambda_rank": self.lambda_rank,
-                "lambda_edl": self.lambda_edl,
-                "lambda_phylo": self.lambda_phylo,
+                "lambda_proxy": 0.5,
+                "lambda_contrast": 0.2,
+                "lambda_kd": 1.0,
                 "noise_std": 0.05,
-                "gate_entropy_target": 0.2,
-                "temporal_mask_pct": 0.4,
-                "use_retrieval": True,
+                "temporal_masking_prob": 0.35,
             }
 
     def _get_adaptive_temporal_mask(
@@ -251,9 +234,7 @@ class BioSpreadTrainer:
         epoch: int,
     ) -> Dict[str, torch.Tensor]:
         targets = batch["hazard"]
-        count_targets = batch["count"]
         lengths = batch["seq_len"]
-        mask = batch["mask"]
         temporal_mask = batch.get("temporal_mask")
         if temporal_mask is None:
             temporal_mask = torch.zeros(targets.size(0), dtype=torch.bool, device=targets.device)
@@ -261,226 +242,95 @@ class BioSpreadTrainer:
 
         B = targets.size(0)
         idx = (lengths - 1).clamp(min=0)
-
         last_targets = targets[range(B), idx]
 
-        # EDL loss or standard BCE
+        # 1. Main Hazard Loss (L_hazard)
         if self.model.use_evidential and out.alpha_pos is not None:
-            loss_edl = self._zero
+            loss_hazard = self._zero
             for h in range(3):
                 valid = last_targets[:, h] >= 0
                 if valid.any():
-                    loss_edl = loss_edl + self.model.hazard_head.loss(
+                    loss_hazard = loss_hazard + self.model.hazard_head.loss(
                         out.alpha_pos[valid, h], last_targets[valid, h], self.pos_weight[h:h+1]
                     )
-            loss_final = loss_edl
         else:
-            loss_final = self._zero
+            loss_hazard = self._zero
             for h in range(3):
-                loss_final = loss_final + hazard_masked_bce(
+                loss_hazard = loss_hazard + hazard_masked_bce(
                     out.hazard_logits[:, h], last_targets[:, h], self.pos_weight[h:h+1]
                 )
 
-        # Per-timestep BCE
-        pad_free = mask.bool()
-        loss_all = self._zero
-        for h in range(3):
-            loss_all = loss_all + hazard_masked_bce(
-                out.hazard_logits_all[..., h][pad_free],
-                targets[..., h][pad_free],
-                self.pos_weight[h:h+1],
-            )
+        # 2. Proxy Alignment Loss (L_proxy): MSE(proxy, h_pooled.detach())
+        loss_proxy = self._zero
+        if out.proxy_temporal is not None and out.h_temporal is not None:
+            # Manifold alignment: proxy should predict the temporal features
+            # We detach h_temporal to avoid proxy affecting the temporal encoder directly
+            loss_proxy = F.mse_loss(out.proxy_temporal, out.h_temporal.detach())
 
-        # Cold-start loss
-        loss_cold = self._zero
-        if out.cold_logits is not None:
-            if self.use_hard_negative_mining:
-                for h in range(3):
-                    loss_cold = loss_cold + cold_start_hard_negative_loss(
-                        out.cold_logits[:, h], last_targets[:, h], self.pos_weight[h:h+1],
-                    )
-            else:
-                for h in range(3):
-                    loss_cold = loss_cold + hazard_masked_bce(
-                        out.cold_logits[:, h], last_targets[:, h], self.pos_weight[h:h+1]
-                    )
+        # 3. Contrastive Alignment Loss (L_contrast): InfoNCE between proxy and actual
+        loss_contrast = self._zero
+        if out.proxy_temporal is not None and out.h_temporal is not None:
+            from bio_spread.models.components import contrastive_loss
+            # Contrastive alignment between proxy (learned from static) and temporal (actual sequence)
+            loss_contrast = contrastive_loss(F.normalize(out.proxy_temporal, dim=-1), 
+                                           F.normalize(out.h_temporal, dim=-1))
 
-        # Knowledge distillation (teacher → cold path)
+        # 4. Knowledge Distillation Loss (L_kd): Teacher (Hazard) -> Cold Path (Cold Logits)
         loss_kd = self._zero
         if out.cold_logits is not None:
-            teacher_logits = out.hazard_logits.detach()
-            teacher_probs = torch.sigmoid(teacher_logits)
-            
-            # v3 Dynamic KD Weight: based on routing intensity
-            if out.routing_weight is not None and torch.is_tensor(out.routing_weight):
-                avg_route = out.routing_weight.mean().item()
-            else:
-                avg_route = 0.5
-            dynamic_kd_scale = 1.0 - avg_route
-            
+            teacher_probs = torch.sigmoid(out.hazard_logits.detach())
             for h in range(3):
-                valid_warm = ~temporal_mask & (last_targets[:, h] >= 0)
-                if valid_warm.any():
-                    # Warm samples: mimic teacher moderately
-                    loss_kd = loss_kd + dynamic_kd_scale * F.binary_cross_entropy_with_logits(
-                        out.cold_logits[valid_warm, h], teacher_probs[valid_warm, h], reduction="mean",
+                valid = last_targets[:, h] >= 0
+                if valid.any():
+                    # We want cold path to mimic the full (temporal-aware) path
+                    loss_kd = loss_kd + F.binary_cross_entropy_with_logits(
+                        out.cold_logits[valid, h], teacher_probs[valid, h]
                     )
-                
-                valid_cold = temporal_mask & (last_targets[:, h] >= 0)
-                if valid_cold.any():
-                    # Cold samples: strong KD to force learning proxy
-                    loss_kd = loss_kd + 1.2 * F.binary_cross_entropy_with_logits(
-                        out.cold_logits[valid_cold, h], teacher_probs[valid_cold, h], reduction="mean",
-                    )
-        
-        # v3 Auxiliary Consistency Loss: hazard_logits and cold_logits should not diverge too much
-        loss_consist = self._zero
-        if out.cold_logits is not None:
-            loss_consist = F.mse_loss(torch.sigmoid(out.hazard_logits), torch.sigmoid(out.cold_logits).detach())
 
-        # Count loss (Huber)
-        count_valid = count_targets >= 0
+        # 5. Auxiliary losses (optional, kept for stability if needed)
         loss_count = self._zero
-        if count_valid.any():
-            loss_count = F.smooth_l1_loss(
-                out.count_logits[count_valid],
-                torch.log1p(count_targets[count_valid].clamp(min=0)),
-                reduction="mean",
-            )
+        if batch.get("count") is not None:
+            count_targets = batch["count"]
+            count_valid = count_targets >= 0
+            if count_valid.any():
+                loss_count = F.smooth_l1_loss(
+                    out.count_logits[count_valid],
+                    torch.log1p(count_targets[count_valid].clamp(min=0)),
+                )
 
-        # Ranking loss
-        loss_rank = self._zero
-        n_rank = 0
-        for h in range(3):
-            if targets[..., h].numel() > 0:
-                rl = ranking_loss(out.hazard_logits_all[..., h], targets[..., h])
-                loss_rank = loss_rank + rl
-                n_rank += 1
-        if n_rank > 0:
-            loss_rank = loss_rank / n_rank
-
-        # Gate entropy regularization
-        progress = (epoch - 1) / max(self.epochs - 1, 1)
-        current_gate_target = params["gate_entropy_target"] * (1 - progress) + 0.1 * progress
-        gate_entropy = -(out.gate_weights * torch.log(out.gate_weights.clamp(min=1e-8))).sum(dim=1).mean()
-        loss_gate = (current_gate_target - gate_entropy) ** 2
-
-        # Phylogenetic smoothness loss (v3+ Hyperbolic-Aware)
-        loss_phylo = self._zero
-        phylo_h = getattr(out, "h_static", None)
-        if params.get("lambda_phylo", 0) > 0 and phylo_h is not None and B >= 2:
-            k = min(self.phylo_smooth_k, B)
-            
-            if self.model.use_hyperbolic:
-                # Use Poincare distance for phylo-regularization
-                from bio_spread.models.components import PoincareBall
-                h_p = PoincareBall.expmap0(phylo_h, self.model.taxonomy_encoder.curvature)
-                # Compute distance matrix on Poincare ball
-                dist_mat = torch.stack([
-                    torch.stack([PoincareBall.dist(h_p[i], h_p[j], self.model.taxonomy_encoder.curvature) 
-                                for j in range(B)]) for i in range(B)
-                ])
-                # Filter k-nearest
-                _, nn_idx = torch.topk(-dist_mat, k, dim=-1)
-                loss_phylo = dist_mat.gather(1, nn_idx).pow(2).mean()
-            else:
-                h_norm = F.normalize(phylo_h, dim=-1)
-                sim = h_norm @ h_norm.T
-                _, nn_idx = torch.topk(sim, k, dim=-1)
-                h_diff = phylo_h.unsqueeze(1) - phylo_h[nn_idx]
-                loss_phylo = (h_diff.norm(dim=-1) ** 2).mean()
-
-        # Temporal prior loss: cold_prior should match fused for warm samples
-        loss_prior = self._zero
-        cold_prior = getattr(out, "cold_prior", None)
-        if cold_prior is not None and out.fused is not None:
-            warm = ~temporal_mask if temporal_mask is not None else torch.ones(B, dtype=torch.bool, device=self.device)
-            if warm.any():
-                loss_prior = F.mse_loss(cold_prior[warm], out.fused[warm].detach())
-        
-        # v3+ Diversity loss from retriever
-        loss_div = self._zero
-        if self.model.use_retrieval and hasattr(self.model.retriever, "diversity_loss"):
-            loss_div = self.model.retriever.diversity_loss()
-
-        # Combine losses
+        # Combine with Uncertainty-Weighted Multi-Task or simple weights
         losses_dict = {
-            "loss_final": loss_final,
-            "loss_all": loss_all,
-            "loss_cold": loss_cold,
-            "loss_kd": loss_kd,
-            "loss_count": loss_count,
-            "loss_rank": loss_rank,
-            "loss_gate": loss_gate,
-            "loss_phylo": loss_phylo,
-            "loss_prior": loss_prior,
-            "loss_consist": loss_consist,
-            "loss_div": loss_div,
+            "hazard": loss_hazard,
+            "proxy": loss_proxy,
+            "contrast": loss_contrast,
+            "kd": loss_kd,
+            "count": loss_count,
         }
 
-        if self.use_cagrad and self.model.training and torch.is_grad_enabled():
-            sf = self.loss_scale_factors or {}
-            cagrad_losses = {
-                "loss_final": loss_final * sf.get("loss_final", 1.0),
-                "loss_all": self.lambda_all * loss_all * sf.get("loss_all", 1.0),
-                "loss_count": self.lambda_count * loss_count * sf.get("loss_count", 1.0),
-                "loss_rank": params["lambda_rank"] * loss_rank * sf.get("loss_rank", 1.0),
-                "loss_gate": self.lambda_gate * loss_gate * sf.get("loss_gate", 1.0),
-                "loss_phylo": params.get("lambda_phylo", 0) * loss_phylo * sf.get("loss_phylo", 1.0),
-            }
-            base_total = CAGradProjector.apply(cagrad_losses, self.model, self.cagrad_c)
-            total = base_total + (
-                + params["lambda_cold"] * loss_cold * sf.get("loss_cold", 1.0)
-                + params["lambda_kd"] * loss_kd * sf.get("loss_kd", 1.0)
-                + self.lambda_prior * loss_prior * sf.get("loss_prior", 1.0)
-                + 0.15 * loss_consist # v3+ Increased consistency weight
-                + 0.01 * loss_div     # v3+ Diversity regularization
-            )
-        elif self.use_adaptive_loss and self.adaptive_loss is not None:
+        if self.use_adaptive_loss and self.adaptive_loss is not None:
+            # Automatically balance losses using Kendall 2018 approach
             total = self.adaptive_loss(losses_dict)
         else:
-            scale_factors = self.loss_scale_factors or {}
+            # Static weighting based on curriculum params
             total = (
-                loss_final * scale_factors.get("loss_final", 1.0)
-                + self.lambda_all * loss_all * scale_factors.get("loss_all", 1.0)
-                + self.lambda_count * loss_count * scale_factors.get("loss_count", 1.0)
-                + params["lambda_rank"] * loss_rank * scale_factors.get("loss_rank", 1.0)
-                + params["lambda_cold"] * loss_cold * scale_factors.get("loss_cold", 1.0)
-                + params["lambda_kd"] * loss_kd * scale_factors.get("loss_kd", 1.0)
-                + self.lambda_gate * loss_gate * scale_factors.get("loss_gate", 1.0)
-                + params.get("lambda_phylo", 0) * loss_phylo * scale_factors.get("loss_phylo", 1.0)
-                + self.lambda_prior * loss_prior * scale_factors.get("loss_prior", 1.0)
-                + 0.15 * loss_consist
-                + 0.01 * loss_div
+                loss_hazard
+                + params["lambda_proxy"] * loss_proxy
+                + params["lambda_contrast"] * loss_contrast
+                + params["lambda_kd"] * loss_kd
+                + 0.1 * loss_count
             )
 
-        return {
-            "loss_final": loss_final,
-            "loss_all": loss_all,
-            "loss_cold": loss_cold,
-            "loss_kd": loss_kd,
-            "loss_count": loss_count,
-            "loss_rank": loss_rank,
-            "loss_gate": loss_gate,
-            "loss_phylo": loss_phylo,
-            "loss_prior": loss_prior,
-            "loss_consist": loss_consist,
-            "loss_div": loss_div,
-            "total": total,
-        }
+        losses_dict["total"] = total
+        return losses_dict
 
     def _measure_loss_scales(self, loader: DataLoader, n_batches: int = 50) -> Dict[str, float]:
         self.model.train()
         accum = {
-            "loss_final": 0.0,
-            "loss_all": 0.0,
-            "loss_cold": 0.0,
-            "loss_kd": 0.0,
-            "loss_count": 0.0,
-            "loss_rank": 0.0,
-            "loss_gate": 0.0,
-            "loss_phylo": 0.0,
-            "loss_prior": 0.0,
+            "hazard": 0.0,
+            "proxy": 0.0,
+            "contrast": 0.0,
+            "kd": 0.0,
+            "count": 0.0,
         }
         counts = {k: 0 for k in accum}
 
@@ -519,7 +369,7 @@ class BioSpreadTrainer:
             mean_val = accum[k] / max(counts[k], 1)
             scale_factors[k] = 1.0 / max(mean_val, 1e-8)
 
-        ref = scale_factors.get("loss_final", 1.0)
+        ref = scale_factors.get("hazard", 1.0)
         for k in scale_factors:
             scale_factors[k] = scale_factors[k] / ref
 

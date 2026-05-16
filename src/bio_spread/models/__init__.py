@@ -67,6 +67,7 @@ def create_model(
         edl_lambda_kl=model_cfg.edl_lambda_kl,
         edl_target_smoothing=model_cfg.edl_target_smoothing,
         fit_heads=model_cfg.fit_heads,
+        use_research=model_cfg.use_research,
     )
 
 

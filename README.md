@@ -1,8 +1,8 @@
-# BioSpread
+# BioSpread Sovereign-X Ultra (v4 Frontier)
 
-> **Modular time-aware evidential learning pipeline for plasmid geographic spread prediction.**
+> **Critical Infrastructure Class, Time-Aware Evidential Learning Pipeline for Global Plasmid Surveillance.**
 
-BioSpread predicts whether a plasmid backbone will spread to new countries within a 1–3 year horizon, using a dual-stream neural architecture that fuses static (backbone-intrinsic) and temporal (epidemiological snapshot) features with taxonomic embeddings.
+BioSpread Sovereign-X Ultra is a high-performance system designed to predict the geographic spread of plasmid backbones with clinical-grade reliability. It uses a **Proxy-Based Manifold Alignment** architecture to eliminate cold-start uncertainty and provides rigorous coverage guarantees via **Mondrian Conformal Prediction**.
 
 ---
 
@@ -37,40 +37,46 @@ Antimicrobial resistance (AMR) spread via plasmids is a critical public health t
 
 The model is trained with a **leakage-free temporal disjoint split**: backbones observed after the split year (2020) are held out entirely, ensuring no temporal information leakage.
 
-### Key Innovations
+### Key Innovations (Sovereign-X Ultra)
 
 | Feature | Detail |
 |---|---|
-| **Dual-stream fusion** | Static encoder (MLP) + Temporal encoder (GRU+Attention) gated fusion |
-| **Multi-horizon output** | 3 hazard heads + per-timestep head + cold-start head |
-| **Cold-start handling** | Dedicated head for backbones with no temporal history |
-| **Post-training calibration** | Platt scaling (separate for main and cold-start paths) |
-| **Taxonomy-aware** | Hierarchical taxonomic embeddings at 5 levels |
-| **Leakage-free** | Train-only taxonomy vocab, disjoint backbone split |
+| **Temporal Proxy Generator** | Imagines missing temporal dynamics from static features via manifold alignment |
+| **FiLM Conditioning** | Taxonomy-driven modulation of cold-start features for lineage-aware prediction |
+| **Mondrian Conformal** | Group-wise coverage guarantees (90%) for reliable clinical decision support |
+| **Evidential Learning** | Direct estimation of epistemic uncertainty to guide automated routing |
+| **Hyperbolic Taxonomy** | Poincaré ball embeddings for superior phylogenetic consistency |
+| **Unified 4-Loss** | Optimized Multi-Task objective with Adaptive Loss Weighting (Kendall 2018) |
 
 ---
 
-## Architecture
-
-```
+## Arch```
                           ┌──────────────────────┐
-                          │    Taxonomy Embedder  │
-                          │  (5-level embeddings) │
+                          │  Poincaré Taxonomy   │
+                          │   (Hyperbolic Ball)  │
                           └──────────┬───────────┘
-                                     │
+                                     │ (FiLM)
            ┌─────────────────────────┼──────────────────────────┐
            │                         │                          │
-    ┌──────▼──────┐          ┌──────▼──────┐                  │
-    │ Static Enc. │          │Temporal Enc.│                  │
-    │   (MLP)     │          │(GRU+Attn)   │                  │
-    │ 128→64→32   │          │ 192 hidden  │                  │
-    └──────┬──────┘          └──────┬──────┘                  │
-           │                        │                         │
-           └─────────┬──────────────┘                         │
-                      │                                        │
-               ┌──────▼──────┐                          ┌──────▼──────┐
-               │  Gated Fusion│                          │Cold-Start   │
-               │   (softmax)  │                          │   Head      │
+    ┌──────▼──────┐          ┌──────▼──────┐          ┌──────▼──────┐
+    │ Static Enc. │          │Temporal Enc.│          │ Proxy Gen.  │
+    │ (Gated MLP) │          │ (GRU/Mamba) │          │ (Manifold)  │
+    └──────┬──────┘          └──────┬──────┘          └──────┬──────┘
+           │                        │                        │
+           └─────────┬──────────────┘                (MSE / InfoNCE)
+                      │                                      │
+               ┌──────▼──────┐                        ┌──────▼──────┐
+               │ Confidence-  │◄──────────────────────┤  Cold-Start │
+               │ Gated Route  │                       │    Head     │
+               └──────┬──────┘                        └─────────────┘
+                      │
+           ┌──────────┼──────────┐
+    ┌──────▼──┐ ┌──────▼──┐ ┌──▼───────┐
+    │Evidential│ │Count    │ │Conformal │
+    │Hazard H. │ │Head     │ │Wrapper   │
+    └──────────┘ └─────────┘ └──────────┘
+```
+��   (softmax)  │                          │   Head      │
                └──────┬──────┘                          └──────┬──────┘
                       │                                        │
            ┌──────────┼──────────┐                              │

@@ -8,6 +8,33 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+class FiLM(nn.Module):
+    """Feature-wise Linear Modulation."""
+    def __init__(self, cond_dim: int, output_dim: int):
+        super().__init__()
+        self.gamma = nn.Linear(cond_dim, output_dim)
+        self.beta = nn.Linear(cond_dim, output_dim)
+
+    def forward(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
+        gamma = self.gamma(cond)
+        beta = self.beta(cond)
+        return gamma * x + beta
+
+
+class TemporalProxyGenerator(nn.Module):
+    """Static + Taxonomy -> MLP -> proxy_temporal_emb (128D)."""
+    def __init__(self, static_dim: int, tax_dim: int, proxy_dim: int = 128, dropout: float = 0.15):
+        super().__init__()
+        self.net = GatedResidualMLP(
+            [static_dim + tax_dim, proxy_dim * 2, proxy_dim],
+            dropout=dropout
+        )
+
+    def forward(self, z_static: torch.Tensor, tax_emb: torch.Tensor) -> torch.Tensor:
+        x = torch.cat([z_static, tax_emb], dim=-1)
+        return self.net(x)
+
+
 class MLP(nn.Module):
     def __init__(
         self, dims: list[int], dropout: float = 0.1, activation: type[nn.Module] = nn.ReLU

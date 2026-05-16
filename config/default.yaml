@@ -26,6 +26,7 @@ model:
   use_evidential: true
   use_cagrad: true
   use_retrieval: true
+  use_research: true
 
   # Mamba-2 + CausalConv hyperparams
   mamba_d_state: 16

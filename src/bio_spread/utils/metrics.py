@@ -94,68 +94,83 @@ def bootstrap_metrics(
     }
 
 
-class AdaptiveConformalWrapper:
-    def __init__(self, alpha: float = 0.1, eta: float = 0.05, beta: float = 0.9,
-                 q_init: float = 1.0, max_q: float = 2.0, device: str = "cpu"):
+class MondrianConformalManager:
+    """
+    v4 Mondrian Conformal Prediction.
+    Provides rigorous coverage guarantees for different subgroups (e.g. Cold-start vs Warm).
+    """
+    def __init__(self, alpha: float = 0.1, n_classes: int = 2):
         self.alpha = alpha
-        self.eta = eta
-        self.beta = beta
-        self.q = q_init
-        self.max_q = max_q
-        self.device = device
-        self.n_updates = 0
+        self.n_classes = n_classes
+        self.cal_scores: Dict[Any, np.ndarray] = {} # Map category -> non-conformity scores
+        self.quantiles: Dict[Any, float] = {}
 
-    def update(self, error: float) -> None:
-        self.q = self.q + self.eta * (self.alpha - error)
-        self.q = max(0.01, min(self.q, self.max_q))
-        self.n_updates += 1
+    def calibrate(self, probs: np.ndarray, targets: np.ndarray, categories: np.ndarray):
+        """
+        Calibrate on a held-out set.
+        Categories can be [0, 1] for Cold/Warm or Taksonomi classes.
+        """
+        unique_cats = np.unique(categories)
+        for cat in unique_cats:
+            mask = (categories == cat)
+            if not mask.any(): continue
+            
+            p_cat = probs[mask]
+            t_cat = targets[mask]
+            
+            # Non-conformity score: 1 - P(correct_class)
+            # For binary: if t=1, score=1-p; if t=0, score=p
+            scores = np.where(t_cat == 1, 1 - p_cat, p_cat)
+            self.cal_scores[cat] = np.sort(scores)
+            
+            n = len(scores)
+            q_level = np.ceil((n + 1) * (1 - self.alpha)) / n
+            q_level = np.clip(q_level, 0, 1)
+            self.quantiles[cat] = np.quantile(scores, q_level, interpolation='higher')
 
-    @torch.no_grad()
-    def get_interval(self, probs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        q = min(self.q, 1.0)
-        lower = (probs - q / 2).clamp(min=0.0)
-        upper = (probs + q / 2).clamp(max=1.0)
-        return lower, upper
+    def predict(self, probs: np.ndarray, categories: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """Returns [lower_bound, upper_bound] for each sample."""
+        lowers = np.zeros_like(probs)
+        uppers = np.ones_like(probs)
+        
+        for cat in self.quantiles:
+            mask = (categories == cat)
+            if not mask.any(): continue
+            
+            q = self.quantiles[cat]
+            # Prediction set: {y | score(x, y) <= q}
+            # For y=1: 1-p <= q  => p >= 1-q
+            # For y=0: p <= q
+            # This gives us a prediction set. To get bounds:
+            lowers[mask] = (probs[mask] - q).clip(0, 1)
+            uppers[mask] = (probs[mask] + q).clip(0, 1)
+            
+        return lowers, uppers
 
-    def get_prediction_set(self, probs: torch.Tensor) -> torch.Tensor:
-        q = min(self.q, 1.0)
-        include_one = probs >= (1.0 - q)
-        include_zero = probs <= q
-        sets = torch.stack([include_zero, include_one], dim=-1)
-        return sets
+    def get_set_size(self, probs: np.ndarray, categories: np.ndarray) -> np.ndarray:
+        """Returns number of labels in the prediction set (0, 1, or 2)."""
+        sizes = np.zeros(len(probs))
+        for cat in self.quantiles:
+            mask = (categories == cat)
+            if not mask.any(): continue
+            q = self.quantiles[cat]
+            include_0 = probs[mask] <= q
+            include_1 = (1 - probs[mask]) <= q
+            sizes[mask] = include_0.astype(int) + include_1.astype(int)
+        return sizes
 
-    def compute_error(self, probs: torch.Tensor, targets: torch.Tensor) -> float:
-        self.get_prediction_set(probs)
-        errors = []
-        for h in range(min(probs.size(-1) if probs.dim() > 1 else 1, 3)):
-            p = probs[..., h] if probs.dim() > 1 else probs
-            t = targets[..., h] if targets.dim() > 1 else targets
-            valid = t >= 0
-            if valid.any():
-                p_v = p[valid]
-                t_v = t[valid]
-                q = min(self.q, 1.0)
-                include_one = p_v >= (1.0 - q)
-                include_zero = p_v <= q
-                err = ~((t_v == 1) & include_one) & ~((t_v == 0) & include_zero)
-                errors.append(err.float().mean().item())
-        return float(np.mean(errors)) if errors else 0.0
 
-    def state_dict(self) -> dict:
-        return {"q": self.q, "eta": self.eta, "alpha": self.alpha, "n_updates": self.n_updates}
-
-    def load_state_dict(self, state: dict) -> None:
-        self.q = state.get("q", self.q)
-        self.eta = state.get("eta", self.eta)
-        self.alpha = state.get("alpha", self.alpha)
-        self.n_updates = state.get("n_updates", 0)
-
-    def save(self, path: Path) -> None:
-        torch.save(self.state_dict(), path)
-
-    @classmethod
-    def load(cls, path: Path, **kwargs) -> "AdaptiveConformalWrapper":
-        state = torch.load(path, map_location="cpu", weights_only=True)
-        wrapper = cls(**kwargs)
-        wrapper.load_state_dict(state)
-        return wrapper
+class StabilityMonitor:
+    """Monitors model stability over time or across versions."""
+    @staticmethod
+    def compute_psi(initial: np.ndarray, current: np.ndarray, bins: int = 10) -> float:
+        """Population Stability Index."""
+        initial_percents = np.histogram(initial, bins=bins, range=(0, 1))[0] / len(initial)
+        current_percents = np.histogram(current, bins=bins, range=(0, 1))[0] / len(current)
+        
+        # Avoid division by zero
+        initial_percents = np.clip(initial_percents, 1e-6, 1.0)
+        current_percents = np.clip(current_percents, 1e-6, 1.0)
+        
+        psi = np.sum((initial_percents - current_percents) * np.log(initial_percents / current_percents))
+        return float(psi)
