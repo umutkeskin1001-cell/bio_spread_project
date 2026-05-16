@@ -79,7 +79,11 @@ class InferenceService:
             taxonomy_vocab=taxonomy_vocab,
         )
         state = torch.load(model_path, map_location=self.device, weights_only=True)
-        self.model.load_state_dict(state, strict=True)
+        missing_keys, unexpected_keys = self.model.load_state_dict(state, strict=False)
+        if missing_keys:
+            logger.warning("Missing keys loading checkpoint: %s", missing_keys[:10])
+        if unexpected_keys:
+            logger.warning("Unexpected keys loading checkpoint: %s", unexpected_keys[:10])
         self.model.eval()
         self.model.to(self.device)
 

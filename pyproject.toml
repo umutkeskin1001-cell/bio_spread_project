@@ -3,16 +3,15 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "bio-spread-reborn"
+name = "bio-spread"
 version = "0.1.0"
 description = "Modular time-aware evidential learning pipeline for plasmid spread"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
   "numpy>=1.26,<3",
   "scikit-learn>=1.4,<2",
   "polars>=0.20,<1",
   "torch>=2.0,<3",
-  "scipy>=1.11,<2",
   "PyYAML>=6.0",
   "click>=8.0",
   "pydantic>=2.0",
@@ -28,9 +27,19 @@ dev = [
   "pip-audit>=2.7,<3",
   "types-PyYAML",
 ]
+api = [
+  "fastapi>=0.100",
+  "uvicorn>=0.20",
+]
+tuning = [
+  "optuna>=3.0",
+]
+baseline = [
+  "lightgbm>=4.0",
+]
 
 [project.scripts]
-bio-spread = "bio_spread_reborn.cli.main:cli"
+bio-spread = "bio_spread.cli.main:cli"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -47,14 +56,14 @@ filterwarnings = [
 
 [tool.ruff]
 line-length = 120
-target-version = "py39"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
 ignore = ["E501", "E402"]
 
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.10"
 strict = true
 warn_unused_configs = true
 warn_redundant_casts = true
@@ -65,5 +74,5 @@ follow_imports = "skip"
 disable_error_code = ["import-untyped"]
 
 [[tool.mypy.overrides]]
-module = ["sklearn", "sklearn.*", "joblib", "scipy", "scipy.*"]
+module = ["sklearn", "sklearn.*", "joblib"]
 ignore_missing_imports = true

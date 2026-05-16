@@ -1,12 +1,12 @@
 """
-LightGBM baseline for BioSpread Sovereign-X Pro.
+LightGBM baseline for BioSpread.
 
-Builds a flat feature matrix from SovereignSequenceDataset snapshots
+Builds a flat feature matrix from SequenceDataset snapshots
 using the precomputed sequences.tsv. Provides a simple sklearn baseline
 for comparison with the deep learning model.
 """
-import sys
 import os
+import sys
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
@@ -17,11 +17,9 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 import yaml
-from sklearn.metrics import roc_auc_score, average_precision_score
+from sklearn.metrics import average_precision_score, roc_auc_score
 
-from bio_spread_reborn.data.dataset import (
-    SNAPSHOT_FEATURE_COLS, STATIC_COLS, load_normalizers,
-)
+from bio_spread.constants import SNAPSHOT_FEATURE_COLS, STATIC_COLS
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +33,7 @@ def main(config_path="config/default.yaml"):
     if not seq_path.exists():
         raise FileNotFoundError(
             f"Sequences not found at {seq_path}. "
-            "Run `bio-spread sovereign_prepare` first."
+            "Run `bio-spread prepare` first."
         )
 
     df = pl.read_csv(seq_path, separator="\t")
@@ -43,28 +41,15 @@ def main(config_path="config/default.yaml"):
     logger.info("Loaded %d observed snapshots (%d backbones)",
                 len(df), df["backbone_id"].n_unique())
 
-    # Load normalizers
-    norm_path = feature_dir / "normalizers.npz"
-    if norm_path.exists():
-        s_means, s_stds = load_normalizers(norm_path)
-    else:
-        s_means, s_stds = np.zeros(len(SNAPSHOT_FEATURE_COLS)), np.ones(len(SNAPSHOT_FEATURE_COLS))
-
-    static_norm_path = feature_dir / "static_normalizers.npz"
-    if static_norm_path.exists():
-        st_means, st_stds = load_normalizers(static_norm_path)
-    else:
-        st_means, st_stds = np.zeros(len(STATIC_COLS)), np.ones(len(STATIC_COLS))
-
-    # Build flat feature matrix from normalized snapshot features + static features
+    # Build flat feature matrix from snapshot features + static features.
+    # Features in sequences.tsv are already normalized by dataset.py, so no
+    # additional normalization is needed here.
     features = []
     targets = []
     for row in df.iter_rows(named=True):
+        # Features in sequences.tsv are already normalized, use directly
         snap_vec = np.array([row.get(c, 0.0) for c in SNAPSHOT_FEATURE_COLS], dtype=np.float32)
-        snap_vec = (snap_vec - s_means) / s_stds
-
         static_vec = np.array([row.get(c, 0.0) for c in STATIC_COLS], dtype=np.float32)
-        static_vec = (static_vec - st_means) / st_stds
 
         full_vec = np.concatenate([snap_vec, static_vec])
         features.append(full_vec)
@@ -84,35 +69,28 @@ def main(config_path="config/default.yaml"):
     logger.info("Feature matrix: %d samples x %d dims (%.3f positive)",
                 len(targets), features.shape[1], targets.mean())
 
-    # Load split
+    # Load split -- backbone-disjoint split is required
     split_path = feature_dir / "split.json"
-    if split_path.exists():
-        with open(split_path) as f:
-            split = json.load(f)
-        df_valid = df.filter(pl.col("observed") > 0)
-        train_mask = df_valid["backbone_id"].is_in(split["train"]).to_numpy()
-        val_mask = df_valid["backbone_id"].is_in(split["val"]).to_numpy()
-        # Apply valid target filter
-        train_mask = train_mask[valid]
-        val_mask = val_mask[valid]
+    if not split_path.exists():
+        raise FileNotFoundError(
+            f"split.json required for backbone-disjoint split: {split_path}"
+        )
 
-        if train_mask.sum() > 0 and val_mask.sum() > 0:
-            X_train, y_train = features[train_mask], targets[train_mask]
-            X_val, y_val = features[val_mask], targets[val_mask]
-        else:
-            logger.warning("Split not applicable for filtered data, falling back to temporal split")
-            train_mask = None
-    else:
-        train_mask = None
+    with open(split_path) as f:
+        split = json.load(f)
+    df_valid = df.filter(pl.col("observed") > 0)
+    train_mask = df_valid["backbone_id"].is_in(split["train"]).to_numpy()
+    val_mask = df_valid["backbone_id"].is_in(split["val"]).to_numpy()
+    # Apply valid target filter
+    train_mask = train_mask[valid]
+    val_mask = val_mask[valid]
 
-    if train_mask is None:
-        # Temporal split
-        years = df.filter(pl.col("observed") > 0)["year"].to_numpy()[valid]
-        split_year = cfg["data"]["split_year"]
-        train_idx = years < split_year
-        val_idx = years >= split_year
-        X_train, y_train = features[train_idx], targets[train_idx]
-        X_val, y_val = features[val_idx], targets[val_idx]
+    if not (train_mask.sum() > 0 and val_mask.sum() > 0):
+        logger.error("Split not applicable for filtered data. Check split.json.")
+        return 0.5
+
+    X_train, y_train = features[train_mask], targets[train_mask]
+    X_val, y_val = features[val_mask], targets[val_mask]
 
     logger.info("Train: %d (%.3f pos) | Val: %d (%.3f pos)",
                 len(y_train), y_train.mean(), len(y_val), y_val.mean())
@@ -149,7 +127,7 @@ def main(config_path="config/default.yaml"):
     pr_auc = average_precision_score(y_val, y_pred)
 
     print(f"\n{'=' * 40}")
-    print(f"  LIGHTGBM BASELINE RESULTS")
+    print("  LIGHTGBM BASELINE RESULTS")
     print(f"{'=' * 40}")
     print(f"  Temporal AUC:     {auc:.4f}")
     print(f"  PR AUC:           {pr_auc:.4f}")

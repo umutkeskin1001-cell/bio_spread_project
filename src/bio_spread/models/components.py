@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 from contextlib import contextmanager
 from typing import Generator
 
@@ -69,34 +68,15 @@ class EnhancedColdStartHead(nn.Module):
 class ColdStartEncoder(nn.Module):
     def __init__(
         self,
-        static_dim: int = 12,
-        tax_embed_dim: int = 40,
-        cat_embed_dim: int = 0,
-        hidden_dim: int = 256,
+        input_dim: int = 168,
         n_hazard: int = 3,
         dropout: float = 0.15,
     ):
         super().__init__()
-        input_dim = static_dim + tax_embed_dim + cat_embed_dim
-        self.encoder = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.LayerNorm(hidden_dim // 2),
-            nn.GELU(),
-            nn.Dropout(dropout),
-        )
-        self.head = nn.Linear(hidden_dim // 2, n_hazard)
+        self.net = MLP([input_dim, 256, 128, n_hazard], dropout=dropout)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        h = self.encoder(x)
-        return self.head(h)
+        return self.net(x)
 
 
 class PlattScaler(nn.Module):
@@ -136,7 +116,7 @@ class AdaptiveLossWeighting(nn.Module):
             if name == "total":
                 continue
             sigma = torch.exp(self.log_sigmas[i])
-            total += loss / (2 * sigma) + 0.5 * self.log_sigmas[i]
+            total += loss / (2 * sigma ** 2) + torch.log(sigma)
         return total
 
 
@@ -320,3 +300,381 @@ class PrototypicalColdStart(nn.Module):
         neighbor_labels = self.labels[indices]
         pred = (weights.unsqueeze(-1) * neighbor_labels).sum(dim=1)
         return pred
+
+
+class CausalConv1d(nn.Module):
+    def __init__(self, in_channels: int, out_channels: int, kernel_size: int = 3, dilation: int = 1):
+        super().__init__()
+        padding = (kernel_size - 1) * dilation
+        self.conv = nn.Conv1d(in_channels, out_channels, kernel_size,
+                              padding=padding, dilation=dilation, groups=in_channels)
+        self.proj = nn.Linear(in_channels, out_channels) if in_channels != out_channels else nn.Identity()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x_t = x.transpose(1, 2)
+        x_conv = self.conv(x_t)
+        x_conv = x_conv[:, :, :x.size(1)]
+        out = x_conv.transpose(1, 2)
+        return out + self.proj(x)
+
+
+class Mamba2Block(nn.Module):
+    def __init__(self, d_model: int, d_state: int = 16, d_conv: int = 4, expand: int = 2):
+        super().__init__()
+        d_inner = d_model * expand
+        self.d_model = d_model
+        self.d_inner = d_inner
+        self.d_state = d_state
+
+        self.norm = nn.RMSNorm(d_model)
+        self.in_proj = nn.Linear(d_model, d_inner * 2)
+        self.conv = nn.Conv1d(d_inner, d_inner, d_conv, groups=d_inner, padding=d_conv - 1)
+        self.dt = nn.Linear(d_inner, d_inner)
+        self.A_log = nn.Parameter(torch.log(torch.arange(1, d_state + 1, dtype=torch.float32)))
+        self.B_proj = nn.Linear(d_inner, d_state)
+        self.C_proj = nn.Linear(d_inner, d_state)
+        self.D = nn.Parameter(torch.ones(d_inner))
+        self.out_proj = nn.Linear(d_inner, d_model)
+
+    def _selective_scan(self, x: torch.Tensor, delta: torch.Tensor,
+                        B: torch.Tensor, C: torch.Tensor) -> torch.Tensor:
+        B_batch, L, D = x.shape
+        N = B.shape[-1]
+        A = -torch.exp(self.A_log)
+        h = torch.zeros(B_batch, D, N, device=x.device, dtype=x.dtype)
+        ys = []
+        for t in range(L):
+            d = delta[:, t].unsqueeze(-1)
+            A_bar = torch.exp(d * A.view(1, 1, -1))
+            B_bar = d * B[:, t].unsqueeze(1)
+            x_t = x[:, t].unsqueeze(-1)
+            h = A_bar * h + B_bar * x_t
+            y_t = (h * C[:, t].unsqueeze(1)).sum(-1)
+            ys.append(y_t)
+        return torch.stack(ys, dim=1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        B, L, _ = x.shape
+        residual = x
+        x = self.norm(x)
+        xz = self.in_proj(x)
+        x_in, z = xz.chunk(2, dim=-1)
+        x_conv = x_in.transpose(1, 2)
+        x_conv = self.conv(x_conv)[..., :L]
+        x_act = F.silu(x_conv.transpose(1, 2))
+        delta = F.softplus(self.dt(x_act))
+        B_param = self.B_proj(x_act)
+        C_param = self.C_proj(x_act)
+        y = self._selective_scan(x_act, delta, B_param, C_param)
+        y = y + self.D * x_act
+        y = y * F.silu(z)
+        return self.out_proj(y) + residual
+
+
+class HybridTemporalEncoder(nn.Module):
+    def __init__(self, input_dim: int, hidden_dim: int = 192, num_layers: int = 2,
+                 max_seq_len: int = 50, dropout: float = 0.15,
+                 use_mamba: bool = False, mamba_d_state: int = 16, mamba_n_layers: int = 4,
+                 conv_kernel: int = 3):
+        super().__init__()
+        self.use_mamba = use_mamba
+        self.input_proj = nn.Linear(input_dim, hidden_dim)
+        self.null_embed = nn.Parameter(torch.randn(1, hidden_dim) * 0.01)
+
+        if use_mamba:
+            self.conv = CausalConv1d(hidden_dim, hidden_dim, conv_kernel)
+            self.blocks = nn.ModuleList([
+                Mamba2Block(hidden_dim, d_state=mamba_d_state) for _ in range(mamba_n_layers)
+            ])
+        else:
+            self.gru = nn.GRU(
+                hidden_dim, hidden_dim, num_layers=num_layers, batch_first=True,
+                dropout=dropout if num_layers > 1 else 0.0,
+            )
+        self.attn = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim // 2), nn.Tanh(), nn.Linear(hidden_dim // 2, 1),
+        )
+
+    def forward(self, x: torch.Tensor, mask: torch.Tensor,
+                temporal_mask: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
+        B, L, _ = x.shape
+        h = self.input_proj(x)
+
+        if self.use_mamba:
+            h = self.conv(h)
+            for block in self.blocks:
+                h = block(h)
+            h_all = h
+        else:
+            lens = mask.sum(dim=1).long()
+            if lens.max() > 0:
+                packed = nn.utils.rnn.pack_padded_sequence(h, lens.cpu(), batch_first=True, enforce_sorted=False)
+                packed_out, _ = self.gru(packed)
+                h_all, _ = nn.utils.rnn.pad_packed_sequence(packed_out, batch_first=True, total_length=L)
+            else:
+                h_all, _ = self.gru(h)
+
+        scores = self.attn(h_all).squeeze(-1)
+        scores = scores.masked_fill(~mask.bool(), -1e9)
+        weights = F.softmax(scores, dim=-1)
+        h_pooled = (h_all * weights.unsqueeze(-1)).sum(dim=1)
+
+        if temporal_mask is not None and temporal_mask.any():
+            mask_t = temporal_mask.unsqueeze(1).unsqueeze(-1)
+            h_all = torch.where(mask_t, self.null_embed.unsqueeze(0), h_all)
+            h_pooled = torch.where(temporal_mask.unsqueeze(-1), self.null_embed, h_pooled)
+
+        return h_all, h_pooled
+
+
+class PoincareBall:
+    @staticmethod
+    def _sqrt_c(c: float = -1.0) -> float:
+        from math import sqrt
+        return sqrt(abs(c))
+
+    @staticmethod
+    def expmap0(u: torch.Tensor, c: float = -1.0) -> torch.Tensor:
+        sqrt_c = PoincareBall._sqrt_c(c)
+        norm_u = u.norm(dim=-1, keepdim=True).clamp(min=1e-8)
+        r = torch.tanh(sqrt_c * norm_u) / (sqrt_c + 1e-8)
+        r = r.clamp(max=1.0 - 1e-6)
+        return r * u / norm_u
+
+    @staticmethod
+    def logmap0(p: torch.Tensor, c: float = -1.0) -> torch.Tensor:
+        sqrt_c = PoincareBall._sqrt_c(c)
+        norm_p = p.norm(dim=-1, keepdim=True).clamp(min=1e-8)
+        scale = torch.atanh(sqrt_c * norm_p.clamp(max=0.99)) / (sqrt_c * norm_p + 1e-8)
+        return scale * p
+
+    @staticmethod
+    def dist(x: torch.Tensor, y: torch.Tensor, c: float = -1.0) -> torch.Tensor:
+        sqrt_c = PoincareBall._sqrt_c(c)
+        x_norm_sq = x.norm(dim=-1, keepdim=True).pow(2).clamp(max=0.99)
+        y_norm_sq = y.norm(dim=-1, keepdim=True).pow(2).clamp(max=0.99)
+        num = (1 + 2 * sqrt_c ** 2 * (x * y).sum(dim=-1, keepdim=True) + sqrt_c ** 4 * x_norm_sq * y_norm_sq).clamp(min=1e-8)
+        denom = (1 - sqrt_c ** 2 * x_norm_sq) * (1 - sqrt_c ** 2 * y_norm_sq)
+        arg = (num / denom.clamp(min=1e-8)).sqrt()
+        return (2 / (sqrt_c + 1e-8)) * torch.atanh(sqrt_c * arg.clamp(max=0.99))
+
+    @staticmethod
+    def radius_clamp(x: torch.Tensor, max_r: float = 0.99, c: float = -1.0) -> torch.Tensor:
+        sqrt_c = PoincareBall._sqrt_c(c)
+        norm_x = x.norm(dim=-1, keepdim=True)
+        max_norm = max_r / (sqrt_c + 1e-8)
+        scale = torch.where(norm_x > max_norm, max_norm / norm_x.clamp(min=1e-8), torch.ones_like(norm_x))
+        return x * scale
+
+
+class PoincareTaxonomyEncoder(nn.Module):
+    def __init__(self, vocab_sizes: list[int], embed_dim: int = 16, dropout: float = 0.1,
+                 curvature: float = -1.0, n_levels: int = 5):
+        super().__init__()
+        self.embeddings = nn.ModuleList([
+            nn.Embedding(v, embed_dim, padding_idx=0) for v in vocab_sizes
+        ])
+        for emb in self.embeddings:
+            if emb.num_embeddings > 1:
+                emb.weight.data[1] = torch.zeros(embed_dim)
+                emb.weight.register_hook(_zero_idx1_hook)
+        self.dropout = nn.Dropout(dropout)
+        self.output_dim = len(vocab_sizes) * embed_dim
+        self.curvature = curvature
+        self.n_levels = n_levels
+
+    def forward(self, idxs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        B = idxs.size(0)
+        all_embs = []
+        for i, emb in enumerate(self.embeddings):
+            e = emb(idxs[..., i])
+            all_embs.append(e)
+        stacked = torch.stack(all_embs, dim=1)
+        stacked = PoincareBall.radius_clamp(stacked, max_r=0.95, c=self.curvature)
+        out = stacked.reshape(B, -1)
+        zero_mask = (idxs == 0) | (idxs == 1)
+        diversity = (~zero_mask).sum(dim=-1).float() / self.n_levels
+        return self.dropout(out), diversity
+
+
+class FiTBlock(nn.Module):
+    def __init__(self, input_dim: int, hidden_dim: int = 128, heads: int = 2, dropout: float = 0.1):
+        super().__init__()
+        self.input_proj = nn.Linear(input_dim, hidden_dim)
+        self.cross_attn = nn.MultiheadAttention(hidden_dim, heads, dropout=dropout, batch_first=True)
+        self.norm1 = nn.LayerNorm(hidden_dim)
+        self.ffn = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim * 4), nn.GELU(), nn.Dropout(dropout),
+            nn.Linear(hidden_dim * 4, hidden_dim), nn.Dropout(dropout),
+        )
+        self.norm2 = nn.LayerNorm(hidden_dim)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x_proj = self.input_proj(x).unsqueeze(1)
+        attn_out, _ = self.cross_attn(x_proj, x_proj, x_proj)
+        x_proj = self.norm1(x_proj + attn_out)
+        ffn_out = self.ffn(x_proj)
+        x_proj = self.norm2(x_proj + ffn_out)
+        return x_proj.squeeze(1)
+
+
+class HyperbolicFusionGate(nn.Module):
+    def __init__(self, static_dim: int, temporal_dim: int, curvature: float = -1.0, dropout: float = 0.1):
+        super().__init__()
+        self.curvature = curvature
+        if static_dim != temporal_dim:
+            self.temporal_proj = nn.Linear(temporal_dim, static_dim)
+        else:
+            self.temporal_proj = nn.Identity()
+        self.gate = nn.Sequential(
+            nn.Linear(static_dim * 2, 128), nn.ReLU(), nn.Dropout(dropout),
+            nn.Linear(128, 2), nn.Softmax(dim=-1),
+        )
+
+    def forward(self, static: torch.Tensor, temporal: torch.Tensor,
+                h_all_proj: torch.Tensor | None = None, mask: torch.Tensor | None = None) -> tuple[torch.Tensor, torch.Tensor]:
+        temporal = self.temporal_proj(temporal)
+        static_h = PoincareBall.expmap0(static, self.curvature)
+        temporal_h = PoincareBall.expmap0(temporal, self.curvature)
+        weights = self.gate(torch.cat([static, temporal], dim=-1))
+        s_norm = (1 - self.curvature * static_h.norm(dim=-1, keepdim=True).pow(2)).clamp(min=1e-8)
+        t_norm = (1 - self.curvature * temporal_h.norm(dim=-1, keepdim=True).pow(2)).clamp(min=1e-8)
+        interp = (weights[:, 0:1] * s_norm * static_h + weights[:, 1:2] * t_norm * temporal_h)
+        fused_h = interp / (weights[:, 0:1] * s_norm + weights[:, 1:2] * t_norm).clamp(min=1e-8)
+        fused = PoincareBall.logmap0(PoincareBall.radius_clamp(fused_h, max_r=0.95, c=self.curvature), self.curvature)
+        return fused, weights
+
+
+class EvidentialHazardHead(nn.Module):
+    def __init__(self, input_dim: int, n_hazard: int = 3, lambda_kl: float = 0.1, smoothing: float = 0.05):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(input_dim, input_dim // 2), nn.ReLU(),
+            nn.Linear(input_dim // 2, input_dim // 2), nn.ReLU(),
+            nn.Linear(input_dim // 2, n_hazard),
+        )
+        self.lambda_kl = lambda_kl
+        self.smoothing = smoothing
+
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        logits = self.net(x)
+        alpha_pos = F.softplus(logits) + 1.0
+        alpha_0 = alpha_pos + 1.0
+        expected_prob = alpha_pos / alpha_0
+        epistemic_var = alpha_pos / (alpha_0 ** 2 * (alpha_0 + 1))
+        return expected_prob, alpha_pos, epistemic_var
+
+    def loss(self, alpha_pos: torch.Tensor, targets: torch.Tensor, pos_weight: torch.Tensor) -> torch.Tensor:
+        alpha_neg = 1.0
+        alpha_0 = alpha_pos + alpha_neg
+        targets = targets.clamp(min=0)
+        d0 = torch.digamma(alpha_0)
+        d1 = torch.digamma(alpha_pos)
+        d2 = torch.digamma(torch.full_like(alpha_pos, alpha_neg))
+        loss_data = targets * (d0 - d1) + (1 - targets) * (d0 - d2)
+        kl = (torch.lgamma(alpha_0) - torch.lgamma(alpha_pos) - torch.lgamma(torch.tensor(alpha_neg, device=alpha_pos.device))
+              + (alpha_pos - 1) * (d1 - d0) + (alpha_neg - 1) * (d2 - d0))
+        return loss_data.mean() + self.lambda_kl * kl.mean()
+
+
+class UncertaintyProtoRetriever(nn.Module):
+    def __init__(self, query_dim: int, n_hazard: int = 3, k: int = 10, ema_alpha: float = 0.995,
+                 n_prototypes: int = 512, proto_dim: int = 128):
+        super().__init__()
+        self.k = k
+        self.ema_alpha = ema_alpha
+        self.n_prototypes = n_prototypes
+        self.proto_dim = proto_dim
+        self.n_hazard = n_hazard
+        self.query_proj = nn.Linear(query_dim, proto_dim)
+        self.register_buffer("prototypes", torch.randn(n_prototypes, proto_dim))
+        self.register_buffer("proto_labels", torch.zeros(n_prototypes, n_hazard))
+        self.register_buffer("proto_counts", torch.zeros(n_prototypes))
+        self.register_buffer("n_seen", torch.zeros(1))
+        self.head = nn.Sequential(
+            nn.Linear(proto_dim + n_hazard, proto_dim // 2), nn.ReLU(),
+            nn.Linear(proto_dim // 2, n_hazard),
+        )
+
+    @torch.no_grad()
+    def update(self, query: torch.Tensor, labels: torch.Tensor, mask: torch.Tensor | None = None):
+        B = query.size(0)
+        z = F.normalize(self.query_proj(query.detach()), dim=-1)
+        sim = z @ F.normalize(self.prototypes, dim=-1).T
+        _, indices = torch.topk(sim, 1, dim=-1)
+        indices = indices.squeeze(-1)
+        self.prototypes[indices] = (1 - self.ema_alpha) * z + self.ema_alpha * self.prototypes[indices]
+        if labels is not None:
+            self.proto_labels[indices] = (1 - self.ema_alpha) * labels.float() + self.ema_alpha * self.proto_labels[indices]
+        self.proto_counts[indices] += 1.0
+        self.n_seen += B
+
+    def forward(self, query: torch.Tensor) -> torch.Tensor:
+        z = F.normalize(self.query_proj(query), dim=-1)
+        sim = z @ F.normalize(self.prototypes, dim=-1).T
+        weights, indices = torch.topk(sim, min(self.k, self.n_prototypes), dim=-1)
+        weights = F.softmax(weights / 0.1, dim=-1)
+        neighbor_labels = self.proto_labels[indices]
+        agg_labels = (weights.unsqueeze(-1) * neighbor_labels).sum(dim=1)
+        z_ret = (weights.unsqueeze(-1) * F.normalize(self.prototypes[indices], dim=-1)).sum(dim=1)
+        out = self.head(torch.cat([z_ret, agg_labels], dim=-1))
+        return out
+
+
+class TemporalPriorPredictor(nn.Module):
+    """Learns to predict temporal fusion output from static features (cold prior)."""
+    def __init__(self, static_dim: int = 128, hidden_dim: int = 64):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(static_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, static_dim),
+        )
+
+    def forward(self, z_static: torch.Tensor) -> torch.Tensor:
+        return self.net(z_static)
+
+
+class CAGradProjector:
+    @staticmethod
+    def apply(losses: dict[str, torch.Tensor], model: nn.Module, c: float = 0.4) -> torch.Tensor:
+        task_names = [n for n, l in losses.items() if l.requires_grad and l.grad_fn is not None]
+        if len(task_names) < 2:
+            return losses.get("loss_final", next(iter(losses.values())))
+
+        all_params = list(model.parameters())
+        per_task = []
+        for name in task_names:
+            g = torch.autograd.grad(losses[name], all_params, retain_graph=True,
+                                    create_graph=False, allow_unused=True)
+            per_task.append(g)
+
+        n_params = len(all_params)
+        shared = [p_idx for p_idx in range(n_params)
+                  if all(g[p_idx] is not None for g in per_task)]
+        if len(shared) < 1:
+            return losses.get("loss_final", next(iter(losses.values())))
+
+        G_list = []
+        for g in per_task:
+            task_g = torch.cat([g[p_idx].view(-1) for p_idx in shared])
+            G_list.append(task_g)
+        G = torch.stack(G_list)
+
+        GG = G @ G.T
+        n_tasks = len(task_names)
+        x0 = torch.zeros(n_tasks, device=G.device)
+        x0[0] = 1.0
+        b = GG @ x0
+        A = GG + 1e-8 * torch.eye(n_tasks, device=G.device)
+        try:
+            sol = torch.linalg.solve(A, b)
+        except RuntimeError:
+            return losses.get("loss_final", next(iter(losses.values())))
+
+        scale = c / (sol.norm().clamp(min=1e-8))
+        w = sol * scale
+        if torch.isnan(w).any() or torch.isinf(w).any():
+            return losses.get("loss_final", next(iter(losses.values())))
+        dummy_loss = sum(w[i] * losses[name] for i, name in enumerate(task_names))
+        return dummy_loss

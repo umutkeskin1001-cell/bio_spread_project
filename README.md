@@ -1,8 +1,8 @@
-# BioSpread Sovereign-X Pro
+# BioSpread
 
 > **Modular time-aware evidential learning pipeline for plasmid geographic spread prediction.**
 
-Sovereign-X Pro predicts whether a plasmid backbone will spread to new countries within a 1–3 year horizon, using a dual-stream neural architecture that fuses static (backbone-intrinsic) and temporal (epidemiological snapshot) features with taxonomic embeddings.
+BioSpread predicts whether a plasmid backbone will spread to new countries within a 1–3 year horizon, using a dual-stream neural architecture that fuses static (backbone-intrinsic) and temporal (epidemiological snapshot) features with taxonomic embeddings.
 
 ---
 
@@ -27,7 +27,7 @@ Sovereign-X Pro predicts whether a plasmid backbone will spread to new countries
 
 ## Overview
 
-Antimicrobial resistance (AMR) spread via plasmids is a critical public health threat. Sovereign-X Pro addresses the problem of **predicting geographic spread of plasmid backbones** using:
+Antimicrobial resistance (AMR) spread via plasmids is a critical public health threat. BioSpread addresses the problem of **predicting geographic spread of plasmid backbones** using:
 
 - **Static features**: plasmid intrinsic properties (size, GC content, mobility, replicon types, etc.)
 - **Snapshot / temporal features**: time-varying epidemiological signals (country counts, host diversity, spread velocity, etc.)
@@ -41,7 +41,7 @@ The model is trained with a **leakage-free temporal disjoint split**: backbones 
 
 | Feature | Detail |
 |---|---|
-| **Dual-stream fusion** | Static expert (MLP) + Temporal expert (GRU+Attention) gated fusion |
+| **Dual-stream fusion** | Static encoder (MLP) + Temporal encoder (GRU+Attention) gated fusion |
 | **Multi-horizon output** | 3 hazard heads + per-timestep head + cold-start head |
 | **Cold-start handling** | Dedicated head for backbones with no temporal history |
 | **Post-training calibration** | Platt scaling (separate for main and cold-start paths) |
@@ -58,33 +58,33 @@ The model is trained with a **leakage-free temporal disjoint split**: backbones 
                           │  (5-level embeddings) │
                           └──────────┬───────────┘
                                      │
-          ┌──────────────────────────┼──────────────────────────┐
-          │                          │                          │
-   ┌──────▼──────┐           ┌──────▼──────┐                  │
-   │ Static Expert│           │Temporal Exp.│                  │
-   │   (MLP)     │           │(GRU+Attn)   │                  │
-   │ 128→64→32   │           │ 192 hidden  │                  │
-   └──────┬──────┘           └──────┬──────┘                  │
-          │                         │                         │
-          └──────────┬──────────────┘                         │
-                     │                                        │
-              ┌──────▼──────┐                          ┌──────▼──────┐
-              │  Gated Fusion│                          │Cold-Start   │
-              │   (softmax)  │                          │   Head      │
-              └──────┬──────┘                          └──────┬──────┘
-                     │                                        │
-          ┌──────────┼──────────┐                              │
-   ┌──────▼──┐ ┌──────▼──┐ ┌──▼───────┐                      │
-   │Hazard   │ │Count    │ │Per-timest│                      │
-   │Head (h3)│ │Head     │ │Hazard    │                      │
-   └─────────┘ └─────────┘ └──────────┘                      │
+           ┌─────────────────────────┼──────────────────────────┐
+           │                         │                          │
+    ┌──────▼──────┐          ┌──────▼──────┐                  │
+    │ Static Enc. │          │Temporal Enc.│                  │
+    │   (MLP)     │          │(GRU+Attn)   │                  │
+    │ 128→64→32   │          │ 192 hidden  │                  │
+    └──────┬──────┘          └──────┬──────┘                  │
+           │                        │                         │
+           └─────────┬──────────────┘                         │
+                      │                                        │
+               ┌──────▼──────┐                          ┌──────▼──────┐
+               │  Gated Fusion│                          │Cold-Start   │
+               │   (softmax)  │                          │   Head      │
+               └──────┬──────┘                          └──────┬──────┘
+                      │                                        │
+           ┌──────────┼──────────┐                              │
+    ┌──────▼──┐ ┌──────▼──┐ ┌──▼───────┐                      │
+    │Hazard   │ │Count    │ │Per-timest│                      │
+    │Head (h3)│ │Head     │ │Hazard    │                      │
+    └─────────┘ └─────────┘ └──────────┘                      │
 ```
 
 ### Model Components
 
 - **TaxonomyEncoder**: 5 separate embedding tables (phylum→genus), each of dimension `taxonomy_embed_dim`, concatenated → dropout
-- **StaticExpert**: MLP with ReLU+Dropout, output `static_dim` (128), with learned gating
-- **TemporalExpert**: Input projection → bidirectional GRU → self-attention → `temporal_dim` (128)
+- **StaticEncoder**: MLP with ReLU+Dropout, output `static_dim` (128), with learned gating
+- **TemporalEncoder**: Input projection → GRU → self-attention → `temporal_dim` (128)
 - **FusionGate**: Softmax over static and temporal representations
 - **HazardHead**: MLP → 3-horizon logits
 - **CountHead**: 2-layer MLP → log1p(count) prediction
@@ -135,8 +135,8 @@ make install
 ### Docker
 
 ```bash
-docker build -t biospread-sovereign .
-docker run -p 8000:8000 biospread-sovereign
+docker build -t biospread .
+docker run -p 8000:8000 biospread
 ```
 
 ---
@@ -148,9 +148,9 @@ docker run -p 8000:8000 biospread-sovereign
 Prepare features from raw plasmid backbone data:
 
 ```bash
-python -m bio_spread_reborn.cli.main sovereign-prepare \
+bio-spread prepare \
     --config config/default.yaml \
-    --output-dir data/sovereign_features
+    --output-dir data/features
 ```
 
 This generates:
@@ -163,26 +163,26 @@ This generates:
 ### Training
 
 ```bash
-python -m bio_spread_reborn.cli.main train \
+bio-spread train \
     --config config/default.yaml \
-    --feature-dir data/sovereign_features
+    --feature-dir data/features
 
 # Or using Make
 make train
 ```
 
 Training outputs:
-- `artifacts/SX_<timestamp>/best_model.pt` — best model checkpoint
-- `artifacts/SX_<timestamp>/metrics.json` — validation metrics
+- `artifacts/BS_<timestamp>/best_model.pt` — best model checkpoint
+- `artifacts/BS_<timestamp>/metrics.json` — validation metrics
 - Platt scalers stored in checkpoint
 
 ### Evaluation
 
 ```bash
-python -m bio_spread_reborn.cli.main evaluate \
-    --model-path artifacts/SX_<timestamp>/best_model.pt \
+bio-spread evaluate \
+    --model-path artifacts/BS_<timestamp>/best_model.pt \
     --config config/default.yaml \
-    --feature-dir data/sovereign_features
+    --feature-dir data/features
 ```
 
 ### Inference API
@@ -196,7 +196,6 @@ uvicorn src.api:app --host 0.0.0.0 --port 8000
 **Endpoints:**
 
 - `POST /predict` — Predict spread risk for a single backbone
-- `POST /batch-predict` — Batch prediction
 - `GET /health` — Health check
 
 Request format:
@@ -241,15 +240,15 @@ Request format:
 
 ## Configuration
 
-All configurable parameters are in `config/default.yaml` and validated via Pydantic schemas in `src/bio_spread_reborn/config/schema.py`.
+All configurable parameters are in `config/default.yaml` and validated via Pydantic schemas in `src/bio_spread/config/schema.py`.
 
 | Section | Key | Default | Description |
 |---|---|---|---|
 | **data** | `backbones_path` | `data/.../plasmid_backbones.tsv` | Input plasmid backbone records |
 | | `split_year` | 2020 | Temporal split cutoff year |
 | | `spread_horizon` | 3 | Prediction horizon in years |
-| **model** | `static_dim` | 128 | Static expert output dimension |
-| | `temporal_dim` | 128 | Temporal expert projection dimension |
+| **model** | `static_dim` | 128 | Static encoder output dimension |
+| | `temporal_dim` | 128 | Temporal encoder projection dimension |
 | | `gru_hidden` | 192 | GRU hidden size |
 | | `gru_layers` | 2 | Number of GRU layers |
 | | `taxonomy_embed_dim` | 8 | Per-level embedding dimension |
@@ -297,9 +296,9 @@ Detailed column documentation in [DATA_CODEX.md](./DATA_CODEX.md).
 
 ### Generated Features
 
-- `data/sovereign_features/sequences.tsv` — 33-column feature matrix, 21,520 sequences
-- `data/sovereign_features/split.json` — Train: 5,620 / Val: 942 / Test: 279 backbones
-- `data/sovereign_features/taxonomy_vocab.json` — 5-level taxonomy: 35 phyla, 66 classes, 145 orders, 325 families, 915 genera
+- `data/features/sequences.tsv` — 33-column feature matrix, 21,520 sequences
+- `data/features/split.json` — Train: 5,620 / Val: 942 / Test: 279 backbones
+- `data/features/taxonomy_vocab.json` — 5-level taxonomy: 35 phyla, 66 classes, 145 orders, 325 families, 915 genera
 
 ### Test Fixtures
 
@@ -317,7 +316,7 @@ Detailed column documentation in [DATA_CODEX.md](./DATA_CODEX.md).
 pytest tests/ -v
 
 # With coverage
-pytest --cov=src/bio_spread_reborn --cov-report=term-missing tests/
+pytest --cov=src/bio_spread --cov-report=term-missing tests/
 
 # Using Make
 make test
@@ -344,7 +343,7 @@ GitHub Actions workflow in `.github/workflows/ci.yml`:
 ```
 bio_spread_project/
 ├── src/
-│   └── bio_spread_reborn/
+│   └── bio_spread/
 │       ├── cli/main.py           # CLI entry point (train, prepare, eval)
 │       ├── config/schema.py      # Pydantic config validation
 │       ├── data/
@@ -352,7 +351,7 @@ bio_spread_project/
 │       │   └── snapshot.py       # Feature engineering, sequence building
 │       ├── models/
 │       │   ├── components.py     # MLP, ColdStartHead
-│       │   ├── sovereign.py      # SovereignX model architecture
+│       │   ├── sovereign.py      # BioSpreadModel architecture
 │       │   ├── trainer.py        # Training loop, Platt calibration
 │       │   └── __init__.py       # create_model factory
 │       └── utils/
@@ -367,7 +366,7 @@ bio_spread_project/
 ├── config/
 │   └── default.yaml              # Default configuration
 ├── data/
-│   └── sovereign_features/       # Generated features (gitignored)
+│   └── features/                 # Generated features (gitignored)
 ├── DATA_CODEX.md                 # Column & data documentation
 ├── FULL_TRAINING_REPORT.md       # Training results report
 ├── README.md                     # This file
@@ -380,11 +379,11 @@ bio_spread_project/
 
 ## Citation
 
-If you use Sovereign-X Pro in your research, please cite:
+If you use BioSpread in your research, please cite:
 
 ```bibtex
-@software{sovereign_x_pro,
-  title = {BioSpread Sovereign-X Pro: Time-Aware Learning for Plasmid Spread Prediction},
+@software{bio_spread,
+  title = {BioSpread: Time-Aware Learning for Plasmid Spread Prediction},
   author = {BioSpread Team},
   year = {2025},
   url = {https://github.com/umutgun/bio_spread_project}

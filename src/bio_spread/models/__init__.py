@@ -51,6 +51,22 @@ def create_model(
         use_cross_attention=model_cfg.use_cross_attention,
         categorical_vocab_sizes=cat_vocab_sizes,
         categorical_embed_dim=model_cfg.categorical_embed_dim,
+        # Sovereign-X Ultra flags
+        use_mamba=model_cfg.use_mamba,
+        use_hyperbolic=model_cfg.use_hyperbolic,
+        use_evidential=model_cfg.use_evidential,
+        use_retrieval=model_cfg.use_retrieval,
+        mamba_d_state=model_cfg.mamba_d_state,
+        mamba_n_layers=model_cfg.mamba_n_layers,
+        conv_kernel=model_cfg.conv_kernel,
+        tax_dim_per_level=model_cfg.tax_dim_per_level,
+        hyperbolic_curvature=model_cfg.hyperbolic_curvature,
+        prototype_dim=model_cfg.prototypes,
+        prototype_k=model_cfg.prototype_k,
+        ema_alpha=model_cfg.ema_alpha,
+        edl_lambda_kl=model_cfg.edl_lambda_kl,
+        edl_target_smoothing=model_cfg.edl_target_smoothing,
+        fit_heads=model_cfg.fit_heads,
     )
 
 

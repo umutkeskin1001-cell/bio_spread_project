@@ -5,7 +5,7 @@ data:
   test_backbone_frac: 0.15
   spread_horizon: 3
   require_country_history: true
-  feature_dir: "data/sovereign_features"
+  feature_dir: "data/features"
 
 model:
   static_dim: 128

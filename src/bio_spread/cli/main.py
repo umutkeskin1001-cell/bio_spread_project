@@ -152,7 +152,7 @@ def train(config: str, feature_dir: str):
     np.random.shuffle(val_bids)
     n_val = len(val_bids)
     n_cal_temp = max(1, n_val // 7)
-    n_cal_cold = max(1, n_val // 7)
+    n_cal_cold = max(1, n_val // 5)
     cal_temp_bids = set(val_bids[:n_cal_temp])
     cal_cold_bids = set(val_bids[n_cal_temp : n_cal_temp + n_cal_cold])
     early_stop_bids = set(val_bids[n_cal_temp + n_cal_cold :])
@@ -249,11 +249,15 @@ def train(config: str, feature_dir: str):
         temporal_masking_prob=cfg.training.temporal_masking_prob,
         gaussian_noise_std=cfg.training.gaussian_noise_std,
         gate_entropy_target=cfg.training.gate_entropy_target,
+        kd_temperature=cfg.training.kd_temperature,
         calibrate=cfg.training.calibrate,
         calibrate_cold=cfg.training.calibrate_cold,
         use_adaptive_loss=cfg.training.use_adaptive_loss,
         use_hard_negative_mining=cfg.training.use_hard_negative_mining,
         use_curriculum=cfg.training.use_curriculum,
+        use_cagrad=cfg.model.use_cagrad,
+        cagrad_c=cfg.model.cagrad_c,
+        lambda_prior=cfg.training.lambda_prior,
     )
 
     logger.info(

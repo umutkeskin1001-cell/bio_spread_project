@@ -1,10 +1,10 @@
 """
-Expanding Window Temporal Cross-Validation for Sovereign-X Pro.
+Expanding Window Temporal Cross-Validation for BioSpread.
 
-Uses the SovereignSequenceDataset and SovereignX model from the current codebase.
+Uses the SequenceDataset and BioSpreadModel from the current codebase.
 """
-import sys
 import os
+import sys
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
@@ -17,26 +17,26 @@ import polars as pl
 import torch
 from torch.utils.data import DataLoader
 
-from bio_spread_reborn.utils.config import load_config
-from bio_spread_reborn.data.dataset import (
-    SovereignSequenceDataset, sequence_collate, SequenceBatchSampler,
-    fit_normalizers, fit_static_normalizers, load_normalizers,
-    SNAPSHOT_FEATURE_COLS, STATIC_COLS,
+from bio_spread.data.dataset import (
+    SequenceDataset,
+    fit_normalizers,
+    fit_static_normalizers,
+    sequence_collate,
 )
-from bio_spread_reborn.data.snapshot import build_sequences, disjoint_backbone_split, load_taxonomy_vocab
-from bio_spread_reborn.models import create_model
-from bio_spread_reborn.models.trainer import SovereignXTrainer
-from bio_spread_reborn.utils.config import set_seed
+from bio_spread.data.snapshot import load_taxonomy_vocab
+from bio_spread.models import create_model
+from bio_spread.models.trainer import BioSpreadTrainer
+from bio_spread.utils.config import load_config, set_seed
 
 logger = logging.getLogger(__name__)
 
 
 def expanding_window_cv(
     config_path="config/default.yaml",
-    feature_dir="data/sovereign_features",
+    feature_dir="data/features",
     min_train_years=5,
 ):
-    """Run expanding window CV on Sovereign-X Pro.
+    """Run expanding window CV on BioSpread.
 
     Uses precomputed sequences and split from ``feature_dir``.
     """
@@ -68,23 +68,11 @@ def expanding_window_cv(
     if tax_vocab_path.exists():
         tax_vocab = load_taxonomy_vocab(tax_vocab_path)
 
-    # Normalizers (precomputed on train only)
-    norm_path = feature_dir / "normalizers.npz"
-    static_norm_path = feature_dir / "static_normalizers.npz"
-    if norm_path.exists():
-        normalizer = load_normalizers(norm_path)
-    else:
-        normalizer = (np.zeros(len(SNAPSHOT_FEATURE_COLS)), np.ones(len(SNAPSHOT_FEATURE_COLS)))
-    if static_norm_path.exists():
-        static_normalizer = load_normalizers(static_norm_path)
-    else:
-        static_normalizer = (np.zeros(len(STATIC_COLS)), np.ones(len(STATIC_COLS)))
-
     # Determine years
     years = sorted(df["year"].unique().to_list())
     if len(years) < min_train_years + 1:
         logger.error("Need at least %d years for CV, only have %d",
-                     min_train_years + 1, len(years))
+                      min_train_years + 1, len(years))
         return []
 
     aucs = []
@@ -96,21 +84,27 @@ def expanding_window_cv(
         train_years = years[:i]
         val_year = years[i]
 
-        train_df = df.filter(pl.col("year").is_in(train_years))
+        train_df = df.filter(pl.col("backbone_id").is_in(train_ids) & pl.col("year").is_in(train_years))
         val_df = df.filter(pl.col("year") == val_year)
 
         if train_df.is_empty() or val_df.is_empty():
             continue
 
+        # Fit normalizers on THIS fold's training data only (no leakage)
+        seq_means, seq_stds = fit_normalizers(train_df)
+        static_means, static_stds = fit_static_normalizers(train_df)
+
         # Build datasets
-        train_ds = SovereignSequenceDataset(
+        train_ds = SequenceDataset(
             train_df, list(train_ids), max_seq_len=cfg.model.max_seq_len,
-            normalizer=normalizer, static_normalizer=static_normalizer,
+            normalizer=(seq_means, seq_stds),
+            static_normalizer=(static_means, static_stds),
             use_taxonomy=tax_vocab is not None,
         )
-        val_ds = SovereignSequenceDataset(
+        val_ds = SequenceDataset(
             val_df, list(val_ids), max_seq_len=cfg.model.max_seq_len,
-            normalizer=normalizer, static_normalizer=static_normalizer,
+            normalizer=(seq_means, seq_stds),
+            static_normalizer=(static_means, static_stds),
             use_taxonomy=tax_vocab is not None,
         )
 
@@ -132,7 +126,7 @@ def expanding_window_cv(
         model = create_model(n_static, n_snapshot, cfg.model, taxonomy_vocab=tax_vocab)
 
 
-        trainer = SovereignXTrainer(
+        trainer = BioSpreadTrainer(
             model, device=device,
             lr=cfg.training.lr, weight_decay=cfg.training.weight_decay,
             epochs=cfg.training.epochs, patience=cfg.training.patience,

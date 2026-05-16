@@ -1,0 +1,16 @@
+.git
+__pycache__
+*.pyc
+*.egg-info
+.venv
+venv
+.mypy_cache
+.ruff_cache
+.pytest_cache
+artifacts/
+data/
+scratch/
+reports/
+*.tsv
+*.parquet
+*.docx

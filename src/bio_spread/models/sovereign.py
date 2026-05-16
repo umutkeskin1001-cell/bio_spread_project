@@ -8,13 +8,20 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from bio_spread.models.components import (
+    MLP,
     CategoricalEncoder,
     ColdStartEncoder,
     CountHead,
+    EvidentialHazardHead,
+    FiTBlock,
     GatedResidualMLP,
-    MLP,
+    HybridTemporalEncoder,
+    HyperbolicFusionGate,
+    PoincareTaxonomyEncoder,
     PretrainHead,
     TaxonomyEncoder,
+    TemporalPriorPredictor,
+    UncertaintyProtoRetriever,
 )
 
 
@@ -27,6 +34,15 @@ class ModelOutput:
     fused: torch.Tensor
     gate_weights: torch.Tensor
     mask: torch.Tensor
+    # Sovereign-X Ultra fields
+    alpha_pos: torch.Tensor | None = None
+    epistemic_var: torch.Tensor | None = None
+    routing_weight: torch.Tensor | None = None
+    h_static: torch.Tensor | None = None
+    h_temporal: torch.Tensor | None = None
+    h_cold: torch.Tensor | None = None
+    cold_input: torch.Tensor | None = None
+    cold_prior: torch.Tensor | None = None
 
 
 class StaticEncoder(nn.Module):
@@ -39,50 +55,6 @@ class StaticEncoder(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.encoder(x)
-
-
-class TemporalEncoder(nn.Module):
-    def __init__(
-        self, input_dim: int, hidden_dim: int = 192, num_layers: int = 2, max_seq_len: int = 50, dropout: float = 0.15
-    ):
-        super().__init__()
-        self.input_proj = nn.Linear(input_dim, hidden_dim)
-        self.gru = nn.GRU(
-            hidden_dim, hidden_dim, num_layers=num_layers, batch_first=True,
-            dropout=dropout if num_layers > 1 else 0.0,
-        )
-        self.attn = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.Tanh(),
-            nn.Linear(hidden_dim // 2, 1),
-        )
-        self.null_embed = nn.Parameter(torch.randn(1, hidden_dim) * 0.01)
-
-    def forward(
-        self, x: torch.Tensor, mask: torch.Tensor, temporal_mask: torch.Tensor | None = None
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        B, L, _ = x.shape
-        h = self.input_proj(x)
-
-        lens = mask.sum(dim=1).long()
-        if lens.max() > 0:
-            packed = nn.utils.rnn.pack_padded_sequence(h, lens.cpu(), batch_first=True, enforce_sorted=False)
-            packed_out, _ = self.gru(packed)
-            h_all, _ = nn.utils.rnn.pad_packed_sequence(packed_out, batch_first=True, total_length=L)
-        else:
-            h_all, _ = self.gru(h)
-
-        scores = self.attn(h_all).squeeze(-1)
-        scores = scores.masked_fill(~mask.bool(), -1e9)
-        weights = F.softmax(scores, dim=-1)
-        h_pooled = (h_all * weights.unsqueeze(-1)).sum(dim=1)
-
-        if temporal_mask is not None and temporal_mask.any():
-            mask_t = temporal_mask.unsqueeze(1).unsqueeze(-1)
-            h_all = torch.where(mask_t, self.null_embed.unsqueeze(0), h_all)
-            h_pooled = torch.where(temporal_mask.unsqueeze(-1), self.null_embed, h_pooled)
-
-        return h_all, h_pooled
 
 
 class FusionGate(nn.Module):
@@ -150,10 +122,33 @@ class BioSpreadModel(nn.Module):
         use_cross_attention: bool = False,
         categorical_vocab_sizes: dict[str, int] | None = None,
         categorical_embed_dim: int = 16,
+        # Sovereign-X Ultra flags
+        use_mamba: bool = False,
+        use_hyperbolic: bool = False,
+        use_evidential: bool = False,
+        use_retrieval: bool = False,
+        mamba_d_state: int = 16,
+        mamba_n_layers: int = 4,
+        conv_kernel: int = 3,
+        tax_dim_per_level: int = 16,
+        hyperbolic_curvature: float = -1.0,
+        prototype_dim: int = 512,
+        prototype_k: int = 10,
+        ema_alpha: float = 0.995,
+        edl_lambda_kl: float = 0.1,
+        edl_target_smoothing: float = 0.05,
+        fit_heads: int = 2,
     ):
         super().__init__()
         self.use_taxonomy = taxonomy_vocab_sizes is not None and len(taxonomy_vocab_sizes) > 0
         self.use_cross_attention = use_cross_attention
+        self.use_mamba = use_mamba
+        self.use_hyperbolic = use_hyperbolic
+        self.use_evidential = use_evidential
+        self.use_retrieval = use_retrieval
+        self.n_hazard = n_hazard
+        self.static_dim = static_dim
+        self.temporal_dim = temporal_dim
 
         self.use_categorical = categorical_vocab_sizes is not None and len(categorical_vocab_sizes) > 0
         if self.use_categorical:
@@ -164,23 +159,51 @@ class BioSpreadModel(nn.Module):
         else:
             cat_embed_dim = 0
 
+        # Taxonomy encoder (Euclidean or Poincaré)
         if self.use_taxonomy:
-            self.taxonomy_encoder = TaxonomyEncoder(taxonomy_vocab_sizes, taxonomy_embed_dim, dropout)
-            static_input_dim = n_static + self.taxonomy_encoder.output_dim
+            if use_hyperbolic:
+                self.taxonomy_encoder = PoincareTaxonomyEncoder(
+                    taxonomy_vocab_sizes, tax_dim_per_level, dropout, hyperbolic_curvature
+                )
+            else:
+                self.taxonomy_encoder = TaxonomyEncoder(taxonomy_vocab_sizes, taxonomy_embed_dim, dropout)
+            tax_embed_total = self.taxonomy_encoder.output_dim
+            static_input_dim = n_static + tax_embed_total
         else:
+            tax_embed_total = 0
             static_input_dim = n_static
 
-        self.static_encoder = StaticEncoder(static_input_dim, static_dim, dropout)
-        self.temporal_encoder = TemporalEncoder(n_snapshot, hidden_dim, num_layers, max_seq_len, dropout)
+        # Static encoder: GatedResidualMLP or FiT
+        if use_hyperbolic:
+            self.static_encoder = FiTBlock(static_input_dim, static_dim, fit_heads, dropout)
+        else:
+            self.static_encoder = StaticEncoder(static_input_dim, static_dim, dropout)
+
+        # Temporal encoder (GRU or Mamba-2 + CausalConv)
+        self.temporal_encoder = HybridTemporalEncoder(
+            n_snapshot, hidden_dim, num_layers, max_seq_len, dropout,
+            use_mamba, mamba_d_state, mamba_n_layers, conv_kernel,
+        )
         self.temporal_proj = nn.Linear(hidden_dim, temporal_dim)
 
-        self.gate = FusionGate(static_dim, temporal_dim, use_cross_attention)
+        # Fusion gate (Euclidean or Hyperbolic)
+        if use_hyperbolic:
+            self.gate = HyperbolicFusionGate(static_dim, temporal_dim, hyperbolic_curvature, dropout)
+        else:
+            self.gate = FusionGate(static_dim, temporal_dim, use_cross_attention)
 
         fused_dim = static_dim
-        self.hazard_proj = MLP([fused_dim, fused_dim // 2, fused_dim // 2], dropout=dropout)
-        self.hazard_head = nn.Linear(fused_dim // 2, n_hazard)
-        self.count_head = CountHead(fused_dim // 2)
 
+        # Hazard head (normal or evidential)
+        if use_evidential:
+            self.hazard_head = EvidentialHazardHead(fused_dim, n_hazard, edl_lambda_kl, edl_target_smoothing)
+            self.count_head = CountHead(fused_dim)
+        else:
+            self.hazard_proj = MLP([fused_dim, fused_dim // 2, fused_dim // 2], dropout=dropout)
+            self.hazard_head = nn.Linear(fused_dim // 2, n_hazard)
+            self.count_head = CountHead(fused_dim // 2)
+
+        # Per-timestep head
         self.timestep_head = nn.Sequential(
             nn.Linear(static_dim + temporal_dim, static_dim // 2),
             nn.ReLU(),
@@ -188,15 +211,23 @@ class BioSpreadModel(nn.Module):
             nn.Linear(static_dim // 2, n_hazard),
         )
 
-        tax_embed_dim_total = taxonomy_embed_dim * len(taxonomy_vocab_sizes) if self.use_taxonomy else 0
+        # Cold-start encoder (uses z_static = static encoder output)
+        self.cold_prior_predictor = TemporalPriorPredictor(static_dim)
+        cold_input_dim = static_dim * 2 + tax_embed_total + cat_embed_dim
         self.cold_start_encoder = ColdStartEncoder(
-            static_dim=n_static,
-            tax_embed_dim=tax_embed_dim_total,
-            cat_embed_dim=cat_embed_dim,
-            hidden_dim=max(static_dim * 2, 256),
+            input_dim=cold_input_dim,
             n_hazard=n_hazard,
             dropout=dropout,
         )
+
+        # Uncertainty-guided prototypical retrieval (cold path)
+        if use_retrieval:
+            cold_query_dim = static_dim * 2 + tax_embed_total + cat_embed_dim
+            self.retriever = UncertaintyProtoRetriever(
+                cold_query_dim, n_hazard, prototype_k, ema_alpha, prototype_dim, static_dim,
+            )
+            self.routing_tau = nn.Parameter(torch.ones(1) * 2.0)
+            self.routing_thr = nn.Parameter(torch.tensor(0.5))
 
         self.pretrain_head: PretrainHead | None = None
 
@@ -214,6 +245,7 @@ class BioSpreadModel(nn.Module):
     ) -> ModelOutput:
         B, L = snapshots.shape[:2]
 
+        # --- Taxonomy encoding ---
         tax_emb = None
         if self.use_taxonomy and taxonomy_idxs is not None:
             tax_emb, _ = self.taxonomy_encoder(taxonomy_idxs)
@@ -222,20 +254,35 @@ class BioSpreadModel(nn.Module):
             static_input = static
         z_static = self.static_encoder(static_input)
 
+        # --- Temporal encoding ---
         h_all, h_pooled = self.temporal_encoder(snapshots, mask, temporal_mask)
 
+        # --- Per-timestep supervision ---
         z_static_exp = z_static.unsqueeze(1).expand(-1, L, -1)
         h_all_proj = self.temporal_proj(h_all)
         ts_input = torch.cat([z_static_exp, h_all_proj], dim=-1)
         hazard_logits_all = self.timestep_head(ts_input)
 
+        # --- Fusion ---
         h_pooled_proj = self.temporal_proj(h_pooled)
         fused, gate_weights = self.gate(z_static, h_pooled_proj, h_all_proj, mask)
-        h = self.hazard_proj(fused)
-        hazard_logits = self.hazard_head(h)
-        count_logits = self.count_head(h)
 
-        cold_input_parts = [static]
+        # --- Hazard heads ---
+        if self.use_evidential:
+            expected_prob, alpha_pos, epistemic_var = self.hazard_head(fused)
+            hazard_logits = torch.logit(expected_prob.clamp(1e-7, 1 - 1e-7))
+            count_logits = self.count_head(fused)
+        else:
+            h = self.hazard_proj(fused)
+            hazard_logits = self.hazard_head(h)
+            count_logits = self.count_head(h)
+            alpha_pos = None
+            epistemic_var = None
+
+        # --- Cold-start path (z_static + temporal prior + taxonomy) ---
+        cold_prior_pred = self.cold_prior_predictor(z_static)
+        cold_prior_pred_d = cold_prior_pred.detach()
+        cold_input_parts = [z_static, cold_prior_pred_d]
         if tax_emb is not None:
             cold_input_parts.append(tax_emb)
         if self.use_categorical and cat_inputs is not None:
@@ -243,6 +290,21 @@ class BioSpreadModel(nn.Module):
             cold_input_parts.append(cat_emb)
         cold_input = torch.cat(cold_input_parts, dim=-1)
         cold_logits = self.cold_start_encoder(cold_input)
+
+        # --- Retrieval-augmented cold path (if uncertain) ---
+        h_cold = None
+        routing_weight = None
+        if self.use_retrieval:
+            ret_logits = self.retriever(cold_input)
+            if self.use_evidential and epistemic_var is not None:
+                sigma_epi = epistemic_var.mean(dim=-1)
+                route_w = torch.sigmoid(self.routing_tau * (sigma_epi - self.routing_thr))
+                final_logits = (1 - route_w).unsqueeze(-1) * hazard_logits + route_w.unsqueeze(-1) * ret_logits
+                routing_weight = route_w
+                if temporal_mask is not None:
+                    final_logits = torch.where(temporal_mask.unsqueeze(-1), cold_logits, final_logits)
+                hazard_logits = final_logits
+            h_cold = ret_logits
 
         return ModelOutput(
             hazard_logits=hazard_logits,
@@ -252,6 +314,14 @@ class BioSpreadModel(nn.Module):
             fused=fused,
             gate_weights=gate_weights,
             mask=mask,
+            alpha_pos=alpha_pos,
+            epistemic_var=epistemic_var,
+            routing_weight=routing_weight,
+            h_static=z_static,
+            h_temporal=h_pooled,
+            h_cold=h_cold,
+            cold_input=cold_input,
+            cold_prior=cold_prior_pred,
         )
 
     def get_embedding(

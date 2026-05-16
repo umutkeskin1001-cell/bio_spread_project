@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from typing import Dict, Optional
+from pathlib import Path
+from typing import Dict, Optional, Tuple
 
 import numpy as np
+import torch
 from sklearn.metrics import (
     average_precision_score,
     brier_score_loss,
@@ -12,7 +14,6 @@ from sklearn.metrics import (
     recall_score,
     roc_auc_score,
 )
-from sklearn.utils import resample
 
 
 def classification_metrics(y_true: np.ndarray, y_prob: np.ndarray, threshold: float = 0.5) -> Dict:
@@ -91,3 +92,70 @@ def bootstrap_metrics(
         "ci_high": float(min(1, np.percentile(auc_scores, p_high))),
         "std": float(auc_scores.std()),
     }
+
+
+class AdaptiveConformalWrapper:
+    def __init__(self, alpha: float = 0.1, eta: float = 0.05, beta: float = 0.9,
+                 q_init: float = 1.0, max_q: float = 2.0, device: str = "cpu"):
+        self.alpha = alpha
+        self.eta = eta
+        self.beta = beta
+        self.q = q_init
+        self.max_q = max_q
+        self.device = device
+        self.n_updates = 0
+
+    def update(self, error: float) -> None:
+        self.q = self.q + self.eta * (self.alpha - error)
+        self.q = max(0.01, min(self.q, self.max_q))
+        self.n_updates += 1
+
+    @torch.no_grad()
+    def get_interval(self, probs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        q = min(self.q, 1.0)
+        lower = (probs - q / 2).clamp(min=0.0)
+        upper = (probs + q / 2).clamp(max=1.0)
+        return lower, upper
+
+    def get_prediction_set(self, probs: torch.Tensor) -> torch.Tensor:
+        q = min(self.q, 1.0)
+        include_one = probs >= (1.0 - q)
+        include_zero = probs <= q
+        sets = torch.stack([include_zero, include_one], dim=-1)
+        return sets
+
+    def compute_error(self, probs: torch.Tensor, targets: torch.Tensor) -> float:
+        self.get_prediction_set(probs)
+        errors = []
+        for h in range(min(probs.size(-1) if probs.dim() > 1 else 1, 3)):
+            p = probs[..., h] if probs.dim() > 1 else probs
+            t = targets[..., h] if targets.dim() > 1 else targets
+            valid = t >= 0
+            if valid.any():
+                p_v = p[valid]
+                t_v = t[valid]
+                q = min(self.q, 1.0)
+                include_one = p_v >= (1.0 - q)
+                include_zero = p_v <= q
+                err = ~((t_v == 1) & include_one) & ~((t_v == 0) & include_zero)
+                errors.append(err.float().mean().item())
+        return float(np.mean(errors)) if errors else 0.0
+
+    def state_dict(self) -> dict:
+        return {"q": self.q, "eta": self.eta, "alpha": self.alpha, "n_updates": self.n_updates}
+
+    def load_state_dict(self, state: dict) -> None:
+        self.q = state.get("q", self.q)
+        self.eta = state.get("eta", self.eta)
+        self.alpha = state.get("alpha", self.alpha)
+        self.n_updates = state.get("n_updates", 0)
+
+    def save(self, path: Path) -> None:
+        torch.save(self.state_dict(), path)
+
+    @classmethod
+    def load(cls, path: Path, **kwargs) -> "AdaptiveConformalWrapper":
+        state = torch.load(path, map_location="cpu", weights_only=True)
+        wrapper = cls(**kwargs)
+        wrapper.load_state_dict(state)
+        return wrapper

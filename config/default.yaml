@@ -10,7 +10,7 @@ data:
 model:
   static_dim: 128          # static encoder output
   temporal_dim: 128        # temporal encoder projection
-  gru_hidden: 192          # GRU hidden dimension
+  gru_hidden: 192          # GRU hidden dimension (fallback when use_mamba=False)
   gru_layers: 2            # GRU layers
   dropout: 0.15
   max_seq_len: 45          # padded sequence length
@@ -19,6 +19,49 @@ model:
   categorical_embed_dim: 16  # per-categorical-feature embedding dim
   use_cross_attention: true   # static attends over temporal sequence
   use_enhanced_cold_start: true  # cold-start head gets taxonomy embedding
+
+  # Sovereign-X Ultra feature flags (all default false = backward compatible)
+  use_mamba: false
+  use_hyperbolic: false
+  use_evidential: true
+  use_cagrad: true
+  use_retrieval: true
+
+  # Mamba-2 + CausalConv hyperparams
+  mamba_d_state: 16
+  mamba_n_layers: 4
+  conv_kernel: 3
+
+  # Hyperbolic taxonomy hyperparams
+  tax_dim_per_level: 16
+  hyperbolic_curvature: -1.0
+
+  # CAGrad hyperparams
+  cagrad_c: 0.4
+
+  # Prototypical retrieval hyperparams
+  prototypes: 512
+  prototype_k: 10
+  ema_alpha: 0.995
+
+  # EDL hyperparams
+  edl_lambda_kl: 0.1
+  edl_target_smoothing: 0.05
+
+  # Phylogenetic smoothness
+  phylo_smooth_tau: 0.5
+  phylo_smooth_k: 24
+
+  # FiT (Feature Interaction Transformer)
+  fit_heads: 2
+
+  # SSL pretraining
+  ssl_pretrain_epochs: 15
+  ssl_mask_ratio: 0.3
+
+  # ACI
+  aci_eta: 0.05
+  aci_alpha: 0.1
 
 training:
   batch_size: 64
@@ -30,13 +73,16 @@ training:
   grad_clip: 1.0
   lambda_count: 0.15
   lambda_rank: 0.10
-  lambda_cold: 0.25          # cold-start auxiliary loss weight
+  lambda_cold: 0.5           # cold-start auxiliary loss weight
   lambda_all: 1.0            # per-timestep (all snapshots) loss weight
   lambda_gate: 0.05          # gate entropy penalty weight
+  lambda_kd: 1.0             # knowledge distillation weight for cold-start
 
   temporal_masking_prob: 0.3 # fraction of batch to mask temporal features
   gaussian_noise_std: 0.05   # std of noise added to temporal features
   gate_entropy_target: 0.4   # min entropy before penalty kicks in
+  kd_temperature: 1.0        # knowledge distillation temperature (1.0 = no softening)
+  lambda_prior: 0.5          # temporal prior prediction loss weight
   calibrate: true            # post-training Platt scaling
   calibrate_cold: true       # separate Platt scaler for cold-start
   use_adaptive_loss: true    # learn loss weights automatically

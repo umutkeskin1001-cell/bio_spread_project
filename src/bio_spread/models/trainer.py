@@ -13,7 +13,11 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
-from bio_spread.models.components import AdaptiveLossWeighting, PlattScaler
+from bio_spread.models.components import (
+    AdaptiveLossWeighting,
+    CAGradProjector,
+    PlattScaler,
+)
 from bio_spread.models.sovereign import BioSpreadModel, ModelOutput
 from bio_spread.utils.metrics import bootstrap_metrics, classification_metrics, expected_calibration_error
 
@@ -84,10 +88,15 @@ class BioSpreadTrainer:
         grad_clip: float = 1.0,
         lambda_count: float = 0.15,
         lambda_rank: float = 0.10,
-        lambda_cold: float = 0.25,
+        lambda_cold: float = 0.5,
         lambda_kd: float = 1.0,
+        kd_temperature: float = 1.0,
         lambda_all: float = 1.0,
         lambda_gate: float = 0.05,
+        lambda_edl: float = 1.0,
+        lambda_phylo: float = 0.01,
+        lambda_info_nce: float = 0.1,
+        lambda_prior: float = 0.05,
         temporal_masking_prob: float = 0.3,
         gaussian_noise_std: float = 0.05,
         gate_entropy_target: float = 0.4,
@@ -97,6 +106,10 @@ class BioSpreadTrainer:
         use_adaptive_loss: bool = False,
         use_hard_negative_mining: bool = False,
         use_curriculum: bool = False,
+        use_cagrad: bool = False,
+        cagrad_c: float = 0.4,
+        phylo_smooth_tau: float = 0.5,
+        phylo_smooth_k: int = 24,
     ):
         self.model = model.to(device)
         self.device = device
@@ -108,8 +121,13 @@ class BioSpreadTrainer:
         self.lambda_rank = lambda_rank
         self.lambda_cold = lambda_cold
         self.lambda_kd = lambda_kd
+        self.kd_temperature = kd_temperature
         self.lambda_all = lambda_all
         self.lambda_gate = lambda_gate
+        self.lambda_edl = lambda_edl
+        self.lambda_phylo = lambda_phylo
+        self.lambda_info_nce = lambda_info_nce
+        self.lambda_prior = lambda_prior
         self.temporal_masking_prob = temporal_masking_prob
         self.gaussian_noise_std = gaussian_noise_std
         self.gate_entropy_target = gate_entropy_target
@@ -118,21 +136,40 @@ class BioSpreadTrainer:
         self.use_adaptive_loss = use_adaptive_loss
         self.use_hard_negative_mining = use_hard_negative_mining
         self.use_curriculum = use_curriculum
+        self.use_cagrad = use_cagrad
+        self.cagrad_c = cagrad_c
+        self.phylo_smooth_tau = phylo_smooth_tau
+        self.phylo_smooth_k = phylo_smooth_k
 
         self.platt_scalers = nn.ModuleList([PlattScaler().to(device) for _ in range(3)])
         self.cold_platt_scalers = nn.ModuleList([PlattScaler().to(device) for _ in range(3)])
 
         self.base_lr = lr
-        self.optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+
+        # Separate param groups for hyperbolic vs standard optimizers
+        hyperbolic_params = []
+        standard_params = []
+        for name, param in model.named_parameters():
+            if "embeddings" in name and hasattr(model, "use_hyperbolic") and model.use_hyperbolic:
+                hyperbolic_params.append(param)
+            else:
+                standard_params.append(param)
+
+        param_groups = [{"params": standard_params, "lr": lr, "weight_decay": weight_decay}]
+        if hyperbolic_params:
+            param_groups.append({"params": hyperbolic_params, "lr": lr, "weight_decay": 0.0})
+
+        self.optimizer = optim.AdamW(param_groups)
         warmup_end = max(epochs - warmup_epochs, 1)
         self.scheduler = optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=warmup_end, eta_min=lr * 0.01)
         self.pos_weight = torch.full((3,), pos_weight or 1.0, device=device)
         self.loss_scale_factors = None
         self._zero = torch.tensor(0.0, device=self.device)
+        self._step_count = 0
 
         self.adaptive_loss: AdaptiveLossWeighting | None = None
         if use_adaptive_loss:
-            self.adaptive_loss = AdaptiveLossWeighting(n_losses=6).to(device)
+            self.adaptive_loss = AdaptiveLossWeighting(n_losses=9).to(device)
             self.optimizer.add_param_group({"params": self.adaptive_loss.parameters(), "lr": lr * 0.1})
 
     def _get_curriculum_params(self, epoch: int) -> dict:
@@ -142,11 +179,12 @@ class BioSpreadTrainer:
                 "lambda_cold": self.lambda_cold,
                 "lambda_kd": self.lambda_kd,
                 "lambda_rank": self.lambda_rank,
+                "lambda_edl": self.lambda_edl,
+                "lambda_phylo": self.lambda_phylo,
                 "noise_std": self.gaussian_noise_std,
                 "gate_entropy_target": self.gate_entropy_target,
+                "temporal_mask_pct": 0.0,
             }
-
-        progress = epoch / max(self.epochs, 1)
 
         if epoch <= 3:
             return {
@@ -154,28 +192,50 @@ class BioSpreadTrainer:
                 "lambda_cold": 0.0,
                 "lambda_kd": 0.0,
                 "lambda_rank": 0.0,
+                "lambda_edl": 0.0,
+                "lambda_phylo": 0.0,
                 "noise_std": 0.0,
                 "gate_entropy_target": 0.5,
+                "temporal_mask_pct": 0.0,
             }
         elif epoch <= 8:
             phase_progress = (epoch - 3) / 5
             return {
                 "temporal_masking_prob": 0.1 + 0.2 * phase_progress,
-                "lambda_cold": 0.1 + 0.15 * phase_progress,
+                "lambda_cold": 0.1 + 0.4 * phase_progress,
                 "lambda_kd": 0.2 * phase_progress,
                 "lambda_rank": 0.05,
+                "lambda_edl": 0.0,
+                "lambda_phylo": 0.0,
                 "noise_std": 0.02,
                 "gate_entropy_target": 0.4 * (1 - phase_progress * 0.5),
+                "temporal_mask_pct": 0.15 * phase_progress,
             }
-        else:
-            phase_progress = min((epoch - 8) / (self.epochs - 8), 1.0)
+        elif epoch <= 10:
+            phase_progress = (epoch - 8) / 2
             return {
-                "temporal_masking_prob": 0.3 + 0.3 * phase_progress,
-                "lambda_cold": 0.5,
+                "temporal_masking_prob": 0.3,
+                "lambda_cold": self.lambda_cold,
                 "lambda_kd": self.lambda_kd,
                 "lambda_rank": 0.15,
+                "lambda_edl": 0.5 * phase_progress,
+                "lambda_phylo": 0.0,
+                "noise_std": 0.05,
+                "gate_entropy_target": 0.2,
+                "temporal_mask_pct": 0.15 + 0.15 * phase_progress,
+            }
+        else:
+            phase_progress = min((epoch - 10) / (self.epochs - 10), 1.0)
+            return {
+                "temporal_masking_prob": 0.3 + 0.2 * phase_progress,
+                "lambda_cold": self.lambda_cold,
+                "lambda_kd": self.lambda_kd,
+                "lambda_rank": 0.15,
+                "lambda_edl": self.lambda_edl,
+                "lambda_phylo": self.lambda_phylo * phase_progress,
                 "noise_std": 0.05 + 0.03 * phase_progress,
                 "gate_entropy_target": 0.2 * (1 - phase_progress * 0.5),
+                "temporal_mask_pct": 0.3 + 0.2 * phase_progress,
             }
 
     def _get_adaptive_temporal_mask(
@@ -213,12 +273,25 @@ class BioSpreadTrainer:
         idx = (lengths - 1).clamp(min=0)
 
         last_targets = targets[range(B), idx]
-        loss_final = self._zero
-        for h in range(3):
-            loss_final = loss_final + hazard_masked_bce(
-                out.hazard_logits[:, h], last_targets[:, h], self.pos_weight[h:h+1]
-            )
 
+        # EDL loss or standard BCE
+        if self.model.use_evidential and out.alpha_pos is not None:
+            loss_edl = self._zero
+            for h in range(3):
+                valid = last_targets[:, h] >= 0
+                if valid.any():
+                    loss_edl = loss_edl + self.model.hazard_head.loss(
+                        out.alpha_pos[valid, h], last_targets[valid, h], self.pos_weight[h:h+1]
+                    )
+            loss_final = loss_edl
+        else:
+            loss_final = self._zero
+            for h in range(3):
+                loss_final = loss_final + hazard_masked_bce(
+                    out.hazard_logits[:, h], last_targets[:, h], self.pos_weight[h:h+1]
+                )
+
+        # Per-timestep BCE
         pad_free = mask.bool()
         loss_all = self._zero
         for h in range(3):
@@ -228,6 +301,7 @@ class BioSpreadTrainer:
                 self.pos_weight[h:h+1],
             )
 
+        # Cold-start loss
         loss_cold = self._zero
         if out.cold_logits is not None:
             if self.use_hard_negative_mining:
@@ -241,6 +315,7 @@ class BioSpreadTrainer:
                         out.cold_logits[:, h], last_targets[:, h], self.pos_weight[h:h+1]
                     )
 
+        # Knowledge distillation (teacher → cold path)
         loss_kd = self._zero
         if out.cold_logits is not None and not temporal_mask.all():
             teacher_probs = torch.sigmoid(out.hazard_logits.detach())
@@ -251,6 +326,7 @@ class BioSpreadTrainer:
                         out.cold_logits[valid, h], teacher_probs[valid, h], reduction="mean",
                     )
 
+        # Count loss (Huber)
         count_valid = count_targets >= 0
         loss_count = self._zero
         if count_valid.any():
@@ -260,6 +336,7 @@ class BioSpreadTrainer:
                 reduction="mean",
             )
 
+        # Ranking loss
         loss_rank = self._zero
         n_rank = 0
         for h in range(3):
@@ -270,20 +347,61 @@ class BioSpreadTrainer:
         if n_rank > 0:
             loss_rank = loss_rank / n_rank
 
+        # Gate entropy regularization
         progress = (epoch - 1) / max(self.epochs - 1, 1)
         current_gate_target = params["gate_entropy_target"] * (1 - progress) + 0.1 * progress
         gate_entropy = -(out.gate_weights * torch.log(out.gate_weights.clamp(min=1e-8))).sum(dim=1).mean()
         loss_gate = (current_gate_target - gate_entropy) ** 2
 
-        if self.use_adaptive_loss and self.adaptive_loss is not None:
-            losses_dict = {
-                "loss_final": loss_final,
-                "loss_all": loss_all,
-                "loss_cold": loss_cold,
-                "loss_count": loss_count,
-                "loss_rank": loss_rank,
-                "loss_gate": loss_gate,
+        # Phylogenetic smoothness loss
+        loss_phylo = self._zero
+        phylo_h = getattr(out, "h_static", None)
+        if params.get("lambda_phylo", 0) > 0 and phylo_h is not None and B >= 2:
+            h_norm = F.normalize(phylo_h, dim=-1)
+            sim = h_norm @ h_norm.T
+            k = min(self.phylo_smooth_k, B)
+            _, nn_idx = torch.topk(sim, k, dim=-1)
+            h_diff = phylo_h.unsqueeze(1) - phylo_h[nn_idx]
+            loss_phylo = (h_diff.norm(dim=-1) ** 2).mean()
+
+        # Temporal prior loss: cold_prior should match fused for warm samples
+        loss_prior = self._zero
+        cold_prior = getattr(out, "cold_prior", None)
+        if cold_prior is not None and out.fused is not None:
+            warm = ~temporal_mask if temporal_mask is not None else torch.ones(B, dtype=torch.bool, device=self.device)
+            if warm.any():
+                loss_prior = F.mse_loss(cold_prior[warm], out.fused[warm].detach())
+
+        # Combine losses
+        losses_dict = {
+            "loss_final": loss_final,
+            "loss_all": loss_all,
+            "loss_cold": loss_cold,
+            "loss_kd": loss_kd,
+            "loss_count": loss_count,
+            "loss_rank": loss_rank,
+            "loss_gate": loss_gate,
+            "loss_phylo": loss_phylo,
+            "loss_prior": loss_prior,
+        }
+
+        if self.use_cagrad and self.model.training and torch.is_grad_enabled():
+            sf = self.loss_scale_factors or {}
+            cagrad_losses = {
+                "loss_final": loss_final * sf.get("loss_final", 1.0),
+                "loss_all": self.lambda_all * loss_all * sf.get("loss_all", 1.0),
+                "loss_count": self.lambda_count * loss_count * sf.get("loss_count", 1.0),
+                "loss_rank": params["lambda_rank"] * loss_rank * sf.get("loss_rank", 1.0),
+                "loss_gate": self.lambda_gate * loss_gate * sf.get("loss_gate", 1.0),
+                "loss_phylo": params.get("lambda_phylo", 0) * loss_phylo * sf.get("loss_phylo", 1.0),
             }
+            base_total = CAGradProjector.apply(cagrad_losses, self.model, self.cagrad_c)
+            total = base_total + (
+                + params["lambda_cold"] * loss_cold * sf.get("loss_cold", 1.0)
+                + params["lambda_kd"] * loss_kd * sf.get("loss_kd", 1.0)
+                + self.lambda_prior * loss_prior * sf.get("loss_prior", 1.0)
+            )
+        elif self.use_adaptive_loss and self.adaptive_loss is not None:
             total = self.adaptive_loss(losses_dict)
         else:
             scale_factors = self.loss_scale_factors or {}
@@ -295,6 +413,8 @@ class BioSpreadTrainer:
                 + params["lambda_cold"] * loss_cold * scale_factors.get("loss_cold", 1.0)
                 + params["lambda_kd"] * loss_kd * scale_factors.get("loss_kd", 1.0)
                 + self.lambda_gate * loss_gate * scale_factors.get("loss_gate", 1.0)
+                + params.get("lambda_phylo", 0) * loss_phylo * scale_factors.get("loss_phylo", 1.0)
+                + self.lambda_prior * loss_prior * scale_factors.get("loss_prior", 1.0)
             )
 
         return {
@@ -305,6 +425,8 @@ class BioSpreadTrainer:
             "loss_count": loss_count,
             "loss_rank": loss_rank,
             "loss_gate": loss_gate,
+            "loss_phylo": loss_phylo,
+            "loss_prior": loss_prior,
             "total": total,
         }
 
@@ -318,6 +440,8 @@ class BioSpreadTrainer:
             "loss_count": 0.0,
             "loss_rank": 0.0,
             "loss_gate": 0.0,
+            "loss_phylo": 0.0,
+            "loss_prior": 0.0,
         }
         counts = {k: 0 for k in accum}
 
@@ -393,6 +517,7 @@ class BioSpreadTrainer:
                     pg["lr"] = self.base_lr * lr_scale
 
         for batch in train_loader:
+            self._step_count += 1
             static = batch["static"].to(self.device)
             seq = batch["seq"].to(self.device)
             mask = batch["mask"].to(self.device)
@@ -403,7 +528,7 @@ class BioSpreadTrainer:
             if taxonomy_idxs is not None:
                 taxonomy_idxs = taxonomy_idxs.to(self.device)
 
-            B = seq.shape[0]
+            seq.shape[0]
 
             seq_noised = seq
             if params["noise_std"] > 0:
@@ -412,6 +537,9 @@ class BioSpreadTrainer:
 
             temporal_mask = self._get_adaptive_temporal_mask(lengths, epoch)
             n_masked += temporal_mask.sum().item()
+
+            # Conditional CAGrad: every 5 steps or when loss ratio > 2
+            do_cagrad = self.use_cagrad and (self._step_count % 5 == 0)
 
             out = self.model(
                 static, seq_noised, mask, taxonomy_idxs, temporal_mask=temporal_mask,
@@ -425,20 +553,54 @@ class BioSpreadTrainer:
                 "mask": mask,
                 "temporal_mask": temporal_mask,
             }
-            losses = self._compute_all_losses(out, device_batch, epoch)
-            loss = losses["total"]
 
-            if not torch.isfinite(loss):
-                skipped_batches += 1
-                logger.warning("NaN/Inf loss encountered -- skipping batch")
+            if do_cagrad:
+                # Compute individual losses first to check ratio
+                with torch.no_grad():
+                    ratio_check = self._compute_all_losses(out, device_batch, epoch)
+                    loss_vals = {k: v.item() for k, v in ratio_check.items()
+                                 if k not in ("total",) and torch.isfinite(v)}
+                    if loss_vals:
+                        max_l = max(loss_vals.values())
+                        min_l = min(loss_vals.values())
+                        if not (max_l > 2.0 * min_l and min_l > 1e-8):
+                            do_cagrad = False
+
+            if do_cagrad:
                 self.optimizer.zero_grad(set_to_none=True)
-                continue
+                losses = self._compute_all_losses(out, device_batch, epoch)
+                loss = losses["total"]
+                if torch.isfinite(loss):
+                    loss.backward()
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
+                    self.optimizer.step()
+                    loss_total += loss.item()
+                else:
+                    skipped_batches += 1
+                    self.optimizer.zero_grad(set_to_none=True)
+            else:
+                losses = self._compute_all_losses(out, device_batch, epoch)
+                loss = losses["total"]
 
-            self.optimizer.zero_grad(set_to_none=True)
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
-            self.optimizer.step()
-            loss_total += loss.item()
+                if not torch.isfinite(loss):
+                    skipped_batches += 1
+                    logger.warning("NaN/Inf loss encountered -- skipping batch")
+                    self.optimizer.zero_grad(set_to_none=True)
+                    continue
+
+                self.optimizer.zero_grad(set_to_none=True)
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
+                self.optimizer.step()
+                loss_total += loss.item()
+
+            # Update retriever prototypes with cold input from this batch
+            if self.model.use_retrieval and hasattr(self.model, "retriever"):
+                cold_input = getattr(out, "cold_input", None)
+                if cold_input is not None:
+                    tgt_idx = (lengths - 1).clamp(min=0)
+                    retriever_targets = targets[range(targets.size(0)), tgt_idx]
+                    self.model.retriever.update(cold_input, retriever_targets)
 
         if epoch >= self.warmup_epochs:
             self.scheduler.step()
@@ -618,10 +780,7 @@ class BioSpreadTrainer:
             out = self.model(static, seq, mask, taxonomy_idxs, temporal_mask=temporal_mask,
                              cat_inputs=batch.get("cat_inputs"))
 
-            if force_temporal_mask and out.cold_logits is not None:
-                logits = out.cold_logits
-            else:
-                logits = out.hazard_logits
+            logits = out.hazard_logits
             probs = self._calibrated_probs(logits, use_cold_scaler=use_cold_scaler)
 
             B = static.size(0)
