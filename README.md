@@ -1,8 +1,8 @@
-# BioSpread Sovereign-X Ultra (v4 Frontier)
+# BioSpread
 
-> **Critical Infrastructure Class, Time-Aware Evidential Learning Pipeline for Global Plasmid Surveillance.**
+> **Modular time-aware evidential learning pipeline for plasmid geographic spread prediction.**
 
-BioSpread Sovereign-X Ultra is a high-performance system designed to predict the geographic spread of plasmid backbones with clinical-grade reliability. It uses a **Proxy-Based Manifold Alignment** architecture to eliminate cold-start uncertainty and provides rigorous coverage guarantees via **Mondrian Conformal Prediction**.
+BioSpread predicts whether a plasmid backbone will spread to new countries within a 1–3 year horizon, using a dual-stream neural architecture that fuses static (backbone-intrinsic) and temporal (epidemiological snapshot) features with taxonomic embeddings.
 
 ---
 
@@ -37,46 +37,40 @@ Antimicrobial resistance (AMR) spread via plasmids is a critical public health t
 
 The model is trained with a **leakage-free temporal disjoint split**: backbones observed after the split year (2020) are held out entirely, ensuring no temporal information leakage.
 
-### Key Innovations (Sovereign-X Ultra)
+### Key Innovations
 
 | Feature | Detail |
 |---|---|
-| **Temporal Proxy Generator** | Imagines missing temporal dynamics from static features via manifold alignment |
-| **FiLM Conditioning** | Taxonomy-driven modulation of cold-start features for lineage-aware prediction |
-| **Mondrian Conformal** | Group-wise coverage guarantees (90%) for reliable clinical decision support |
-| **Evidential Learning** | Direct estimation of epistemic uncertainty to guide automated routing |
-| **Hyperbolic Taxonomy** | Poincaré ball embeddings for superior phylogenetic consistency |
-| **Unified 4-Loss** | Optimized Multi-Task objective with Adaptive Loss Weighting (Kendall 2018) |
+| **Dual-stream fusion** | Static encoder (MLP) + Temporal encoder (GRU+Attention) gated fusion |
+| **Multi-horizon output** | 3 hazard heads + per-timestep head + cold-start head |
+| **Cold-start handling** | Dedicated head for backbones with no temporal history |
+| **Post-training calibration** | Platt scaling (separate for main and cold-start paths) |
+| **Taxonomy-aware** | Hierarchical taxonomic embeddings at 5 levels |
+| **Leakage-free** | Train-only taxonomy vocab, disjoint backbone split |
 
 ---
 
-## Arch```
+## Architecture
+
+```
                           ┌──────────────────────┐
-                          │  Poincaré Taxonomy   │
-                          │   (Hyperbolic Ball)  │
+                          │    Taxonomy Embedder  │
+                          │  (5-level embeddings) │
                           └──────────┬───────────┘
-                                     │ (FiLM)
+                                     │
            ┌─────────────────────────┼──────────────────────────┐
            │                         │                          │
-    ┌──────▼──────┐          ┌──────▼──────┐          ┌──────▼──────┐
-    │ Static Enc. │          │Temporal Enc.│          │ Proxy Gen.  │
-    │ (Gated MLP) │          │ (GRU/Mamba) │          │ (Manifold)  │
-    └──────┬──────┘          └──────┬──────┘          └──────┬──────┘
-           │                        │                        │
-           └─────────┬──────────────┘                (MSE / InfoNCE)
-                      │                                      │
-               ┌──────▼──────┐                        ┌──────▼──────┐
-               │ Confidence-  │◄──────────────────────┤  Cold-Start │
-               │ Gated Route  │                       │    Head     │
-               └──────┬──────┘                        └─────────────┘
-                      │
-           ┌──────────┼──────────┐
-    ┌──────▼──┐ ┌──────▼──┐ ┌──▼───────┐
-    │Evidential│ │Count    │ │Conformal │
-    │Hazard H. │ │Head     │ │Wrapper   │
-    └──────────┘ └─────────┘ └──────────┘
-```
-��   (softmax)  │                          │   Head      │
+    ┌──────▼──────┐          ┌──────▼──────┐                  │
+    │ Static Enc. │          │Temporal Enc.│                  │
+    │   (MLP)     │          │(GRU+Attn)   │                  │
+    │ 128→64→32   │          │ 192 hidden  │                  │
+    └──────┬──────┘          └──────┬──────┘                  │
+           │                        │                         │
+           └─────────┬──────────────┘                         │
+                      │                                        │
+               ┌──────▼──────┐                          ┌──────▼──────┐
+               │  Gated Fusion│                          │Cold-Start   │
+               │   (softmax)  │                          │   Head      │
                └──────┬──────┘                          └──────┬──────┘
                       │                                        │
            ┌──────────┼──────────┐                              │
@@ -88,28 +82,24 @@ The model is trained with a **leakage-free temporal disjoint split**: backbones 
 
 ### Model Components
 
-- **TaxonomyEncoder**: 5 separate embedding tables (phylum→genus), each of dimension `taxonomy_embed_dim`, concatenated → dropout
-- **StaticEncoder**: MLP with ReLU+Dropout, output `static_dim` (128), with learned gating
-- **TemporalEncoder**: Input projection → GRU → self-attention → `temporal_dim` (128)
-- **FusionGate**: Softmax over static and temporal representations
-- **HazardHead**: MLP → 3-horizon logits
-- **CountHead**: 2-layer MLP → log1p(count) prediction
-- **TimestepHead**: Per-timestep hazard prediction for ranking loss
-- **ColdStartHead**: MLP on static features only (for backbones with no temporal history)
+- **TaxonomyEncoder**: 5 separate embedding tables or **Poincaré Ball** embeddings for hyperbolic taxonomy.
+- **StaticEncoder**: GatedResidualMLP or **FiT (Feature Interaction Transformer)** for complex interactions.
+- **TemporalEncoder**: Hybrid model supporting **GRU** and **Mamba-2** + CausalConv.
+- **Temporal Proxy Generator**: Synthesizes temporal dynamics from static features for cold-start alignment.
+- **Deterministic Routing**: Confidence-gated switching between temporal and cold-start heads.
+- **Evidential Hazard Head**: Estimates both spread probability and **epistemic uncertainty**.
 
-### Loss Function
+### Loss Function (Unified 4-Loss)
 
 ```
-L = λ_bce * L_bce + λ_count * L_count + λ_rank * L_rank 
-    + λ_cold * L_cold + λ_all * L_all + λ_gate * L_gate
+L = L_hazard + λ_proxy * L_proxy + λ_contrast * L_contrast + λ_kd * L_kd
 ```
 
-- BCE loss on 3-horizon hazard
-- MSE loss on log1p(count) regression
-- Ranking loss: within-backbone, later timesteps should have higher hazard
-- Cold-start head auxiliary loss
-- Per-timestep (all snapshots) hazard loss
-- Gate entropy regularization
+- **L_hazard**: Evidential/BCE loss on 3-horizon spread.
+- **L_proxy**: Manifold alignment (MSE) between proxy and actual temporal features.
+- **L_contrast**: InfoNCE alignment for robust representation learning.
+- **L_kd**: Knowledge Distillation from temporal teacher to cold-start path.
+- **Adaptive Weighting**: Learned loss scaling (Kendall 2018) to balance objectives.
 
 ---
 
@@ -267,21 +257,18 @@ All configurable parameters are in `config/default.yaml` and validated via Pydan
 
 ---
 
-## Results
+### Sovereign-X Ultra (v4 Frontier) - Final Production Results
 
-### Full Training (50 epochs, validated on 674 backbones)
+| Metric | Horizon 1 (1-year) | Horizon 2 (2-year) | Horizon 3 (3-year) |
+|---|---|---|---|
+| **ROC AUC (Full)** | **0.7824** | **0.6969** | **0.7207** |
+| **ROC AUC (Cold-Start)**| **0.7806** | **0.6972** | **0.7188** |
+| **Performance Gap** | **0.0018** | **-0.0003** | **0.0019** |
+| **F1 Score (h3)** | 0.6781 | - | - |
+| **Precision (h3)** | 0.5130 | - | - |
+| **Recall (h3)** | 1.0000 | - | - |
 
-| Metric | Value |
-|---|---|
-| **ROC AUC (h3)** | **0.8879** |
-| ROC AUC (h1) | 0.9292 |
-| ROC AUC (h2) | 0.9231 |
-| PR AUC (h3) | 0.7256 |
-| F1 Score | 0.6092 |
-| Recall | 0.7794 |
-| Precision | 0.5000 |
-| Balanced Accuracy | 0.7912 |
-| Brier Score | 0.1294 |
+Full details in [SOVEREIGN_X_FINAL.md](./SOVEREIGN_X_FINAL.md).
 
 Full details in [FULL_TRAINING_REPORT.md](./FULL_TRAINING_REPORT.md).
 
