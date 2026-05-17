@@ -1,5 +1,0 @@
-# data valid for years <= 2020
-country,year,avg_antibiotic_consumption_2015_2020,health_exp_pc,tourists_per_year
-TR,2020,18.0,1200,45000000
-DE,2020,13.5,5200,39000000
-US,2020,16.2,9800,79000000

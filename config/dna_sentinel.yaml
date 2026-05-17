@@ -1,0 +1,41 @@
+data:
+  fasta_path: data/project_inputs/raw/plsdb_sequences.fasta
+  backbones_tsv: data/project_inputs/silver/plasmid_backbones.tsv
+  amr_tsv: data/project_inputs/silver/plasmid_amr_consensus.tsv
+  out_dir: data/dna_sentinel
+  limit: 2048
+  min_len: 1000
+  max_len: 300000
+  seed: 42
+  expansion_country_threshold: 15
+
+model:
+  channels: 40
+  layers: 3
+  dropout: 0.10
+  window_size: 1024
+  stride: 512
+  max_windows: 12
+  rc_consensus: true
+
+kmer:
+  ngram_min: 4
+  ngram_max: 6
+  n_features: 65536
+  alpha: 0.0001
+  max_iter: 2000
+  seed: 42
+  window_size: 4096
+  stride: 2048
+  max_windows: 32
+  rc_consensus: true
+
+training:
+  epochs: 10
+  batch_size: 16
+  lr: 0.001
+  weight_decay: 0.001
+  artifact_dir: artifacts/dna_sentinel
+  seed: 42
+  device: auto
+  weighted_loss: true

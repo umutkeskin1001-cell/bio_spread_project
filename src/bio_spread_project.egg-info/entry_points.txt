@@ -1,2 +1,0 @@
-[console_scripts]
-bio-spread = bio_spread_project.cli:main

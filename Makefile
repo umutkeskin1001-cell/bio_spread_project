@@ -1,34 +1,34 @@
-.PHONY: install train test lint evaluate prepare clean benchmark tune docker-build docker-run
+.PHONY: install test lint prepare train evaluate predict docker-build docker-run clean
 
 install:
-	pip install -e .
-
-train:
-	python3 -m bio_spread.cli.main train --config config/default.yaml
+	python3 -m pip install -e ".[dev]"
 
 test:
-	python3 -m pytest tests/ -v
+	python3 -m pytest -q
 
 lint:
-	ruff check src/ && ruff format --check src/
-
-evaluate:
-	python3 -m bio_spread.cli.main evaluate --model-path $(MODEL) --config config/default.yaml --feature-dir data/features
+	ruff check src tests
 
 prepare:
-	python3 -m bio_spread.cli.main prepare --config config/default.yaml
+	dna-sentinel prepare --config config/dna_sentinel.yaml
 
-clean:
-	rm -rf artifacts/ .pytest_cache .ruff_cache __pycache__
+train:
+	dna-sentinel train-kmer --config config/dna_sentinel.yaml
 
-benchmark:
-	bio-spread train --config config/benchmark.yaml
+train-neural:
+	dna-sentinel train --config config/dna_sentinel.yaml
 
-tune:
-	python scripts/hyperparameter_tuning.py
+evaluate:
+	dna-sentinel evaluate-kmer --checkpoint artifacts/dna_sentinel/kmer.joblib --data-dir data/dna_sentinel
+
+predict:
+	dna-sentinel predict-kmer --checkpoint artifacts/dna_sentinel/kmer.joblib --fasta data/dna_sentinel/query.fa --json
 
 docker-build:
-	docker build -t bio-spread .
+	docker build -t dna-sentinel .
 
 docker-run:
-	docker run -p 8000:8000 -v $(PWD)/data/features:/app/data/features bio-spread
+	docker run --rm -p 8000:8000 dna-sentinel
+
+clean:
+	rm -rf artifacts/dna_sentinel .pytest_cache .ruff_cache

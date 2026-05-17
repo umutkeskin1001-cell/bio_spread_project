@@ -61,3 +61,4 @@ data/**/*.csv
 scratch/
 docs/superpowers/
 archive/
+data/dna_sentinel/*.jsonl

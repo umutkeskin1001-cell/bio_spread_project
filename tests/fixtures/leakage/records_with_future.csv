@@ -1,7 +1,0 @@
-backbone_id,year,country,host_genus,clinical_context,amr_gene_count,mobility_score
-bb_A,2018,TR,Escherichia,clinical,2,0.8
-bb_A,2019,DE,Escherichia,clinical,1,0.7
-bb_A,2021,FR,Klebsiella,clinical,5,0.9
-bb_B,2019,TR,Pseudomonas,environment,0,0.2
-bb_B,2020,US,Pseudomonas,environment,0,0.3
-bb_C,2022,JP,Acinetobacter,clinical,3,0.6
