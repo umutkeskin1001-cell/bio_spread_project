@@ -1,17 +1,61 @@
+# ==============================================================================
+# OS & System Files
+# ==============================================================================
 .DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+$RECYCLE.BIN/
+
+# ==============================================================================
+# Python & IDE / Environment
+# ==============================================================================
 __pycache__/
 .pycache/
 *.py[cod]
+*$py.class
+*.so
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
 .coverage
+*.lcov
 .hypothesis/
+.cache/
+.tox/
+.nox/
+.venv/
+venv/
+env/
+ENV/
+.idea/
+.vscode/
+*.sublime-*
+.ipynb_checkpoints/
+
+# ==============================================================================
+# Test & Execution Outputs
+# ==============================================================================
 test_output.txt
 test_bio_spread_output.txt
 test_bio_spread_all_output.txt
+fresh_run_outputs/
+output/
+playwright/
+catboost_info/
+predictions.json
+scratch/
+archive/
 
-# Reports
+# ==============================================================================
+# Reports & Documentation Outputs
+# ==============================================================================
+*.docx
+docs/superpowers/
 reports/**
 !reports/
 !reports/latest/
@@ -19,46 +63,91 @@ reports/**
 !reports/final_submission/
 !reports/final_submission/**
 
-# Output
-output/
-playwright/
-fresh_run_outputs/
-catboost_info/
-artifacts/
-predictions.json
-data/snapshots/
+# ==============================================================================
+# Machine Learning Weights, Checkpoints & Logging
+# ==============================================================================
+*.pt
+*.pth
+*.onnx
+*.safetensors
+*.h5
+*.hdf5
+*.keras
+*.weights
+*.ckpt
+*.model
+*.pkl
+*.joblib
+*.npy
+*.npz
+models/
+checkpoints/
+weights/
+runs/
+tb/
+wandb/
+mlruns/
+lightning_logs/
+logs/
+*.log
+nohup.out
 
-# Processed features (generated, not source)
+# ==============================================================================
+# Large Archives, Datasets & Bioinformatics Formats
+# ==============================================================================
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.gz
+*.rar
+*.7z
+*.bz2
+*.xz
+*.parquet
+*.feather
+*.sqlite
+*.sqlite3
+*.db
+*.fasta
+*.fa
+*.fastq
+*.sam
+*.bam
+*.bai
+*.vcf
+*.gff
+*.gbk
+*.gb
+*.pdb
+
+# ==============================================================================
+# Data Directories & Processed Feature Stores
+# ==============================================================================
+artifacts/
+data/snapshots/
 data/features/
 data/sovereign_features/
-
-# Docs / reports
-*.docx
-
-# Large raw/external data
 data/raw/
 data/holdouts/
+data/external/
+data/project_assets/
 data/project_inputs/raw/
 data/project_inputs/external/
 data/project_inputs/silver/
 data/project_inputs/scores/
 data/project_inputs/geo_spread/
-data/**/*.fasta
-data/**/*.parquet
-data/**/*.tar
-data/**/*.tar.*
-data/**/*.gz
+data/dna_sentinel/*.jsonl
+data/dna_sentinel/*.fa
 data/**/*.dat
-data/**/*.joblib
 data/**/*.csv
-!data/sample_plasmid_records.csv
-!data/project_inputs/README.md
+data/**/*.tsv
 
-# Lightweight fixtures
+# ==============================================================================
+# Explicit Inclusions (Exceptions for Samples, Readmes & Fixtures)
+# ==============================================================================
 !data/sample_plasmid_records.csv
+!data/sample_records.tsv
+!data/project_inputs/README.md
 !tests/fixtures/
 !tests/fixtures/**
-scratch/
-docs/superpowers/
-archive/
-data/dna_sentinel/*.jsonl
