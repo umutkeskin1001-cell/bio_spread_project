@@ -8,7 +8,7 @@ The project intentionally rejects metadata-heavy shortcuts. At inference time th
 
 The central question is whether plasmid-level mobile AMR risk can be inferred from nucleotide organization alone under strict low-data and low-compute constraints.
 
-DNA Sentinel v6 uses a multi-scale, **Genomic Coordinate Gated Bio-Spectral BDSG Transformer** architecture:
+DNA Sentinel uses a multi-scale, **Genomic Coordinate Gated Bio-Spectral BDSG Transformer** architecture:
 
 ```text
 FASTA
@@ -68,7 +68,7 @@ data/dna_sentinel/test_labels.pt
 
 ## Train
 
-Recommended production model (KmerTransformer v6 - BDSG):
+Recommended production model:
 
 ```bash
 dna-sentinel train-kmer-transformer --config config/dna_sentinel.yaml
@@ -124,18 +124,18 @@ Example `/predict` JSON response format:
 
 Current strict group-aware split, `2048` curated sequences:
 
-| Task | Metric | Baseline k-mer | KmerTransformer (v3) | **KmerTransformer (v6 - BDSG)** |
+| Task | Metric | Baseline k-mer | Standard KmerTransformer | **DNA Sentinel KmerTransformer (BDSG)** |
 |---|---:|---:|---:|---:|
-| Mobility | Accuracy | 0.581 | 0.562 | **0.709** (+14.7% gain!) |
-| Mobility | Balanced accuracy | 0.568 | 0.550 | **0.717** (+16.6% gain!) |
-| AMR cargo | AUROC | 0.746 | 0.785 | **0.803** (+1.7% gain!) |
-| AMR cargo | AUPRC | 0.697 | 0.700 | **0.740** (+4.0% gain!) |
-| Expansion | AUROC | 0.867 | 0.838 | **0.889** (+5.1% gain!) |
-| Expansion | AUPRC | 0.789 | 0.682 | **0.850** (+16.7% gain!) |
+| Mobility | Accuracy | 0.581 | 0.562 | **0.683** (+12.0% gain!) |
+| Mobility | Balanced accuracy | 0.568 | 0.550 | **0.690** (+14.0% gain!) |
+| AMR cargo | AUROC | 0.746 | 0.785 | **0.800** (+1.4% gain!) |
+| AMR cargo | AUPRC | 0.697 | 0.700 | **0.769** (+6.9% gain!) |
+| Expansion | AUROC | 0.867 | 0.838 | **0.888** (+5.0% gain!) |
+| Expansion | AUPRC | 0.789 | 0.682 | **0.843** (+16.1% gain!) |
 
 Stress checks:
 
-| Check | Baseline k-mer | KmerTransformer (v3) | **KmerTransformer (v6 - BDSG)** |
+| Check | Baseline k-mer | Standard KmerTransformer | **DNA Sentinel KmerTransformer (BDSG)** |
 |---|---:|---:|---:|
 | Reverse-complement max risk difference | 0.0 | 0.0 | **0.0** (Passed) |
 | Approx nearest train-test sketch Jaccard max | 0.0549 | 0.0549 | **0.0549** (Passed) |

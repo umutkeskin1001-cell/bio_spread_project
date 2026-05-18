@@ -8,9 +8,9 @@ Recommended production checkpoint:
 artifacts/dna_sentinel/kmer_transformer_best.pt
 ```
 
-Model family: Genomic Coordinate Gated Bio-Spectral BDSG Transformer (v6 - BDSG).
+Model family: Genomic Coordinate Gated Bio-Spectral BDSG Transformer.
 
-The KmerTransformer v6 (BDSG) model integrates a dual-stream architecture with **Genomic Coordinate Aligned Positional Embeddings (GCAPE)** projected via a continuous **Genomic Coordinate MLP (GC-MLP)**. Length-invariant scale coordinates are injected early before **Coordinate-Aware Gated Bilinear Fusion** of lexical and spectral features. In the pooling layer, multi-scale representations are integrated using **Bi-Directional Scale Gating (BDSG)**, forming a soft-differentiable logical AND gate between local motif scales (Scale 0/1) and macro-genomic structures (Scale 2) with zero parameter overhead. The model remains exceptionally lightweight at under 100k parameters and **4.5 ms CPU latency**.
+The DNA Sentinel KmerTransformer integrates a dual-stream architecture with **Genomic Coordinate Aligned Positional Embeddings (GCAPE)** projected via a continuous **Genomic Coordinate MLP (GC-MLP)**. Length-invariant scale coordinates are injected early before **Coordinate-Aware Gated Bilinear Fusion** of lexical and spectral features. In the pooling layer, multi-scale representations are integrated using **Bi-Directional Scale Gating (BDSG)**, forming a soft-differentiable logical AND gate between local motif scales (Scale 0/1) and macro-genomic structures (Scale 2) with zero parameter overhead. The model remains exceptionally lightweight at under 100k parameters and **4.5 ms CPU latency**.
 
 ## Intended Use
 
@@ -39,20 +39,20 @@ Curated local dataset:
 
 Labels are derived offline from existing project tables. Split construction groups exact duplicates and known backbone groups to reduce leakage.
 
-## Test Metrics (KmerTransformer v6 - BDSG)
+## Test Metrics (DNA Sentinel KmerTransformer)
 
 | Task | Metric | Value |
 |---|---:|---:|
-| Mobility | Accuracy | **0.709** (+14.7% gain!) |
-| Mobility | Balanced accuracy | **0.717** (+16.6% gain!) |
-| AMR cargo | AUROC | **0.803** (+1.7% gain!) |
-| AMR cargo | AUPRC | **0.740** (+4.0% gain!) |
-| AMR cargo | Brier | **0.187** |
-| AMR cargo | ECE | **0.114** |
-| Expansion | AUROC | **0.889** (+5.1% gain!) |
-| Expansion | AUPRC | **0.850** (+16.7% gain!) |
-| Expansion | Brier | **0.124** |
-| Expansion | ECE | **0.058** |
+| Mobility | Accuracy | **0.6830** |
+| Mobility | Balanced accuracy | **0.6897** |
+| AMR cargo | AUROC | **0.7995** |
+| AMR cargo | AUPRC | **0.7685** |
+| AMR cargo | Brier | **0.1866** |
+| AMR cargo | ECE | **0.1306** |
+| Expansion | AUROC | **0.8875** |
+| Expansion | AUPRC | **0.8429** |
+| Expansion | Brier | **0.1260** |
+| Expansion | ECE | **0.0939** |
 
 ## Stress Metrics
 
