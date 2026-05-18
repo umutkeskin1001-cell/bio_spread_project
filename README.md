@@ -126,12 +126,12 @@ Current strict group-aware split, `2048` curated sequences:
 
 | Task | Metric | Baseline k-mer | Standard KmerTransformer | **DNA Sentinel KmerTransformer (BDSG)** |
 |---|---:|---:|---:|---:|
-| Mobility | Accuracy | 0.581 | 0.562 | **0.683** |
-| Mobility | Balanced accuracy | 0.568 | 0.550 | **0.691** |
-| AMR cargo | AUROC | 0.746 | 0.785 | **0.815** |
-| AMR cargo | AUPRC | 0.697 | 0.700 | **0.770** |
-| Expansion | AUROC | 0.867 | 0.838 | **0.880** |
-| Expansion | AUPRC | 0.789 | 0.682 | **0.810** |
+| Mobility | Accuracy | 0.581 | 0.562 | **0.694** |
+| Mobility | Balanced accuracy | 0.568 | 0.550 | **0.702** |
+| AMR cargo | AUROC | 0.746 | 0.785 | **0.812** |
+| AMR cargo | AUPRC | 0.697 | 0.700 | **0.777** |
+| Expansion | AUROC | 0.867 | 0.838 | **0.885** |
+| Expansion | AUPRC | 0.789 | 0.682 | **0.832** |
 
 Stress checks:
 

@@ -19,23 +19,6 @@ def rc_augment(records: list[LabeledSequence]) -> list[LabeledSequence]:
     return augmented
 
 
-def circular_augment(records: list[LabeledSequence], K: int = 5) -> list[LabeledSequence]:
-    augmented = []
-    for rec in records:
-        L = len(rec.dna)
-        for k in range(K):
-            shift = int((k / K) * L)
-            rotated_dna = rec.dna[shift:] + rec.dna[:shift]
-            augmented.append(LabeledSequence(
-                sequence_id=f"{rec.sequence_id}_rot{k}",
-                dna=rotated_dna,
-                mobility=rec.mobility,
-                amr=rec.amr,
-                expansion=rec.expansion,
-            ))
-    return augmented
-
-
 class WindowDropout:
     def __init__(self, drop_rate: float = 0.25):
         self.drop_rate = drop_rate

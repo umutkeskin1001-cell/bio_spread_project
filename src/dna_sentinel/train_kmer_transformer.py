@@ -63,32 +63,16 @@ def train_kmer_transformer(model, train_data, val_data, config):
             amr = device_train["amr"][bi]
             exp = device_train["expansion"][bi]
 
-            lam = 1.0
-            if config.get("mixup", False) and feat.size(0) > 1:
-                lam = float(torch.distributions.Beta(0.2, 0.2).sample())
-                perm = torch.randperm(feat.size(0), device=device)
-                feat = lam * feat + (1.0 - lam) * feat[perm]
-                spec = lam * spec + (1.0 - lam) * spec[perm]
-
             [feat1, spec1], mask1 = window_dropout([feat, spec], mask, training=True)
             out1 = model(feat1, spec1, mask1, sid)
             [feat2, spec2], mask2 = window_dropout([feat, spec], mask, training=True)
             out2 = model(feat2, spec2, mask2, sid)
-            if lam < 1.0:
-                loss_task = (
-                    lam * F.cross_entropy(out1["mobility_logits"], mob, weight=mob_weight)
-                    + (1.0 - lam) * F.cross_entropy(out1["mobility_logits"], mob[perm], weight=mob_weight)
-                    + lam * F.binary_cross_entropy_with_logits(out1["amr_logits"], amr, pos_weight=amr_pos_weight)
-                    + (1.0 - lam) * F.binary_cross_entropy_with_logits(out1["amr_logits"], amr[perm], pos_weight=amr_pos_weight)
-                    + lam * F.binary_cross_entropy_with_logits(out1["expansion_logits"], exp, pos_weight=exp_pos_weight)
-                    + (1.0 - lam) * F.binary_cross_entropy_with_logits(out1["expansion_logits"], exp[perm], pos_weight=exp_pos_weight)
-                )
-            else:
-                loss_task = (
-                    F.cross_entropy(out1["mobility_logits"], mob, weight=mob_weight)
-                    + F.binary_cross_entropy_with_logits(out1["amr_logits"], amr, pos_weight=amr_pos_weight)
-                    + F.binary_cross_entropy_with_logits(out1["expansion_logits"], exp, pos_weight=exp_pos_weight)
-                )
+
+            loss_task = (
+                F.cross_entropy(out1["mobility_logits"], mob, weight=mob_weight)
+                + F.binary_cross_entropy_with_logits(out1["amr_logits"], amr, pos_weight=amr_pos_weight)
+                + F.binary_cross_entropy_with_logits(out1["expansion_logits"], exp, pos_weight=exp_pos_weight)
+            )
 
             loss_cl = (1.0 - F.cosine_similarity(out1["pooled"], out2["pooled"], dim=-1)).mean()
             entropy = -(out1["evidence_weights"].clamp_min(1e-8) * out1["evidence_weights"].clamp_min(1e-8).log()).sum(dim=1).mean()
