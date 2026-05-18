@@ -64,7 +64,7 @@ def train_kmer_transformer(model, train_data, val_data, config):
             exp = device_train["expansion"][bi]
 
             lam = 1.0
-            if config.get("mixup", True) and feat.size(0) > 1:
+            if config.get("mixup", False) and feat.size(0) > 1:
                 lam = float(torch.distributions.Beta(0.2, 0.2).sample())
                 perm = torch.randperm(feat.size(0), device=device)
                 feat = lam * feat + (1.0 - lam) * feat[perm]
