@@ -3,7 +3,6 @@ from dataclasses import dataclass
 from pathlib import Path
 import numpy as np
 import torch
-from sklearn.feature_extraction.text import HashingVectorizer
 from dna_sentinel.dataset import LabeledSequence
 from dna_sentinel.fasta import revcomp
 from dna_sentinel.tokenizer import window_sequence
@@ -18,32 +17,58 @@ class MultiScaleKmerConfig:
     n_features: int = 4096
     rc_consensus: bool = True
 
+class PureTensorKmerExtractor:
+    def __init__(self, ngram_min: int = 4, ngram_max: int = 6, n_features: int = 4096):
+        self.ngram_min = ngram_min
+        self.ngram_max = ngram_max
+        self.n_features = n_features
+        self.char_map = np.zeros(256, dtype=np.int64)
+        for idx, char in enumerate(["A", "C", "G", "T"]):
+            self.char_map[ord(char)] = idx
+            self.char_map[ord(char.lower())] = idx
+
+    def transform(self, windows: list[str], device: str = "cpu") -> torch.Tensor:
+        n_windows = len(windows)
+        if n_windows == 0:
+            return torch.zeros((0, self.n_features), dtype=torch.float32, device=device)
+        out = torch.zeros((n_windows, self.n_features), dtype=torch.float32, device=device)
+        for idx, win in enumerate(windows):
+            if not win:
+                continue
+            b = np.frombuffer(win.encode("ascii", errors="ignore"), dtype=np.uint8)
+            if len(b) < self.ngram_min:
+                continue
+            base4 = torch.from_numpy(self.char_map[b]).to(device)
+            for k in range(self.ngram_min, min(self.ngram_max + 1, len(b) + 1)):
+                kmers = base4.unfold(dimension=-1, size=k, step=1)
+                multipliers = 4 ** torch.arange(k - 1, -1, -1, dtype=torch.long, device=device)
+                hashes = (kmers * multipliers).sum(dim=-1)
+                hashed_indices = (hashes * 2654435761) % self.n_features
+                freqs = torch.bincount(hashed_indices, minlength=self.n_features).float()
+                out[idx] += freqs
+        norms = torch.norm(out, p=2, dim=-1, keepdim=True).clamp_min(1e-8)
+        return out / norms
+
 class MultiScaleKmerExtractor:
     def __init__(self, config: MultiScaleKmerConfig | None = None):
         self.config = config or MultiScaleKmerConfig()
-        self.vectorizers = [
-            HashingVectorizer(
-                analyzer="char",
-                ngram_range=(self.config.ngram_min, self.config.ngram_max),
-                n_features=self.config.n_features,
-                alternate_sign=False,
-                norm="l2",
-                lowercase=False,
-            )
-            for _ in range(len(self.config.window_sizes))
-        ]
+        self.extractor = PureTensorKmerExtractor(
+            ngram_min=self.config.ngram_min,
+            ngram_max=self.config.ngram_max,
+            n_features=self.config.n_features,
+        )
 
-    def extract(self, dna: str) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def extract(self, dna: str, device: str = "cpu") -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         all_feat, all_mask, all_sid = [], [], []
         for idx, (ws, st, mw) in enumerate(zip(self.config.window_sizes, self.config.strides, self.config.max_windows)):
             windows = window_sequence(dna, ws, st, mw)
-            feat = self.vectorizers[idx].transform(windows).toarray().astype(np.float32)
+            feat = self.extractor.transform(windows, device=device).cpu()
             if self.config.rc_consensus:
-                rc_feat = self.vectorizers[idx].transform([revcomp(w) for w in windows]).toarray().astype(np.float32)
+                rc_feat = self.extractor.transform([revcomp(w) for w in windows], device=device).cpu()
                 feat = 0.5 * (feat + rc_feat)
             actual = feat.shape[0]
             padded = torch.zeros(mw, self.config.n_features)
-            padded[:min(actual, mw)] = torch.from_numpy(feat[:mw])
+            padded[:min(actual, mw)] = feat[:mw]
             mask = torch.zeros(mw, dtype=torch.bool)
             mask[:min(actual, mw)] = True
             all_feat.append(padded)

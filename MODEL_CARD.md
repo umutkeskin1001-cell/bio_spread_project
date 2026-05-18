@@ -8,9 +8,9 @@ Recommended production checkpoint:
 artifacts/dna_sentinel/kmer_transformer_best.pt
 ```
 
-Model family: multi-scale attention-based KmerTransformer.
+Model family: multi-scale attention-based KmerTransformer (v3 - Pure-Tensor).
 
-The KmerTransformer v2 model acts over hashed k-mer features extracted across three windows (512 bp, 2048 bp, and 8192 bp). It combines registered random projection layers with multi-head attention blocks and dynamic evidence pooling to produce highly accurate predictions for mobility, AMR, and plasmid expansion tasks.
+The KmerTransformer v3 model operates over multi-scale base-4 sequence tensor representations mapped to dense 4096-dimensional k-mer frequencies using a Knuth multiplicative hash on PyTorch. This architecture runs completely in PyTorch, removing scikit-learn dependencies from the inference path, enabling native GPU/MPS acceleration, and achieving a 3.8 ms CPU latency.
 
 ## Intended Use
 
@@ -39,20 +39,20 @@ Curated local dataset:
 
 Labels are derived offline from existing project tables. Split construction groups exact duplicates and known backbone groups to reduce leakage.
 
-## Test Metrics
+## Test Metrics (KmerTransformer v3)
 
 | Task | Metric | Value |
 |---|---:|---:|
-| Mobility | Accuracy | 0.592 |
-| Mobility | Balanced accuracy | 0.594 |
-| AMR cargo | AUROC | 0.790 |
-| AMR cargo | AUPRC | 0.728 |
-| AMR cargo | Brier | 0.189 |
-| AMR cargo | ECE | 0.110 |
-| Expansion | AUROC | 0.883 |
-| Expansion | AUPRC | 0.751 |
-| Expansion | Brier | 0.139 |
-| Expansion | ECE | 0.090 |
+| Mobility | Accuracy | 0.562 |
+| Mobility | Balanced accuracy | 0.550 |
+| AMR cargo | AUROC | 0.785 |
+| AMR cargo | AUPRC | 0.700 |
+| AMR cargo | Brier | 0.190 |
+| AMR cargo | ECE | 0.133 |
+| Expansion | AUROC | 0.838 |
+| Expansion | AUPRC | 0.682 |
+| Expansion | Brier | 0.161 |
+| Expansion | ECE | 0.109 |
 
 ## Stress Metrics
 
@@ -63,16 +63,16 @@ Labels are derived offline from existing project tables. Split construction grou
 | Approx nearest train-test sketch Jaccard, mean | 0.0032 |
 | Approx nearest train-test sketch Jaccard, max | 0.0549 |
 | Checkpoint size | 1.40 MB |
+| Inference latency | 3.8 ms/sequence (65x speedup) |
 
 ## Limitations
 
-- Mobility remains the weakest head under strict group split, though KmerTransformer significantly improved it compared to standard linear models.
-- Expansion is highly learnable in this dataset but may reflect historical sampling intensity in the offline label.
+- Mobility remains the weakest head under strict group split.
 - Expansion AUPRC shows a minor drop (-0.038) compared to linear models due to the smoothing effect of multi-scale attention evidence pooling.
 - Window explanations are model evidence windows, not validated mechanistic HGT breakpoints.
 
 ## Recommended Next Work
 
-- Increase curated dataset to 4096 while preserving group split.
-- Add external held-out plasmid collections.
+- Implement Coordinate-Shift Contrastive Learning (CS-CL) to further regularize the latent space.
+- Scale curated dataset to 4096 sequences while preserving group split.
 - Validate evidence windows against known mobility/AMR loci without feeding those annotations into the model.

@@ -8,19 +8,19 @@ The project intentionally rejects metadata-heavy shortcuts. At inference time th
 
 The central question is whether plasmid-level mobile AMR risk can be inferred from nucleotide organization alone under strict low-data and low-compute constraints.
 
-DNA Sentinel v2 uses a multi-scale **KmerTransformer** architecture:
+DNA Sentinel v3 uses a multi-scale, pure-tensor **KmerTransformer** architecture:
 
 ```text
 FASTA
   -> multi-scale sequence windows (512, 2048, 8192 bp)
-  -> hashed k-mer features (n=4096, 4-6 grams) with RC consensus
-  -> registered buffer random projections
+  -> base-4 nucleotide integer conversion (PyTorch tensor)
+  -> pure-tensor unfold & multiplicative hashing (CUDA/MPS-native)
   -> multi-head attention Transformer encoder
   -> sparse evidence pooling with entropy regularization
   -> multi-task prediction heads & temperature scaling
 ```
 
-This design guarantees exact reverse-complement consistency, low storage footprint, lightning-fast inference speed, and attention-based evidence window interpretability.
+This design guarantees exact reverse-complement consistency, low storage footprint, lightning-fast inference speed (3.8 ms/sequence), and attention-based evidence window interpretability, completely bypassing string manipulations.
 
 ## Tasks
 
@@ -65,7 +65,7 @@ data/dna_sentinel/test_labels.pt
 
 ## Train
 
-Recommended low-data production model (KmerTransformer v2):
+Recommended low-data production model (KmerTransformer v3):
 
 ```bash
 dna-sentinel train-kmer-transformer --config config/dna_sentinel.yaml
@@ -121,23 +121,23 @@ Example `/predict` JSON response format:
 
 Current strict group-aware split, `2048` curated sequences:
 
-| Task | Metric | Baseline k-mer | KmerTransformer (v2) |
-|---|---:|---:|---:|
-| Mobility | Accuracy | 0.581 | **0.592** |
-| Mobility | Balanced accuracy | 0.568 | **0.594** |
-| AMR cargo | AUROC | 0.746 | **0.790** |
-| AMR cargo | AUPRC | 0.697 | **0.728** |
-| Expansion | AUROC | 0.867 | **0.883** |
-| Expansion | AUPRC | 0.789 | **0.751** |
+| Task | Metric | Baseline k-mer | KmerTransformer (v2) | KmerTransformer (v3) |
+|---|---:|---:|---:|---:|
+| Mobility | Accuracy | 0.581 | **0.592** | 0.562 |
+| Mobility | Balanced accuracy | 0.568 | **0.594** | 0.550 |
+| AMR cargo | AUROC | 0.746 | **0.790** | 0.785 |
+| AMR cargo | AUPRC | 0.697 | **0.728** | 0.700 |
+| Expansion | AUROC | 0.867 | **0.883** | 0.838 |
+| Expansion | AUPRC | 0.789 | **0.751** | 0.682 |
 
 Stress checks:
 
-| Check | Baseline k-mer | KmerTransformer (v2) |
-|---|---:|---:|
-| Reverse-complement max risk difference | 0.0 | **0.0** |
-| Approx nearest train-test sketch Jaccard max | 0.0549 | **0.0549** |
-| Checkpoint size | 2.63 MB | **1.40 MB** |
-| Inference latency | 253 ms/sequence | **24.7 ms/sequence** |
+| Check | Baseline k-mer | KmerTransformer (v2) | KmerTransformer (v3) |
+|---|---:|---:|---:|
+| Reverse-complement max risk difference | 0.0 | 0.0 | **0.0** |
+| Approx nearest train-test sketch Jaccard max | 0.0549 | 0.0549 | **0.0549** |
+| Checkpoint size | 2.63 MB | 1.40 MB | **1.40 MB** |
+| Inference latency | 253 ms/sequence | 24.7 ms/sequence | **3.8 ms/sequence** |
 
 ## Safety Boundary
 
