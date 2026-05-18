@@ -35,11 +35,15 @@ def train_kmer_transformer(model, train_data, val_data, config):
     window_dropout = WindowDropout(config.get("window_dropout", 0.25))
     artifact_dir = Path(config["artifact_dir"])
     artifact_dir.mkdir(parents=True, exist_ok=True)
-    mob_counts = torch.bincount(train_data["mobility"].long(), minlength=3).float().clamp(min=1)
-    mob_weight = (mob_counts.sum() / (3 * mob_counts)).to(device)
-    n_train = len(train_data["features"])
-    amr_pos = float(train_data["amr"].sum().item() / max(1, n_train))
-    exp_pos = float(train_data["expansion"].sum().item() / max(1, n_train))
+    
+    device_train = {k: v.to(device) for k, v in train_data.items()}
+    device_val = {k: v.to(device) for k, v in val_data.items()}
+
+    mob_counts = torch.bincount(device_train["mobility"].long(), minlength=3).float().clamp(min=1)
+    mob_weight = (mob_counts.sum() / (3 * mob_counts))
+    n_train = len(device_train["features"])
+    amr_pos = float(device_train["amr"].sum().item() / max(1, n_train))
+    exp_pos = float(device_train["expansion"].sum().item() / max(1, n_train))
     amr_pos_weight = torch.tensor([(1 - amr_pos) / max(amr_pos, 1e-6)], device=device)
     exp_pos_weight = torch.tensor([(1 - exp_pos) / max(exp_pos, 1e-6)], device=device)
     best_score = -1.0
@@ -48,16 +52,16 @@ def train_kmer_transformer(model, train_data, val_data, config):
     for epoch in range(1, config["epochs"] + 1):
         model.train()
         losses = []
-        idx = torch.randperm(len(train_data["features"]))
-        for start in range(0, len(idx), config["batch_size"]):
+        idx = torch.randperm(n_train, device=device)
+        for start in range(0, n_train, config["batch_size"]):
             bi = idx[start:start + config["batch_size"]]
-            feat = train_data["features"][bi].to(device)
-            spec = train_data["spec_features"][bi].to(device)
-            mask = train_data["masks"][bi].to(device)
-            sid = train_data["scale_ids"][bi].to(device)
-            mob = train_data["mobility"][bi].to(device)
-            amr = train_data["amr"][bi].to(device)
-            exp = train_data["expansion"][bi].to(device)
+            feat = device_train["features"][bi]
+            spec = device_train["spec_features"][bi]
+            mask = device_train["masks"][bi]
+            sid = device_train["scale_ids"][bi]
+            mob = device_train["mobility"][bi]
+            amr = device_train["amr"][bi]
+            exp = device_train["expansion"][bi]
             [feat1, spec1], mask1 = window_dropout([feat, spec], mask, training=True)
             out1 = model(feat1, spec1, mask1, sid)
             [feat2, spec2], mask2 = window_dropout([feat, spec], mask, training=True)
@@ -74,10 +78,10 @@ def train_kmer_transformer(model, train_data, val_data, config):
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
-            losses.append(loss.detach())
+            losses.append(loss.item())
         scheduler.step()
-        avg_loss = torch.stack([val.cpu() for val in losses]).mean().item()
-        val_metrics = evaluate_kmer_transformer(model, val_data, device)
+        avg_loss = sum(losses) / len(losses)
+        val_metrics = evaluate_kmer_transformer(model, device_val, device)
         row = {"epoch": epoch, "train_loss": avg_loss, **val_metrics}
         history.append(row)
         score = val_metrics.get("amr_auroc", 0) + val_metrics.get("expansion_auroc", 0) + val_metrics.get("mobility_balanced_accuracy", 0)
@@ -97,7 +101,7 @@ def train_kmer_transformer(model, train_data, val_data, config):
 def evaluate_kmer_transformer(model, data, device="cpu"):
     model.eval()
     model.to(device)
-    out = model(data["features"].to(device), data["spec_features"].to(device), data["masks"].to(device), data["scale_ids"].to(device))
+    out = model(data["features"], data["spec_features"], data["masks"], data["scale_ids"])
     mob_p = torch.softmax(out["mobility_logits"], dim=-1).cpu().numpy()
     amr_p = torch.sigmoid(out["amr_logits"]).cpu().numpy()
     exp_p = torch.sigmoid(out["expansion_logits"]).cpu().numpy()
