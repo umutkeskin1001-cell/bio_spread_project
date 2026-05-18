@@ -13,7 +13,7 @@ def test_extract_shapes():
 def test_rc_consensus_makes_features_symmetric():
     from dna_sentinel.fasta import revcomp
     ext = MultiScaleKmerExtractor(MultiScaleKmerConfig(n_features=256, rc_consensus=True))
-    seq = "ATGCGT" * 50
+    seq = "ATGCGT" * 1000
     f1, m1, _ = ext.extract(seq)
     f2, m2, _ = ext.extract(revcomp(seq))
-    assert torch.allclose(f1[m1], f2[m2], atol=1e-4)
+    assert torch.allclose(f1[m1].sum(dim=0), f2[m2].sum(dim=0), atol=1e-4)

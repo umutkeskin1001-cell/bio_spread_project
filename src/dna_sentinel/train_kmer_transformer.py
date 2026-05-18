@@ -45,10 +45,12 @@ def train_kmer_transformer(model, train_data, val_data, config):
             exp = train_data["expansion"][bi].to(device)
             feat, mask = window_dropout(feat, mask, training=True)
             out = model(feat, mask, sid)
+            entropy = -(out["evidence_weights"].clamp_min(1e-8) * out["evidence_weights"].clamp_min(1e-8).log()).sum(dim=1).mean()
             loss = (
                 F.cross_entropy(out["mobility_logits"], mob, weight=mob_weight)
                 + F.binary_cross_entropy_with_logits(out["amr_logits"], amr, pos_weight=amr_pos_weight)
                 + F.binary_cross_entropy_with_logits(out["expansion_logits"], exp, pos_weight=exp_pos_weight)
+                + 0.005 * entropy
             )
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
@@ -72,7 +74,7 @@ def train_kmer_transformer(model, train_data, val_data, config):
     (artifact_dir / "kmer_transformer_history.json").write_text(json.dumps(history, indent=2))
     return artifact_dir / "kmer_transformer_best.pt", history
 
-@torch.no_grad()
+@torch.inference_mode()
 def evaluate_kmer_transformer(model, data, device="cpu"):
     model.eval()
     model.to(device)

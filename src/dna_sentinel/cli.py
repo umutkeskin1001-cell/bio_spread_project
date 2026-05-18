@@ -124,6 +124,7 @@ def prepare_kmer_transformer(config: str) -> None:
         ngram_min=kt_cfg.get("ngram_min", 4),
         ngram_max=kt_cfg.get("ngram_max", 6),
         n_features=kt_cfg.get("n_kmer_features", 4096),
+        rc_consensus=kt_cfg.get("rc_consensus", True),
     )
     train_records = load_jsonl(data_dir / "train.jsonl")
     if not kmer_cfg.rc_consensus:

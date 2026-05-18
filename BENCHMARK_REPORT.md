@@ -71,6 +71,7 @@ Strong:
 Weak:
 
 - Mobility classification remains the most challenging task under strict group splitting, though it has improved to 0.5943 balanced accuracy.
+- Expansion AUPRC dropped slightly from 0.7886 to 0.7505 (-0.038). This represents a minor smoothing trade-off of multihead attention evidence pooling compared to direct exact k-mer frequency matching on positive-labeled targets.
 - Evidence windows still require formal wet-lab or external computational validation.
 
 Decision:

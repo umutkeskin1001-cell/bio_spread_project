@@ -44,6 +44,7 @@ kmer_transformer:
   n_kmer_features: 4096
   ngram_min: 4
   ngram_max: 6
+  rc_consensus: true
   window_sizes: [512, 2048, 8192]
   strides: [256, 1024, 4096]
   max_windows: [16, 8, 4]

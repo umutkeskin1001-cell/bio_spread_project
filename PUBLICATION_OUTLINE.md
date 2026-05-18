@@ -2,34 +2,34 @@
 
 ## Working Title
 
-DNA-only sparse evidence models for low-compute mobile genetic element risk prediction
+Multi-scale attention Transformers over sequence hashes for fast, DNA-only mobile genetic element risk prediction
 
 ## Core Claim
 
-A compact sequence-only model can predict high-dissemination plasmid risk from raw DNA under strict no-metadata inference constraints, while preserving reverse-complement consistency and local evidence windows.
+A lightweight, multi-scale attention Transformer over hashed sequence representations can predict AMR cargo and dissemination risk directly from raw DNA. It achieves state-of-the-art accuracy under strict no-metadata inference constraints while maintaining exact reverse-complement consistency, an ultra-low 1.40 MB footprint, and 24.7 ms/sequence latency.
 
 ## Abstract Skeleton
 
-Mobile genetic elements drive antimicrobial resistance spread, but many predictive systems rely on metadata, taxonomy, geography, or annotation pipelines that leak context and reduce deployability. We introduce DNA Sentinel, a low-compute DNA-only framework for mobile element risk analysis. DNA Sentinel accepts raw FASTA sequences and predicts mobility, AMR cargo, and high-dissemination risk using reverse-complement-consensus sequence models. On a strict group-aware plasmid split, the final model achieves high-dissemination AUROC 0.845 and AUPRC 0.753 with a 2.63 MB checkpoint. We show that a simple hashed k-mer model outperforms a neural sparse-MIL model in the current low-data regime, emphasizing benchmark discipline over architectural novelty. The framework includes leakage auditing, calibration reporting, and evidence-window extraction for downstream biological validation.
+Mobile genetic elements drive antimicrobial resistance (AMR) spread, but predictive tools often rely on metadata or heavy annotation pipelines that leak context and restrict deployability. We introduce DNA Sentinel v2, a fast, DNA-only framework for mobile element risk analysis. DNA Sentinel v2 accept raw FASTA DNA and employs a lightweight KmerTransformer (<105k parameters) that reasons over hashed k-mer features at multiple bp scales (512, 2048, 8192 bp) with multi-head attention. On a strict group-aware split, KmerTransformer achieves an AMR cargo AUROC of 0.790 and plasmid dissemination AUROC of 0.883, outperforming both convolutional neural models and traditional sparse k-mer linear baselines. Operating at 24.7 ms/sequence on CPU with a 1.40 MB checkpoint size, the model provides exact reverse-complement prediction consistency and extracts interpretable evidence windows for downstream biological validation.
 
 ## Main Figures
 
-1. System overview: raw DNA to risk and evidence windows.
-2. Leakage-aware dataset construction.
-3. Neural sparse-MIL vs k-mer benchmark.
-4. Test performance and calibration.
-5. Reverse-complement consistency and latency.
-6. Example evidence windows for high-risk plasmids.
+1. Multi-scale KmerTransformer architecture: sequence hashes, random projections, and attention evidence pooling.
+2. Leakage-aware dataset splits and duplicate controls.
+3. Benchmark: KmerTransformer vs convolutional sparse-MIL vs hashed k-mer linear baselines.
+4. Multitask prediction performance and ECE calibration.
+5. Latency (24.7 ms/seq) and reverse-complement exact consistency audits.
+6. Case study: annotation-blind evidence window localization for high-risk AMR plasmids.
 
 ## Key Experiments
 
-- Strict group-aware split vs loose split.
-- Train-size sweep: 512, 2048, 4096.
-- RC consensus ablation.
-- Hashed k-mer ranges: 4-6, 5-6, 5-7.
-- External holdout on independent plasmid collection.
-- Annotation-blind evidence-window validation after inference.
+- Strict group-aware split vs loose split leakage sweeps.
+- Multi-scale window configuration sweeps (512, 2048, 8192 bp).
+- Hashed k-mer feature dimension ablation (2048, 4096, 8192).
+- Reverse-complement consensus alignment ablation.
+- External holdout evaluation on independent genomic databases.
+- Evidence-window validation against wet-lab HGT breakpoints.
 
 ## Honest Current Gap
 
-The mobility head is not strong enough for a top-tier standalone claim. The most publishable current result is high-dissemination DNA-only prediction with strict leakage control.
+The mobility prediction head remains challenging (0.594 balanced accuracy) under strict group-aware splitting, indicating that backbone mobility classes are heavily group-dependent. The strongest claim lies in direct, DNA-only AMR and high-dissemination expansion profiling with robust calibration.

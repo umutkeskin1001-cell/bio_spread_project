@@ -6,21 +6,20 @@ from dna_sentinel.fasta import canonical_dna
 
 
 def window_sequence(seq: str, window: int, stride: int, max_windows: int) -> list[str]:
-    dna = canonical_dna(seq)
-    if not dna:
+    if not seq:
         return [""]
-    if len(dna) <= window:
-        return [dna]
-    starts = list(range(0, max(1, len(dna) - window + 1), stride))
-    if starts[-1] != len(dna) - window:
-        starts.append(len(dna) - window)
+    if len(seq) <= window:
+        return [seq]
+    starts = list(range(0, max(1, len(seq) - window + 1), stride))
+    if starts[-1] != len(seq) - window:
+        starts.append(len(seq) - window)
     if len(starts) > max_windows:
         if max_windows == 1:
             starts = [starts[len(starts) // 2]]
         else:
             step = (len(starts) - 1) / (max_windows - 1)
             starts = [starts[round(i * step)] for i in range(max_windows)]
-    return [dna[s : s + window] for s in starts]
+    return [seq[s : s + window] for s in starts]
 
 
 class DnaTokenizer:

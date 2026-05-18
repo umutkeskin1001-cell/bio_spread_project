@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from dna_sentinel.service import InferenceService
 
-CHECKPOINT = os.getenv("DNA_SENTINEL_CHECKPOINT", "artifacts/dna_sentinel/best.pt")
+CHECKPOINT = os.getenv("DNA_SENTINEL_CHECKPOINT", "artifacts/dna_sentinel/kmer_transformer_best.pt")
 DEVICE = os.getenv("DNA_SENTINEL_DEVICE", "cpu")
 
 service: InferenceService | None = None

@@ -1,4 +1,4 @@
-.PHONY: install test lint prepare train evaluate predict docker-build docker-run clean
+.PHONY: install test lint prepare prepare-kmer-transformer train train-kmer-transformer train-neural train-kmer evaluate evaluate-kmer-transformer evaluate-kmer predict docker-build docker-run clean
 
 install:
 	python3 -m pip install -e ".[dev]"
@@ -11,14 +11,30 @@ lint:
 
 prepare:
 	dna-sentinel prepare --config config/dna_sentinel.yaml
+	dna-sentinel prepare-kmer-transformer --config config/dna_sentinel.yaml
+
+prepare-kmer-transformer:
+	dna-sentinel prepare-kmer-transformer --config config/dna_sentinel.yaml
 
 train:
+	dna-sentinel train-kmer-transformer --config config/dna_sentinel.yaml
+
+train-kmer-transformer:
+	dna-sentinel train-kmer-transformer --config config/dna_sentinel.yaml
+
+train-kmer:
 	dna-sentinel train-kmer --config config/dna_sentinel.yaml
 
 train-neural:
 	dna-sentinel train --config config/dna_sentinel.yaml
 
 evaluate:
+	dna-sentinel evaluate-kmer-transformer --checkpoint artifacts/dna_sentinel/kmer_transformer_best.pt --data-dir data/dna_sentinel
+
+evaluate-kmer-transformer:
+	dna-sentinel evaluate-kmer-transformer --checkpoint artifacts/dna_sentinel/kmer_transformer_best.pt --data-dir data/dna_sentinel
+
+evaluate-kmer:
 	dna-sentinel evaluate-kmer --checkpoint artifacts/dna_sentinel/kmer.joblib --data-dir data/dna_sentinel
 
 predict:

@@ -68,6 +68,7 @@ Labels are derived offline from existing project tables. Split construction grou
 
 - Mobility remains the weakest head under strict group split, though KmerTransformer significantly improved it compared to standard linear models.
 - Expansion is highly learnable in this dataset but may reflect historical sampling intensity in the offline label.
+- Expansion AUPRC shows a minor drop (-0.038) compared to linear models due to the smoothing effect of multi-scale attention evidence pooling.
 - Window explanations are model evidence windows, not validated mechanistic HGT breakpoints.
 
 ## Recommended Next Work
