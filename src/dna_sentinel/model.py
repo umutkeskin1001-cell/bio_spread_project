@@ -114,6 +114,10 @@ class DnaSentinel(nn.Module):
         )
 
 
+_RC_TOKENS_TABLE = None
+
 def _reverse_complement_tokens(tokens: torch.Tensor) -> torch.Tensor:
-    table = torch.tensor([0, 4, 3, 2, 1], device=tokens.device, dtype=tokens.dtype)
-    return table[tokens.flip(dims=[-1])]
+    global _RC_TOKENS_TABLE
+    if _RC_TOKENS_TABLE is None or _RC_TOKENS_TABLE.device != tokens.device or _RC_TOKENS_TABLE.dtype != tokens.dtype:
+        _RC_TOKENS_TABLE = torch.tensor([0, 4, 3, 2, 1], device=tokens.device, dtype=tokens.dtype)
+    return _RC_TOKENS_TABLE[tokens.flip(dims=[-1])]

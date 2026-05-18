@@ -99,9 +99,12 @@ def cluster_split(
             dsu.union(i, exact_seen[digest])
         else:
             exact_seen[digest] = i
-    from multiprocessing import Pool
-    with Pool() as pool:
-        raw_sketches = pool.starmap(_sketch, [(rec.dna, 15, 48) for rec in records])
+    if len(records) <= 64:
+        raw_sketches = [_sketch(rec.dna, 15, 48) for rec in records]
+    else:
+        from multiprocessing import Pool
+        with Pool() as pool:
+            raw_sketches = pool.starmap(_sketch, [(rec.dna, 15, 48) for rec in records])
     sketches = [set(s) for s in raw_sketches]
     buckets: dict[int, list[int]] = {}
     for i, sketch in enumerate(raw_sketches):
