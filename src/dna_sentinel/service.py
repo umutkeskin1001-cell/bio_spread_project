@@ -22,6 +22,8 @@ class InferenceService:
             if "config" in state and "state_dict" in state:
                 from dna_sentinel.kmer_transformer import KmerTransformer
                 self.model = KmerTransformer.load(self.checkpoint_path, device=device)
+                self.model.to(device)
+                self.model.eval()
                 self.model_type = "kmer_transformer"
             else:
                 self.model = load_checkpoint(self.checkpoint_path, device=device)
@@ -32,8 +34,6 @@ class InferenceService:
         if self.model_type == "kmer":
             return self.model.predict_one(sequence_id, dna)
         elif self.model_type == "kmer_transformer":
-            self.model.to(self.device)
-            self.model.eval()
             from dna_sentinel.kmer_features import MultiScaleKmerConfig, MultiScaleKmerExtractor
             from dna_sentinel.tokenizer import window_sequence
             extractor = MultiScaleKmerExtractor(MultiScaleKmerConfig(n_features=self.model.config.n_kmer_features))

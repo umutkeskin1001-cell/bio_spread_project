@@ -1,5 +1,4 @@
-from __future__ import annotations
-
+import numpy as np
 import torch
 
 
@@ -33,7 +32,6 @@ class DnaTokenizer:
         mask = torch.zeros(max_len, dtype=torch.float32)
         length = min(len(seq), max_len)
         if length > 0:
-            import numpy as np
             b = bytearray(seq[:length].encode("ascii", errors="ignore"))
             char_tensor = torch.from_numpy(np.frombuffer(b, dtype=np.uint8))
             ids[:length] = self._ascii_map[char_tensor.long()]

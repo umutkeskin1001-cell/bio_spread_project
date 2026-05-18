@@ -26,6 +26,6 @@ class WindowDropout:
         if not training:
             return features, mask
         B, W = features.shape[:2]
-        keep = torch.bernoulli(torch.full((B, W), 1 - self.drop_rate, device=features.device))
+        keep = (torch.rand((B, W), device=features.device) >= self.drop_rate).float()
         keep[:, 0] = 1.0
         return features * keep.unsqueeze(-1), mask & keep.bool()

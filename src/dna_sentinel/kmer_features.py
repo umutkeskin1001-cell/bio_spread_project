@@ -25,27 +25,33 @@ class PureTensorKmerExtractor:
         self.ngram_min = ngram_min
         self.ngram_max = ngram_max
         self.n_features = n_features
-        self.char_map = np.zeros(256, dtype=np.int64)
+        char_map = torch.zeros(256, dtype=torch.long)
         for idx, char in enumerate(["A", "C", "G", "T"]):
-            self.char_map[ord(char)] = idx
-            self.char_map[ord(char.lower())] = idx
+            char_map[ord(char)] = idx
+            char_map[ord(char.lower())] = idx
+        self.char_map = char_map
+        self.multipliers = {
+            k: 4 ** torch.arange(k - 1, -1, -1, dtype=torch.long)
+            for k in range(ngram_min, ngram_max + 1)
+        }
 
     def transform(self, windows: list[str], device: str = "cpu") -> torch.Tensor:
         n_windows = len(windows)
         if n_windows == 0:
             return torch.zeros((0, self.n_features), dtype=torch.float32, device=device)
         out = torch.zeros((n_windows, self.n_features), dtype=torch.float32, device=device)
+        char_map = self.char_map.to(device)
         for idx, win in enumerate(windows):
             if not win:
                 continue
-            b = np.frombuffer(win.encode("ascii", errors="ignore"), dtype=np.uint8)
+            b = np.frombuffer(win.encode("ascii", errors="ignore"), dtype=np.uint8).copy()
             if len(b) < self.ngram_min:
                 continue
-            base4 = torch.from_numpy(self.char_map[b]).to(device)
+            base4 = char_map[torch.from_numpy(b).long()]
             for k in range(self.ngram_min, min(self.ngram_max + 1, len(b) + 1)):
                 kmers = base4.unfold(dimension=-1, size=k, step=1)
-                multipliers = 4 ** torch.arange(k - 1, -1, -1, dtype=torch.long, device=device)
-                hashes = (kmers * multipliers).sum(dim=-1)
+                mult = self.multipliers[k].to(device)
+                hashes = (kmers * mult).sum(dim=-1)
                 hashed_indices = (hashes * 2654435761) % self.n_features
                 freqs = torch.bincount(hashed_indices, minlength=self.n_features).float()
                 out[idx] += freqs
