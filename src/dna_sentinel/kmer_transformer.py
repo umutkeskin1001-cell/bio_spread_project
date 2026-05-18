@@ -39,7 +39,7 @@ class KmerTransformer(nn.Module):
             norm_first=True,
             activation="gelu",
         )
-        self.encoder = nn.TransformerEncoder(layer, num_layers=self.config.n_layers, norm=nn.LayerNorm(h))
+        self.encoder = nn.TransformerEncoder(layer, num_layers=self.config.n_layers, norm=nn.LayerNorm(h), enable_nested_tensor=False)
         self.evidence_scorer = nn.Sequential(nn.Linear(h, h // 2), nn.GELU(), nn.Linear(h // 2, 1))
         self.mobility_head = nn.Linear(h, 3)
         self.amr_head = nn.Linear(h, 1)
