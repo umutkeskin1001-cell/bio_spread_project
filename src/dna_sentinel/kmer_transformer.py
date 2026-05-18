@@ -1,5 +1,4 @@
-"""KmerTransformer: lightweight Transformer over k-mer hash features."""
-import math
+"""KmerTransformer: Gated Bio-Spectral Transformer over DNA resolving resolution bottlenecks."""
 from dataclasses import asdict, dataclass
 
 import torch
@@ -26,7 +25,8 @@ class KmerTransformer(nn.Module):
         super().__init__()
         self.config = config or KmerTransformerConfig()
         h = self.config.hidden_dim
-        self.register_buffer("random_proj", torch.randn(self.config.n_kmer_features, h) / math.sqrt(h))
+        self.lex_proj = nn.Sequential(nn.Linear(self.config.n_kmer_features, h), nn.GELU())
+        self.spec_proj = nn.Sequential(nn.Linear(512, h), nn.GELU())
         self.pos_embed = nn.Embedding(self.config.max_windows, h)
         self.scale_embed = nn.Embedding(self.config.n_scales, h)
         self.input_norm = nn.LayerNorm(h)
@@ -47,9 +47,12 @@ class KmerTransformer(nn.Module):
         self.logit_scale = nn.Parameter(torch.zeros(3))
         self.scale_weights = nn.Parameter(torch.zeros(3))
 
-    def forward(self, kmer_features, window_mask, scale_ids):
+    def forward(self, kmer_features, spec_features, window_mask, scale_ids):
         B, W, _ = kmer_features.shape
-        x = self.input_norm(kmer_features @ self.random_proj)
+        h_lex = self.lex_proj(kmer_features)
+        h_spec = self.spec_proj(spec_features)
+        x = h_lex * torch.sigmoid(h_spec) + h_spec * torch.sigmoid(h_lex)
+        x = self.input_norm(x)
         pos = torch.arange(W, device=x.device)
         x = x + self.pos_embed(pos) + self.scale_embed(scale_ids)
         x = self.encoder(x, src_key_padding_mask=~window_mask)
@@ -90,6 +93,12 @@ class KmerTransformer(nn.Module):
         model = cls(KmerTransformerConfig(**state["config"]))
         if "scale_weights" not in state["state_dict"]:
             state["state_dict"]["scale_weights"] = torch.zeros(3)
-        model.load_state_dict(state["state_dict"])
+        if "lex_proj.0.weight" not in state["state_dict"]:
+            model.load_state_dict(state["state_dict"], strict=False)
+            if "random_proj" in state["state_dict"]:
+                proj = state["state_dict"]["random_proj"]
+                model.lex_proj[0].weight.data.copy_(proj.t())
+        else:
+            model.load_state_dict(state["state_dict"])
         model.eval()
         return model

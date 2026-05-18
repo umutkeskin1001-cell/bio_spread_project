@@ -1,9 +1,10 @@
-"""Multi-scale k-mer feature extraction."""
+"""Multi-scale k-mer and shift-invariant spectral feature extraction."""
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 from dna_sentinel.dataset import LabeledSequence
 from dna_sentinel.fasta import revcomp
@@ -35,11 +36,15 @@ class PureTensorKmerExtractor:
             for k in range(ngram_min, ngram_max + 1)
         }
 
-    def transform(self, windows: list[str], device: str = "cpu") -> torch.Tensor:
+    def transform(self, windows: list[str], device: str = "cpu") -> tuple[torch.Tensor, torch.Tensor]:
         n_windows = len(windows)
         if n_windows == 0:
-            return torch.zeros((0, self.n_features), dtype=torch.float32, device=device)
-        out = torch.zeros((n_windows, self.n_features), dtype=torch.float32, device=device)
+            return (
+                torch.zeros((0, self.n_features), dtype=torch.float32, device=device),
+                torch.zeros((0, 512), dtype=torch.float32, device=device)
+            )
+        out_kmer = torch.zeros((n_windows, self.n_features), dtype=torch.float32, device=device)
+        out_spec = torch.zeros((n_windows, 512), dtype=torch.float32, device=device)
         char_map = self.char_map.to(device)
         for idx, win in enumerate(windows):
             if not win:
@@ -47,16 +52,26 @@ class PureTensorKmerExtractor:
             b = np.frombuffer(win.encode("ascii", errors="ignore"), dtype=np.uint8).copy()
             if len(b) < self.ngram_min:
                 continue
-            base4 = char_map[torch.from_numpy(b).long()]
+            base4 = char_map[torch.from_numpy(b).long()].to(device)
             for k in range(self.ngram_min, min(self.ngram_max + 1, len(b) + 1)):
                 kmers = base4.unfold(dimension=-1, size=k, step=1)
                 mult = self.multipliers[k].to(device)
                 hashes = (kmers * mult).sum(dim=-1)
                 hashed_indices = (hashes * 2654435761) % self.n_features
-                freqs = torch.bincount(hashed_indices, minlength=self.n_features).float()
-                out[idx] += freqs
-        norms = torch.norm(out, p=2, dim=-1, keepdim=True).clamp_min(1e-8)
-        return out / norms
+                out_kmer[idx] += torch.bincount(hashed_indices, minlength=self.n_features).float()
+            one_hot = F.one_hot(base4.clamp(0, 3), num_classes=4).float()
+            fft_coefs = torch.fft.rfft(one_hot, dim=0)
+            mags = torch.abs(fft_coefs)
+            K = 128
+            M = mags.shape[0]
+            if M >= K:
+                spec_feat = mags[:K, :]
+            else:
+                spec_feat = F.pad(mags, (0, 0, 0, K - M))
+            out_spec[idx] = spec_feat.flatten()
+        norms_kmer = torch.norm(out_kmer, p=2, dim=-1, keepdim=True).clamp_min(1e-8)
+        norms_spec = torch.norm(out_spec, p=2, dim=-1, keepdim=True).clamp_min(1e-8)
+        return out_kmer / norms_kmer, out_spec / norms_spec
 
 class MultiScaleKmerExtractor:
     def __init__(self, config: MultiScaleKmerConfig | None = None):
@@ -67,30 +82,42 @@ class MultiScaleKmerExtractor:
             n_features=self.config.n_features,
         )
 
-    def extract(self, dna: str, device: str = "cpu") -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        all_feat, all_mask, all_sid = [], [], []
+    def extract(self, dna: str, device: str = "cpu") -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        all_kmer, all_spec, all_mask, all_sid = [], [], [], []
         for idx, (ws, st, mw) in enumerate(zip(self.config.window_sizes, self.config.strides, self.config.max_windows)):
             windows = window_sequence(dna, ws, st, mw)
-            feat = self.extractor.transform(windows, device=device).cpu()
+            kmer, spec = self.extractor.transform(windows, device=device)
+            kmer, spec = kmer.cpu(), spec.cpu()
             if self.config.rc_consensus:
-                rc_feat = self.extractor.transform([revcomp(w) for w in windows], device=device).cpu()
-                feat = 0.5 * (feat + rc_feat)
-            actual = feat.shape[0]
-            padded = torch.zeros(mw, self.config.n_features)
-            padded[:min(actual, mw)] = feat[:mw]
+                rc_kmer, rc_spec = self.extractor.transform([revcomp(w) for w in windows], device=device)
+                rc_kmer, rc_spec = rc_kmer.cpu(), rc_spec.cpu()
+                kmer = 0.5 * (kmer + rc_kmer)
+                spec = 0.5 * (spec + rc_spec)
+            actual = kmer.shape[0]
+            padded_kmer = torch.zeros(mw, self.config.n_features)
+            padded_spec = torch.zeros(mw, 512)
+            padded_kmer[:min(actual, mw)] = kmer[:mw]
+            padded_spec[:min(actual, mw)] = spec[:mw]
             mask = torch.zeros(mw, dtype=torch.bool)
             mask[:min(actual, mw)] = True
-            all_feat.append(padded)
+            all_kmer.append(padded_kmer)
+            all_spec.append(padded_spec)
             all_mask.append(mask)
             all_sid.append(torch.full((mw,), idx, dtype=torch.long))
-        return torch.cat(all_feat), torch.cat(all_mask), torch.cat(all_sid)
+        return torch.cat(all_kmer), torch.cat(all_spec), torch.cat(all_mask), torch.cat(all_sid)
 
 def preprocess_all_features(records: list[LabeledSequence], config: MultiScaleKmerConfig, out_path: str | Path) -> None:
     extractor = MultiScaleKmerExtractor(config)
-    feats, masks, sids = [], [], []
+    feats, specs, masks, sids = [], [], [], []
     for rec in records:
-        f, m, s = extractor.extract(rec.dna)
+        f, sp, m, s = extractor.extract(rec.dna)
         feats.append(f)
+        specs.append(sp)
         masks.append(m)
         sids.append(s)
-    torch.save({"features": torch.stack(feats), "masks": torch.stack(masks), "scale_ids": torch.stack(sids)}, out_path)
+    torch.save({
+        "features": torch.stack(feats),
+        "spec_features": torch.stack(specs),
+        "masks": torch.stack(masks),
+        "scale_ids": torch.stack(sids)
+    }, out_path)

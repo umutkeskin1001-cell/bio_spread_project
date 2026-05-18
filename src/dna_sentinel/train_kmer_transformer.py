@@ -40,15 +40,16 @@ def train_kmer_transformer(model, train_data, val_data, config):
         for start in range(0, len(idx), config["batch_size"]):
             bi = idx[start:start + config["batch_size"]]
             feat = train_data["features"][bi].to(device)
+            spec = train_data["spec_features"][bi].to(device)
             mask = train_data["masks"][bi].to(device)
             sid = train_data["scale_ids"][bi].to(device)
             mob = train_data["mobility"][bi].to(device)
             amr = train_data["amr"][bi].to(device)
             exp = train_data["expansion"][bi].to(device)
-            feat1, mask1 = window_dropout(feat, mask, training=True)
-            out1 = model(feat1, mask1, sid)
-            feat2, mask2 = window_dropout(feat, mask, training=True)
-            out2 = model(feat2, mask2, sid)
+            [feat1, spec1], mask1 = window_dropout([feat, spec], mask, training=True)
+            out1 = model(feat1, spec1, mask1, sid)
+            [feat2, spec2], mask2 = window_dropout([feat, spec], mask, training=True)
+            out2 = model(feat2, spec2, mask2, sid)
             loss_task = (
                 F.cross_entropy(out1["mobility_logits"], mob, weight=mob_weight)
                 + F.binary_cross_entropy_with_logits(out1["amr_logits"], amr, pos_weight=amr_pos_weight)
@@ -83,7 +84,7 @@ def train_kmer_transformer(model, train_data, val_data, config):
 def evaluate_kmer_transformer(model, data, device="cpu"):
     model.eval()
     model.to(device)
-    out = model(data["features"].to(device), data["masks"].to(device), data["scale_ids"].to(device))
+    out = model(data["features"].to(device), data["spec_features"].to(device), data["masks"].to(device), data["scale_ids"].to(device))
     mob_p = torch.softmax(out["mobility_logits"], dim=-1).cpu().numpy()
     amr_p = torch.sigmoid(out["amr_logits"]).cpu().numpy()
     exp_p = torch.sigmoid(out["expansion_logits"]).cpu().numpy()

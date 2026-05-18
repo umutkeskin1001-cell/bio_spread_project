@@ -37,11 +37,12 @@ class InferenceService:
             from dna_sentinel.kmer_features import MultiScaleKmerConfig, MultiScaleKmerExtractor
             from dna_sentinel.tokenizer import window_sequence
             extractor = MultiScaleKmerExtractor(MultiScaleKmerConfig(n_features=self.model.config.n_kmer_features))
-            feat, mask, sid = extractor.extract(dna)
+            feat, spec, mask, sid = extractor.extract(dna)
             feat = feat.unsqueeze(0).to(self.device)
+            spec = spec.unsqueeze(0).to(self.device)
             mask = mask.unsqueeze(0).to(self.device)
             sid = sid.unsqueeze(0).to(self.device)
-            out = self.model(feat, mask, sid)
+            out = self.model(feat, spec, mask, sid)
             mobility = torch.softmax(out["mobility_logits"], dim=-1).squeeze(0).cpu().tolist()
             amr = float(torch.sigmoid(out["amr_logits"]).item())
             expansion = float(torch.sigmoid(out["expansion_logits"]).item())

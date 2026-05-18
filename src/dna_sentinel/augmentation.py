@@ -22,10 +22,13 @@ class WindowDropout:
     def __init__(self, drop_rate: float = 0.25):
         self.drop_rate = drop_rate
 
-    def __call__(self, features: torch.Tensor, mask: torch.Tensor, training: bool = True) -> tuple[torch.Tensor, torch.Tensor]:
+    def __call__(self, features: torch.Tensor | list[torch.Tensor], mask: torch.Tensor, training: bool = True):
         if not training:
             return features, mask
-        B, W = features.shape[:2]
-        keep = (torch.rand((B, W), device=features.device) >= self.drop_rate).float()
+        B, W = mask.shape[:2]
+        keep = (torch.rand((B, W), device=mask.device) >= self.drop_rate).float()
         keep[:, 0] = 1.0
-        return features * keep.unsqueeze(-1), mask & keep.bool()
+        keep_u = keep.unsqueeze(-1)
+        if isinstance(features, list):
+            return [feat * keep_u for feat in features], mask & keep.bool()
+        return features * keep_u, mask & keep.bool()

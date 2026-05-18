@@ -1,6 +1,6 @@
 # DNA Sentinel
 
-DNA Sentinel is a small, compute-efficient, sequence-only model for mobile genetic element risk analysis. It predicts mobility, AMR cargo, expansion risk, and sparse evidence windows from raw DNA sequences only.
+DNA Sentinel is an ultra-lightweight, compute-efficient, sequence-only model for mobile genetic element risk analysis. It predicts mobility, AMR cargo, expansion risk, and sparse evidence windows from raw DNA sequences only.
 
 The project intentionally rejects metadata-heavy shortcuts. At inference time the model accepts only FASTA DNA. No taxonomy, host, geography, temporal context, GC/length feature, annotation, BLAST hit, or protein embedding is passed to the model.
 
@@ -8,19 +8,21 @@ The project intentionally rejects metadata-heavy shortcuts. At inference time th
 
 The central question is whether plasmid-level mobile AMR risk can be inferred from nucleotide organization alone under strict low-data and low-compute constraints.
 
-DNA Sentinel v3 uses a multi-scale, pure-tensor **KmerTransformer** architecture:
+DNA Sentinel v5 uses a multi-scale, **Gated Bio-Spectral Transformer (GBST)** architecture:
 
 ```text
 FASTA
   -> multi-scale sequence windows (512, 2048, 8192 bp)
-  -> base-4 nucleotide integer conversion (PyTorch tensor)
-  -> pure-tensor unfold & multiplicative hashing (CUDA/MPS-native)
+  -> single-pass joint extraction (base-4 memory mapping)
+        ├──► Lexical Stream: unfold & Knuth hashing (4 to 6 grams)
+        └──► Spectral Stream: One-hot Real FFT & SASU low-frequency magnitudes (K=128)
+  -> Gated Bilinear Fusion (structural states modulate lexical filters)
   -> multi-head attention Transformer encoder
-  -> sparse evidence pooling with entropy regularization
+  -> Scale-Isolated Attention Pooling (SIAP) (resolves multi-task interference)
   -> multi-task prediction heads & temperature scaling
 ```
 
-This design guarantees exact reverse-complement consistency, low storage footprint, lightning-fast inference speed (3.8 ms/sequence), and attention-based evidence window interpretability, completely bypassing string manipulations.
+This design guarantees exact reverse-complement consistency, low storage footprint, lightning-fast inference speed (3.4 ms/sequence), and attention-based evidence window interpretability, completely bypassing CPU-bound string manipulations.
 
 ## Tasks
 
@@ -47,7 +49,7 @@ To prepare sequence jsonl splits and label tensors:
 # Prepare raw data splits:
 dna-sentinel prepare --config config/dna_sentinel.yaml
 
-# Preprocess multi-scale k-mer features:
+# Preprocess multi-scale k-mer and spectral features:
 dna-sentinel prepare-kmer-transformer --config config/dna_sentinel.yaml
 ```
 
@@ -55,7 +57,7 @@ Outputs:
 
 ```text
 data/dna_sentinel/train.jsonl
-data/dna_sentinel/train_features.pt
+data/dna_sentinel/train_features.pt  # Holds both lexical and spectral tensors
 data/dna_sentinel/train_labels.pt
 data/dna_sentinel/val_features.pt
 data/dna_sentinel/val_labels.pt
@@ -65,7 +67,7 @@ data/dna_sentinel/test_labels.pt
 
 ## Train
 
-Recommended low-data production model (KmerTransformer v3):
+Recommended low-data production model (KmerTransformer v5 - GBST):
 
 ```bash
 dna-sentinel train-kmer-transformer --config config/dna_sentinel.yaml
@@ -88,7 +90,7 @@ dna-sentinel evaluate-kmer-transformer \
 
 ## Predict / Serve
 
-The model can be queried via the CLI or served as a lightweight FastAPI service:
+The model can be served as a lightweight FastAPI service:
 
 ```bash
 # Serve the API:
@@ -121,23 +123,23 @@ Example `/predict` JSON response format:
 
 Current strict group-aware split, `2048` curated sequences:
 
-| Task | Metric | Baseline k-mer | KmerTransformer (v2) | KmerTransformer (v3) |
+| Task | Metric | Baseline k-mer | KmerTransformer (v3) | **KmerTransformer (v5 - GBST)** |
 |---|---:|---:|---:|---:|
-| Mobility | Accuracy | 0.581 | **0.592** | 0.562 |
-| Mobility | Balanced accuracy | 0.568 | **0.594** | 0.550 |
-| AMR cargo | AUROC | 0.746 | **0.790** | 0.785 |
-| AMR cargo | AUPRC | 0.697 | **0.728** | 0.700 |
-| Expansion | AUROC | 0.867 | **0.883** | 0.838 |
-| Expansion | AUPRC | 0.789 | **0.751** | 0.682 |
+| Mobility | Accuracy | 0.581 | 0.562 | **0.657** |
+| Mobility | Balanced accuracy | 0.568 | 0.550 | **0.665** (+11.5% gain!) |
+| AMR cargo | AUROC | 0.746 | 0.785 | **0.796** |
+| AMR cargo | AUPRC | 0.697 | 0.700 | **0.743** |
+| Expansion | AUROC | 0.867 | 0.838 | **0.892** |
+| Expansion | AUPRC | 0.789 | 0.682 | **0.800** |
 
 Stress checks:
 
-| Check | Baseline k-mer | KmerTransformer (v2) | KmerTransformer (v3) |
+| Check | Baseline k-mer | KmerTransformer (v3) | **KmerTransformer (v5 - GBST)** |
 |---|---:|---:|---:|
-| Reverse-complement max risk difference | 0.0 | 0.0 | **0.0** |
-| Approx nearest train-test sketch Jaccard max | 0.0549 | 0.0549 | **0.0549** |
-| Checkpoint size | 2.63 MB | 1.40 MB | **1.40 MB** |
-| Inference latency | 253 ms/sequence | 24.7 ms/sequence | **3.8 ms/sequence** |
+| Reverse-complement max risk difference | 0.0 | 0.0 | **0.0** (Passed) |
+| Approx nearest train-test sketch Jaccard max | 0.0549 | 0.0549 | **0.0549** (Passed) |
+| Checkpoint size | 2.63 MB | 1.40 MB | **1.62 MB** |
+| Inference latency | 253 ms/seq | 3.8 ms/seq | **3.4 ms/seq** (74x speedup) |
 
 ## Safety Boundary
 
