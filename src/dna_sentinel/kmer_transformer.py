@@ -1,4 +1,4 @@
-"""KmerTransformer: Genomic Coordinate Gated Bio-Spectral Bilinear Transformer (GC-GS-C2BT)."""
+"""KmerTransformer: Genomic Coordinate Gated Bio-Spectral BDSG Transformer."""
 import math
 from dataclasses import asdict, dataclass
 
@@ -62,7 +62,6 @@ class KmerTransformer(nn.Module):
         self.expansion_head = nn.Linear(h, 1)
         self.logit_scale = nn.Parameter(torch.zeros(3))
         self.scale_weights = nn.Parameter(torch.zeros(3))
-        self.bilinear_scale = nn.Parameter(torch.ones(1) * 0.5)
 
     def forward(self, kmer_features, spec_features, window_mask, scale_ids):
         B, W, _ = kmer_features.shape
@@ -85,20 +84,13 @@ class KmerTransformer(nn.Module):
         p0 = (x0 * w0.unsqueeze(-1)).sum(dim=1) * has_0
         p1 = (x1 * w1.unsqueeze(-1)).sum(dim=1) * has_1
         p2 = (x2 * w2.unsqueeze(-1)).sum(dim=1) * has_2
-        has_scale = torch.cat([has_0, has_1, has_2], dim=-1)
-        beta_logits = self.scale_weights.view(1, 3).expand(B, 3).clone()
-        beta_logits = beta_logits.masked_fill(~has_scale.bool(), -1e4)
-        beta = F.softmax(beta_logits, dim=-1)
-        pooled_linear = beta[:, 0:1] * p0 + beta[:, 1:2] * p1 + beta[:, 2:3] * p2
-        weights = torch.cat([beta[:, 0:1] * w0, beta[:, 1:2] * w1, beta[:, 2:3] * w2], dim=-1)
 
-        w_exp = weights.unsqueeze(-1)
-        weighted_x = x * w_exp
-        sum_weighted = weighted_x.sum(dim=1)
-        sum_squares = (weighted_x ** 2).sum(dim=1)
-        pooled_bilinear = 0.5 * ((sum_weighted ** 2) - sum_squares)
+        local_features = p0 + p1
+        gated_local = local_features * torch.sigmoid(p2)
+        gated_macro = p2 * torch.sigmoid(local_features)
+        pooled = gated_local + gated_macro
 
-        pooled = pooled_linear + torch.tanh(self.bilinear_scale) * pooled_bilinear
+        weights = torch.cat([w0, w1, w2], dim=-1) / 3.0
         temp = 1.0 + F.softplus(self.logit_scale)
         return {
             "mobility_logits": self.mobility_head(pooled) / temp[0],
@@ -117,11 +109,6 @@ class KmerTransformer(nn.Module):
         model = cls(KmerTransformerConfig(**state["config"]))
         if "scale_weights" not in state["state_dict"]:
             state["state_dict"]["scale_weights"] = torch.zeros(3)
-        if "bilinear_scale" not in state["state_dict"]:
-            state["state_dict"]["bilinear_scale"] = torch.zeros(1)
-        if "coord_proj.0.weight" not in state["state_dict"]:
-            model.load_state_dict(state["state_dict"], strict=False)
-        else:
-            model.load_state_dict(state["state_dict"])
+        model.load_state_dict(state["state_dict"], strict=False)
         model.eval()
         return model

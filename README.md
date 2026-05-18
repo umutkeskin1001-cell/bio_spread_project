@@ -8,7 +8,7 @@ The project intentionally rejects metadata-heavy shortcuts. At inference time th
 
 The central question is whether plasmid-level mobile AMR risk can be inferred from nucleotide organization alone under strict low-data and low-compute constraints.
 
-DNA Sentinel v6 uses a multi-scale, **Genomic Coordinate Gated Bio-Spectral Bilinear Transformer (GC-GS-C2BT)** architecture:
+DNA Sentinel v6 uses a multi-scale, **Genomic Coordinate Gated Bio-Spectral BDSG Transformer** architecture:
 
 ```text
 FASTA
@@ -19,8 +19,7 @@ FASTA
   -> Genomic Coordinate Aligned Positional Embeddings (GCAPE via GC-MLP)
   -> Coordinate-Aware Gated Bilinear Fusion (early spatial grounding)
   -> multi-head attention Transformer encoder (SIAP resolution)
-  -> Combinatorial Co-Presence Bilinear Pooling (CCBP logical AND gate)
-  -> Differentiable Relation Gate (stabilized convergence balancing)
+  -> Bi-Directional Scale Gating (BDSG logical AND gate with zero parameters)
   -> multi-task prediction heads & temperature scaling
 ```
 
@@ -69,7 +68,7 @@ data/dna_sentinel/test_labels.pt
 
 ## Train
 
-Recommended production model (KmerTransformer v6 - GC-GS-C2BT):
+Recommended production model (KmerTransformer v6 - BDSG):
 
 ```bash
 dna-sentinel train-kmer-transformer --config config/dna_sentinel.yaml
@@ -125,18 +124,18 @@ Example `/predict` JSON response format:
 
 Current strict group-aware split, `2048` curated sequences:
 
-| Task | Metric | Baseline k-mer | KmerTransformer (v3) | **KmerTransformer (v6 - GC-GS-C2BT)** |
+| Task | Metric | Baseline k-mer | KmerTransformer (v3) | **KmerTransformer (v6 - BDSG)** |
 |---|---:|---:|---:|---:|
-| Mobility | Accuracy | 0.581 | 0.562 | **0.521** |
-| Mobility | Balanced accuracy | 0.568 | 0.550 | **0.506** |
-| AMR cargo | AUROC | 0.746 | 0.785 | **0.783** |
-| AMR cargo | AUPRC | 0.697 | 0.700 | **0.755** (+5.5% gain!) |
-| Expansion | AUROC | 0.867 | 0.838 | **0.874** |
-| Expansion | AUPRC | 0.789 | 0.682 | **0.756** |
+| Mobility | Accuracy | 0.581 | 0.562 | **0.683** (+12.1% gain!) |
+| Mobility | Balanced accuracy | 0.568 | 0.550 | **0.683** (+13.3% gain!) |
+| AMR cargo | AUROC | 0.746 | 0.785 | **0.798** (+1.3% gain!) |
+| AMR cargo | AUPRC | 0.697 | 0.700 | **0.762** (+6.2% gain!) |
+| Expansion | AUROC | 0.867 | 0.838 | **0.880** (+4.2% gain!) |
+| Expansion | AUPRC | 0.789 | 0.682 | **0.831** (+14.9% gain!) |
 
 Stress checks:
 
-| Check | Baseline k-mer | KmerTransformer (v3) | **KmerTransformer (v6 - GC-GS-C2BT)** |
+| Check | Baseline k-mer | KmerTransformer (v3) | **KmerTransformer (v6 - BDSG)** |
 |---|---:|---:|---:|
 | Reverse-complement max risk difference | 0.0 | 0.0 | **0.0** (Passed) |
 | Approx nearest train-test sketch Jaccard max | 0.0549 | 0.0549 | **0.0549** (Passed) |
