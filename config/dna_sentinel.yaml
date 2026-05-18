@@ -53,7 +53,7 @@ kmer_transformer:
   n_layers: 2
   ffn_ratio: 4
   dropout: 0.25
-  window_dropout: 0.25
+  window_dropout: 0.10
   epochs: 40
   batch_size: 32
   lr: 0.0005

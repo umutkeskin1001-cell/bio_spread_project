@@ -126,12 +126,12 @@ Current strict group-aware split, `2048` curated sequences:
 
 | Task | Metric | Baseline k-mer | KmerTransformer (v3) | **KmerTransformer (v6 - BDSG)** |
 |---|---:|---:|---:|---:|
-| Mobility | Accuracy | 0.581 | 0.562 | **0.683** (+12.1% gain!) |
-| Mobility | Balanced accuracy | 0.568 | 0.550 | **0.683** (+13.3% gain!) |
-| AMR cargo | AUROC | 0.746 | 0.785 | **0.798** (+1.3% gain!) |
-| AMR cargo | AUPRC | 0.697 | 0.700 | **0.762** (+6.2% gain!) |
-| Expansion | AUROC | 0.867 | 0.838 | **0.880** (+4.2% gain!) |
-| Expansion | AUPRC | 0.789 | 0.682 | **0.831** (+14.9% gain!) |
+| Mobility | Accuracy | 0.581 | 0.562 | **0.709** (+14.7% gain!) |
+| Mobility | Balanced accuracy | 0.568 | 0.550 | **0.717** (+16.6% gain!) |
+| AMR cargo | AUROC | 0.746 | 0.785 | **0.803** (+1.7% gain!) |
+| AMR cargo | AUPRC | 0.697 | 0.700 | **0.740** (+4.0% gain!) |
+| Expansion | AUROC | 0.867 | 0.838 | **0.889** (+5.1% gain!) |
+| Expansion | AUPRC | 0.789 | 0.682 | **0.850** (+16.7% gain!) |
 
 Stress checks:
 

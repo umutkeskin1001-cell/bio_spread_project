@@ -92,6 +92,7 @@ def train_kmer_transformer(model, train_data, val_data, config):
     (artifact_dir / "kmer_transformer_history.json").write_text(json.dumps(history, indent=2))
     return artifact_dir / "kmer_transformer_best.pt", history
 
+
 @torch.inference_mode()
 def evaluate_kmer_transformer(model, data, device="cpu"):
     model.eval()

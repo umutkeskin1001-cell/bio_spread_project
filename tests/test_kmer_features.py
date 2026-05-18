@@ -13,6 +13,7 @@ def test_extract_shapes():
     assert sids.shape == (total,)
     assert mask.any()
 
+
 def test_rc_consensus_makes_features_symmetric():
     from dna_sentinel.fasta import revcomp
     ext = MultiScaleKmerExtractor(MultiScaleKmerConfig(n_features=256, rc_consensus=True))

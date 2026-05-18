@@ -21,6 +21,7 @@ class MultiScaleKmerConfig:
     n_features: int = 4096
     rc_consensus: bool = True
 
+
 class PureTensorKmerExtractor:
     def __init__(self, ngram_min: int = 4, ngram_max: int = 6, n_features: int = 4096):
         self.ngram_min = ngram_min
@@ -73,6 +74,7 @@ class PureTensorKmerExtractor:
         norms_spec = torch.norm(out_spec, p=2, dim=-1, keepdim=True).clamp_min(1e-8)
         return out_kmer / norms_kmer, out_spec / norms_spec
 
+
 class MultiScaleKmerExtractor:
     def __init__(self, config: MultiScaleKmerConfig | None = None):
         self.config = config or MultiScaleKmerConfig()
@@ -105,6 +107,7 @@ class MultiScaleKmerExtractor:
             all_mask.append(mask)
             all_sid.append(torch.full((mw,), idx, dtype=torch.long))
         return torch.cat(all_kmer), torch.cat(all_spec), torch.cat(all_mask), torch.cat(all_sid)
+
 
 def preprocess_all_features(records: list[LabeledSequence], config: MultiScaleKmerConfig, out_path: str | Path) -> None:
     extractor = MultiScaleKmerExtractor(config)
