@@ -74,7 +74,6 @@ def train_kmer_transformer(model, train_data, val_data, config):
             out1 = model(feat1, spec1, mask1, sid)
             [feat2, spec2], mask2 = window_dropout([feat, spec], mask, training=True)
             out2 = model(feat2, spec2, mask2, sid)
-
             if lam < 1.0:
                 loss_task = (
                     lam * F.cross_entropy(out1["mobility_logits"], mob, weight=mob_weight)

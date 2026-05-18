@@ -57,7 +57,10 @@ class KmerTransformer(nn.Module):
         )
         self.encoder = nn.TransformerEncoder(layer, num_layers=self.config.n_layers, norm=nn.LayerNorm(h), enable_nested_tensor=False)
         self.evidence_scorer = nn.Sequential(nn.Linear(h, h // 2), nn.GELU(), nn.Linear(h // 2, 1))
-        self.mobility_head = nn.Linear(h, 3)
+        
+        self.dtr_head = nn.Linear(h, 1)
+        self.mpf_head = nn.Linear(h, 1)
+        
         self.amr_head = nn.Linear(h, 1)
         self.expansion_head = nn.Linear(h, 1)
         self.logit_scale = nn.Parameter(torch.zeros(3))
@@ -105,8 +108,22 @@ class KmerTransformer(nn.Module):
 
         weights = torch.cat([w0, w1, w2], dim=-1) / 3.0
         temp = 1.0 + F.softplus(self.logit_scale)
+        
+        dtr_logits = self.dtr_head(pooled).squeeze(-1) / temp[0]
+        mpf_logits = self.mpf_head(pooled).squeeze(-1) / temp[0]
+        p_dtr = torch.sigmoid(dtr_logits)
+        p_mpf = torch.sigmoid(mpf_logits)
+        
+        prob0 = 1.0 - p_dtr
+        prob1 = p_dtr * (1.0 - p_mpf)
+        prob2 = p_dtr * p_mpf
+        probs = torch.stack([prob0, prob1, prob2], dim=-1)
+        mob_logits = torch.log(probs.clamp_min(1e-8))
+
         return {
-            "mobility_logits": self.mobility_head(pooled) / temp[0],
+            "mobility_logits": mob_logits,
+            "dtr_logits": dtr_logits,
+            "mpf_logits": mpf_logits,
             "amr_logits": self.amr_head(pooled).squeeze(-1) / temp[1],
             "expansion_logits": self.expansion_head(pooled).squeeze(-1) / temp[2],
             "evidence_weights": weights,
