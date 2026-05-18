@@ -127,6 +127,8 @@ def prepare_kmer_transformer(config: str) -> None:
         rc_consensus=kt_cfg.get("rc_consensus", True),
     )
     train_records = load_jsonl(data_dir / "train.jsonl")
+    from dna_sentinel.augmentation import circular_augment
+    train_records = circular_augment(train_records, K=5)
     if not kmer_cfg.rc_consensus:
         from dna_sentinel.augmentation import rc_augment
         train_records = rc_augment(train_records)
