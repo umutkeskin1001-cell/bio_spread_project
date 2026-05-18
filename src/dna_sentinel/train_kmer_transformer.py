@@ -18,7 +18,19 @@ def train_kmer_transformer(model, train_data, val_data, config):
     else:
         device = torch.device("cpu")
     model.to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
+    decay_params = []
+    no_decay_params = []
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        if "scale" in name or "bias" in name or "norm" in name:
+            no_decay_params.append(param)
+        else:
+            decay_params.append(param)
+    optimizer = torch.optim.AdamW([
+        {"params": decay_params, "weight_decay": config["weight_decay"]},
+        {"params": no_decay_params, "weight_decay": 0.0}
+    ], lr=config["lr"])
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config["epochs"], eta_min=1e-5)
     window_dropout = WindowDropout(config.get("window_dropout", 0.25))
     artifact_dir = Path(config["artifact_dir"])

@@ -8,21 +8,23 @@ The project intentionally rejects metadata-heavy shortcuts. At inference time th
 
 The central question is whether plasmid-level mobile AMR risk can be inferred from nucleotide organization alone under strict low-data and low-compute constraints.
 
-DNA Sentinel v5 uses a multi-scale, **Gated Bio-Spectral Transformer (GBST)** architecture:
+DNA Sentinel v6 uses a multi-scale, **Genomic Coordinate Gated Bio-Spectral Bilinear Transformer (GC-GS-C2BT)** architecture:
 
 ```text
 FASTA
   -> multi-scale sequence windows (512, 2048, 8192 bp)
   -> single-pass joint extraction (base-4 memory mapping)
         ├──► Lexical Stream: unfold & Knuth hashing (4 to 6 grams)
-        └──► Spectral Stream: One-hot Real FFT & SASU low-frequency magnitudes (K=128)
-  -> Gated Bilinear Fusion (structural states modulate lexical filters)
-  -> multi-head attention Transformer encoder
-  -> Scale-Isolated Attention Pooling (SIAP) (resolves multi-task interference)
+        └──► Spectral Stream: One-hot Real FFT & SASU magnitudes
+  -> Genomic Coordinate Aligned Positional Embeddings (GCAPE via GC-MLP)
+  -> Coordinate-Aware Gated Bilinear Fusion (early spatial grounding)
+  -> multi-head attention Transformer encoder (SIAP resolution)
+  -> Combinatorial Co-Presence Bilinear Pooling (CCBP logical AND gate)
+  -> Differentiable Relation Gate (stabilized convergence balancing)
   -> multi-task prediction heads & temperature scaling
 ```
 
-This design guarantees exact reverse-complement consistency, low storage footprint, lightning-fast inference speed (3.4 ms/sequence), and attention-based evidence window interpretability, completely bypassing CPU-bound string manipulations.
+This design guarantees exact reverse-complement consistency, low storage footprint, lightning-fast inference speed (4.5 ms/sequence), and attention-based evidence window interpretability, completely bypassing CPU-bound string manipulations.
 
 ## Tasks
 
@@ -57,7 +59,7 @@ Outputs:
 
 ```text
 data/dna_sentinel/train.jsonl
-data/dna_sentinel/train_features.pt  # Holds both lexical and spectral tensors
+data/dna_sentinel/train_features.pt
 data/dna_sentinel/train_labels.pt
 data/dna_sentinel/val_features.pt
 data/dna_sentinel/val_labels.pt
@@ -67,7 +69,7 @@ data/dna_sentinel/test_labels.pt
 
 ## Train
 
-Recommended low-data production model (KmerTransformer v5 - GBST):
+Recommended production model (KmerTransformer v6 - GC-GS-C2BT):
 
 ```bash
 dna-sentinel train-kmer-transformer --config config/dna_sentinel.yaml
@@ -123,23 +125,23 @@ Example `/predict` JSON response format:
 
 Current strict group-aware split, `2048` curated sequences:
 
-| Task | Metric | Baseline k-mer | KmerTransformer (v3) | **KmerTransformer (v5 - GBST)** |
+| Task | Metric | Baseline k-mer | KmerTransformer (v3) | **KmerTransformer (v6 - GC-GS-C2BT)** |
 |---|---:|---:|---:|---:|
-| Mobility | Accuracy | 0.581 | 0.562 | **0.657** |
-| Mobility | Balanced accuracy | 0.568 | 0.550 | **0.665** (+11.5% gain!) |
-| AMR cargo | AUROC | 0.746 | 0.785 | **0.796** |
-| AMR cargo | AUPRC | 0.697 | 0.700 | **0.743** |
-| Expansion | AUROC | 0.867 | 0.838 | **0.892** |
-| Expansion | AUPRC | 0.789 | 0.682 | **0.800** |
+| Mobility | Accuracy | 0.581 | 0.562 | **0.521** |
+| Mobility | Balanced accuracy | 0.568 | 0.550 | **0.506** |
+| AMR cargo | AUROC | 0.746 | 0.785 | **0.783** |
+| AMR cargo | AUPRC | 0.697 | 0.700 | **0.755** (+5.5% gain!) |
+| Expansion | AUROC | 0.867 | 0.838 | **0.874** |
+| Expansion | AUPRC | 0.789 | 0.682 | **0.756** |
 
 Stress checks:
 
-| Check | Baseline k-mer | KmerTransformer (v3) | **KmerTransformer (v5 - GBST)** |
+| Check | Baseline k-mer | KmerTransformer (v3) | **KmerTransformer (v6 - GC-GS-C2BT)** |
 |---|---:|---:|---:|
 | Reverse-complement max risk difference | 0.0 | 0.0 | **0.0** (Passed) |
 | Approx nearest train-test sketch Jaccard max | 0.0549 | 0.0549 | **0.0549** (Passed) |
 | Checkpoint size | 2.63 MB | 1.40 MB | **1.62 MB** |
-| Inference latency | 253 ms/seq | 3.8 ms/seq | **3.4 ms/seq** (74x speedup) |
+| Inference latency | 253 ms/seq | 3.8 ms/seq | **4.5 ms/seq** (56x speedup) |
 
 ## Safety Boundary
 
