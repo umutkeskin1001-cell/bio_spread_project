@@ -72,17 +72,30 @@ class KmerTransformer(nn.Module):
         x = self.input_norm(x)
         x = self.encoder(x, src_key_padding_mask=~window_mask)
         ev = self.evidence_scorer(x).squeeze(-1).masked_fill(~window_mask, -1e4)
+
         ev0, ev1, ev2 = ev[:, :16], ev[:, 16:24], ev[:, 24:28]
         x0, x1, x2 = x[:, :16], x[:, 16:24], x[:, 24:28]
         m0, m1, m2 = window_mask[:, :16], window_mask[:, 16:24], window_mask[:, 24:28]
+
+        x_local = torch.cat([x0, x1], dim=1)
+        x_macro = x2
+        h_dim = x_local.shape[-1]
+        attn = torch.bmm(x_local, x_macro.transpose(1, 2)) / math.sqrt(h_dim)
+        attn = attn.masked_fill(~m2.unsqueeze(1), -1e4)
+        attn = F.softmax(attn, dim=-1)
+        x_macro_aligned = torch.bmm(attn, x_macro)
+        x_local_fused = x_local * torch.sigmoid(x_macro_aligned)
+
         w0 = F.softmax(ev0, dim=-1)
         w1 = F.softmax(ev1, dim=-1)
         w2 = F.softmax(ev2, dim=-1)
+
         has_0 = m0.any(dim=-1, keepdim=True).float()
         has_1 = m1.any(dim=-1, keepdim=True).float()
         has_2 = m2.any(dim=-1, keepdim=True).float()
-        p0 = (x0 * w0.unsqueeze(-1)).sum(dim=1) * has_0
-        p1 = (x1 * w1.unsqueeze(-1)).sum(dim=1) * has_1
+
+        p0 = (x_local_fused[:, :16] * w0.unsqueeze(-1)).sum(dim=1) * has_0
+        p1 = (x_local_fused[:, 16:24] * w1.unsqueeze(-1)).sum(dim=1) * has_1
         p2 = (x2 * w2.unsqueeze(-1)).sum(dim=1) * has_2
 
         local_features = p0 + p1
