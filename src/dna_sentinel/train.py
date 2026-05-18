@@ -97,7 +97,7 @@ def train_model(model: DnaSentinel, train_ds: Dataset, val_ds: Dataset, cfg: Tra
             scaler.update()
             losses.append(loss.detach())
         metrics = evaluate(model, val_ds, cfg.batch_size, device=str(device))
-        row = {"epoch": float(epoch), "train_loss": float(torch.stack([l.cpu() for l in losses]).mean().item()), **metrics}
+        row = {"epoch": float(epoch), "train_loss": float(torch.stack([val.cpu() for val in losses]).mean().item()), **metrics}
         history.append(row)
         score = metrics.get("amr_auroc", 0.0) + metrics.get("expansion_auroc", 0.0) + metrics.get("mobility_balanced_accuracy", 0.0)
         if score > best_score:

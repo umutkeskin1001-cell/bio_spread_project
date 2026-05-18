@@ -1,11 +1,14 @@
 """Multi-scale k-mer feature extraction."""
 from dataclasses import dataclass
 from pathlib import Path
+
 import numpy as np
 import torch
+
 from dna_sentinel.dataset import LabeledSequence
 from dna_sentinel.fasta import revcomp
 from dna_sentinel.tokenizer import window_sequence
+
 
 @dataclass(frozen=True)
 class MultiScaleKmerConfig:

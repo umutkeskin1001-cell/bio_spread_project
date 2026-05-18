@@ -1,5 +1,7 @@
 import torch
+
 from dna_sentinel.kmer_features import MultiScaleKmerConfig, MultiScaleKmerExtractor
+
 
 def test_extract_shapes():
     ext = MultiScaleKmerExtractor(MultiScaleKmerConfig(n_features=256))

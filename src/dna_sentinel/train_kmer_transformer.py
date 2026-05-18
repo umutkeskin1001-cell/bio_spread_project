@@ -1,11 +1,13 @@
 """KmerTransformer training and evaluation loop."""
 import json
 from pathlib import Path
+
 import torch
 import torch.nn.functional as F
-from dna_sentinel.kmer_transformer import KmerTransformer
-from dna_sentinel.metrics import binary_metrics, multiclass_metrics
+
 from dna_sentinel.augmentation import WindowDropout
+from dna_sentinel.metrics import binary_metrics, multiclass_metrics
+
 
 def train_kmer_transformer(model, train_data, val_data, config):
     torch.manual_seed(config.get("seed", 42))
@@ -43,22 +45,25 @@ def train_kmer_transformer(model, train_data, val_data, config):
             mob = train_data["mobility"][bi].to(device)
             amr = train_data["amr"][bi].to(device)
             exp = train_data["expansion"][bi].to(device)
-            feat, mask = window_dropout(feat, mask, training=True)
-            out = model(feat, mask, sid)
-            entropy = -(out["evidence_weights"].clamp_min(1e-8) * out["evidence_weights"].clamp_min(1e-8).log()).sum(dim=1).mean()
-            loss = (
-                F.cross_entropy(out["mobility_logits"], mob, weight=mob_weight)
-                + F.binary_cross_entropy_with_logits(out["amr_logits"], amr, pos_weight=amr_pos_weight)
-                + F.binary_cross_entropy_with_logits(out["expansion_logits"], exp, pos_weight=exp_pos_weight)
-                + 0.005 * entropy
+            feat1, mask1 = window_dropout(feat, mask, training=True)
+            out1 = model(feat1, mask1, sid)
+            feat2, mask2 = window_dropout(feat, mask, training=True)
+            out2 = model(feat2, mask2, sid)
+            loss_task = (
+                F.cross_entropy(out1["mobility_logits"], mob, weight=mob_weight)
+                + F.binary_cross_entropy_with_logits(out1["amr_logits"], amr, pos_weight=amr_pos_weight)
+                + F.binary_cross_entropy_with_logits(out1["expansion_logits"], exp, pos_weight=exp_pos_weight)
             )
+            loss_cl = (1.0 - F.cosine_similarity(out1["pooled"], out2["pooled"], dim=-1)).mean()
+            entropy = -(out1["evidence_weights"].clamp_min(1e-8) * out1["evidence_weights"].clamp_min(1e-8).log()).sum(dim=1).mean()
+            loss = loss_task + 0.1 * loss_cl + 0.005 * entropy
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
             losses.append(loss.detach())
         scheduler.step()
-        avg_loss = torch.stack([l.cpu() for l in losses]).mean().item()
+        avg_loss = torch.stack([val.cpu() for val in losses]).mean().item()
         val_metrics = evaluate_kmer_transformer(model, val_data, device)
         row = {"epoch": epoch, "train_loss": avg_loss, **val_metrics}
         history.append(row)

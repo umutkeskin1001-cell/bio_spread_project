@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import torch
 
-from dna_sentinel.fasta import canonical_dna
-
 
 def window_sequence(seq: str, window: int, stride: int, max_windows: int) -> list[str]:
     if not seq:

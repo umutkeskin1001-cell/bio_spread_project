@@ -1,4 +1,5 @@
 from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 import dna_sentinel.api as api
@@ -8,6 +9,7 @@ from dna_sentinel.kmer import KmerConfig, KmerSentinel
 from dna_sentinel.model import DnaSentinel, DnaSentinelConfig
 from dna_sentinel.service import InferenceService
 from dna_sentinel.train import TrainConfig, train_model
+
 
 def test_inference_service_supports_all_formats(tmp_path: Path):
     records = [

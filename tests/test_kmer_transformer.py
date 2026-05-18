@@ -1,5 +1,7 @@
 import torch
+
 from dna_sentinel.kmer_transformer import KmerTransformer, KmerTransformerConfig
+
 
 def test_forward_shapes():
     cfg = KmerTransformerConfig(hidden_dim=32, n_heads=2, n_layers=1, n_kmer_features=256)

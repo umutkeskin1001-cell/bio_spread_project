@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+
 import torch
 
 from dna_sentinel.predict import predict_one as predict_neural
 from dna_sentinel.train import load_checkpoint
+
 
 class InferenceService:
     def __init__(self, checkpoint: str, device: str = "cpu") -> None:
@@ -45,7 +47,7 @@ class InferenceService:
             expansion = float(torch.sigmoid(out["expansion_logits"]).item())
             mobile = max(mobility[1], mobility[2])
             risk = float(math.prod([max(1e-6, mobile), max(1e-6, amr), max(1e-6, expansion)]) ** (1 / 3))
-            
+
             weights = out["evidence_weights"].squeeze(0).cpu()
             active_mask = mask.squeeze(0).cpu().bool()
             all_windows_info = []
@@ -58,7 +60,7 @@ class InferenceService:
                         all_windows_info.append({"start": float(start), "end": float(start + len(w))})
                     else:
                         all_windows_info.append({"start": 0.0, "end": 0.0})
-            
+
             sorted_indices = torch.argsort(weights, descending=True)
             top_windows = []
             for idx in sorted_indices.tolist():
@@ -67,7 +69,7 @@ class InferenceService:
                 if active_mask[idx]:
                     info = all_windows_info[idx]
                     top_windows.append({"start": info["start"], "end": info["end"], "weight": float(weights[idx])})
-            
+
             return {
                 "sequence_id": sequence_id,
                 "mobility_probs": mobility,

@@ -1,9 +1,11 @@
 """KmerTransformer: lightweight Transformer over k-mer hash features."""
 import math
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
 
 @dataclass(frozen=True)
 class KmerTransformerConfig:
@@ -59,6 +61,7 @@ class KmerTransformer(nn.Module):
             "amr_logits": self.amr_head(pooled).squeeze(-1) / temp[1],
             "expansion_logits": self.expansion_head(pooled).squeeze(-1) / temp[2],
             "evidence_weights": weights,
+            "pooled": pooled,
         }
 
     def save(self, path) -> None:

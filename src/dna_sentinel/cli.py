@@ -5,8 +5,8 @@ from dataclasses import asdict
 from pathlib import Path
 
 import click
-import yaml
 import torch
+import yaml
 
 from dna_sentinel.dataset import DnaDataset, load_jsonl
 from dna_sentinel.fasta import read_fasta

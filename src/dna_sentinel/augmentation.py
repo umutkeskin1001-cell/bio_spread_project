@@ -1,7 +1,9 @@
 """Sequence augmentation: RC mirroring and window dropout."""
 import torch
+
 from dna_sentinel.dataset import LabeledSequence
 from dna_sentinel.fasta import revcomp
+
 
 def rc_augment(records: list[LabeledSequence]) -> list[LabeledSequence]:
     augmented = []

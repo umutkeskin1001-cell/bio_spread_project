@@ -1,6 +1,8 @@
 import torch
-from dna_sentinel.augmentation import rc_augment, WindowDropout
+
+from dna_sentinel.augmentation import WindowDropout, rc_augment
 from dna_sentinel.dataset import LabeledSequence
+
 
 def test_rc_augment_doubles_count():
     records = [LabeledSequence("s1", "ACGT" * 10, 1, 0, 0)]
