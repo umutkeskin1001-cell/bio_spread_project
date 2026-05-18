@@ -39,3 +39,23 @@ training:
   seed: 42
   device: auto
   weighted_loss: true
+
+kmer_transformer:
+  n_kmer_features: 4096
+  ngram_min: 4
+  ngram_max: 6
+  window_sizes: [512, 2048, 8192]
+  strides: [256, 1024, 4096]
+  max_windows: [16, 8, 4]
+  hidden_dim: 64
+  n_heads: 4
+  n_layers: 2
+  ffn_ratio: 4
+  dropout: 0.25
+  window_dropout: 0.25
+  epochs: 15
+  batch_size: 32
+  lr: 0.001
+  weight_decay: 0.05
+  patience: 5
+

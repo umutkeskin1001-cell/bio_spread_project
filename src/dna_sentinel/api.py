@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
@@ -10,20 +11,24 @@ from dna_sentinel.service import InferenceService
 CHECKPOINT = os.getenv("DNA_SENTINEL_CHECKPOINT", "artifacts/dna_sentinel/best.pt")
 DEVICE = os.getenv("DNA_SENTINEL_DEVICE", "cpu")
 
-app = FastAPI(title="DNA Sentinel", version="0.1.0")
 service: InferenceService | None = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global service
+    if os.path.exists(CHECKPOINT):
+        service = InferenceService(CHECKPOINT, device=DEVICE)
+    yield
+
+
+app = FastAPI(title="DNA Sentinel", version="0.1.0", lifespan=lifespan)
 
 
 class PredictRequest(BaseModel):
     sequence_id: str = Field(default="query")
     dna: str = Field(min_length=1)
 
-
-@app.on_event("startup")
-def _startup() -> None:
-    global service
-    if os.path.exists(CHECKPOINT):
-        service = InferenceService(CHECKPOINT, device=DEVICE)
 
 
 @app.get("/health")

@@ -12,7 +12,7 @@ from sklearn.feature_extraction.text import HashingVectorizer
 from sklearn.linear_model import LogisticRegression, SGDClassifier
 
 from dna_sentinel.dataset import LabeledSequence
-from dna_sentinel.fasta import revcomp
+from dna_sentinel.fasta import canonical_dna, revcomp
 from dna_sentinel.metrics import binary_metrics, multiclass_metrics
 from dna_sentinel.tokenizer import window_sequence
 
@@ -100,6 +100,7 @@ class KmerSentinel:
         return metrics
 
     def predict_one(self, sequence_id: str, dna: str) -> dict:
+        dna = canonical_dna(dna)
         mobility_probs = self._predict_mobility([dna])[0].tolist()
         amr = float(self._predict_binary(self.amr, [dna])[0])
         expansion = float(self._predict_binary(self.expansion, [dna])[0])

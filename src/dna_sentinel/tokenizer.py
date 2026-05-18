@@ -26,13 +26,21 @@ def window_sequence(seq: str, window: int, stride: int, max_windows: int) -> lis
 class DnaTokenizer:
     vocab = {"N": 0, "A": 1, "C": 2, "G": 3, "T": 4}
 
+    _ascii_map = torch.zeros(256, dtype=torch.long)
+    for _ch, _val in vocab.items():
+        _ascii_map[ord(_ch)] = _val
+        _ascii_map[ord(_ch.lower())] = _val
+
     def encode(self, seq: str, max_len: int) -> tuple[torch.Tensor, torch.Tensor]:
-        dna = canonical_dna(seq)[:max_len]
         ids = torch.zeros(max_len, dtype=torch.long)
         mask = torch.zeros(max_len, dtype=torch.float32)
-        for i, ch in enumerate(dna):
-            ids[i] = self.vocab.get(ch, 0)
-            mask[i] = 1.0
+        length = min(len(seq), max_len)
+        if length > 0:
+            import numpy as np
+            b = bytearray(seq[:length].encode("ascii", errors="ignore"))
+            char_tensor = torch.from_numpy(np.frombuffer(b, dtype=np.uint8))
+            ids[:length] = self._ascii_map[char_tensor.long()]
+            mask[:length] = 1.0
         return ids, mask
 
     def batch_windows(
@@ -51,3 +59,4 @@ class DnaTokenizer:
                 tokens[i, j] = ids
                 masks[i, j] = mask
         return tokens, masks
+

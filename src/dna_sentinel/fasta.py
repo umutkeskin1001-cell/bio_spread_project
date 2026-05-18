@@ -6,15 +6,16 @@ from typing import Iterable, Iterator
 DNA_ALPHABET = frozenset("ACGT")
 _RC_TABLE = str.maketrans("ACGTNacgtn", "TGCANtgcan")
 
+_CANONICAL_TABLE = {i: "N" for i in range(256)}
+for char in "ACGT":
+    _CANONICAL_TABLE[ord(char)] = char
+for char in " \t\r\n-":
+    _CANONICAL_TABLE[ord(char)] = None
+
 
 def canonical_dna(seq: str) -> str:
     """Return uppercase A/C/G/T/N DNA; gaps and whitespace are removed."""
-    out: list[str] = []
-    for ch in seq.upper():
-        if ch in {" ", "\t", "\r", "\n", "-"}:
-            continue
-        out.append(ch if ch in DNA_ALPHABET else "N")
-    return "".join(out)
+    return seq.upper().translate(_CANONICAL_TABLE)
 
 
 def revcomp(seq: str) -> str:
@@ -26,18 +27,16 @@ def read_fasta(path: str | Path) -> Iterator[tuple[str, str]]:
     chunks: list[str] = []
     with Path(path).open("rt", encoding="utf-8", errors="ignore") as handle:
         for raw in handle:
-            line = raw.strip()
-            if not line:
-                continue
-            if line.startswith(">"):
+            if raw.startswith(">"):
                 if sid is not None:
                     yield sid, canonical_dna("".join(chunks))
-                sid = line[1:].split()[0]
+                sid = raw[1:].split()[0]
                 chunks = []
             else:
-                chunks.append(line)
+                chunks.append(raw)
     if sid is not None:
         yield sid, canonical_dna("".join(chunks))
+
 
 
 def write_fasta(records: Iterable[tuple[str, str]], path: str | Path, width: int = 80) -> None:

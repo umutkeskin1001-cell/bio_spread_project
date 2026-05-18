@@ -46,3 +46,25 @@ def test_kmer_sentinel_prediction_is_reverse_complement_consistent():
 
     assert abs(a["risk_score"] - b["risk_score"]) < 1e-9
     assert abs(a["amr_probability"] - b["amr_probability"]) < 1e-9
+
+
+def test_kmer_sentinel_canonicalizes_raw_inputs():
+    records = [
+        LabeledSequence("p1", "ATGCGT" * 20, 2, 1, 1),
+        LabeledSequence("p2", "ATGCGT" * 18, 2, 1, 1),
+        LabeledSequence("n1", "TTAACC" * 20, 0, 0, 0),
+        LabeledSequence("n2", "TTAACC" * 18, 0, 0, 0),
+        LabeledSequence("m1", "CCCCGG" * 20, 1, 0, 0),
+        LabeledSequence("m2", "GGCCCC" * 20, 1, 0, 0),
+    ]
+    model = KmerSentinel.train(records, KmerConfig(n_features=1024, max_iter=200))
+
+    clean_seq = "ATGCGT" * 10
+    noisy_seq = "  atgcgt\nATGCGT\tatgcgt  " * 3 + "atgcgt"
+
+    a = model.predict_one("a", clean_seq)
+    b = model.predict_one("b", noisy_seq)
+
+    assert abs(a["risk_score"] - b["risk_score"]) < 1e-9
+    assert abs(a["amr_probability"] - b["amr_probability"]) < 1e-9
+

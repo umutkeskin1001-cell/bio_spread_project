@@ -49,7 +49,7 @@ def _loss(
     mobility_weight: torch.Tensor | None = None,
     amr_pos_weight: torch.Tensor | None = None,
     expansion_pos_weight: torch.Tensor | None = None,
-) -> tuple[torch.Tensor, dict[str, float]]:
+) -> torch.Tensor:
     tokens = batch["tokens"].to(device)
     mask = batch["mask"].to(device)
     mobility = batch["mobility"].to(device)
@@ -60,8 +60,7 @@ def _loss(
     loss_amr = F.binary_cross_entropy_with_logits(out.amr_logits, amr, pos_weight=amr_pos_weight)
     loss_exp = F.binary_cross_entropy_with_logits(out.expansion_logits, expansion, pos_weight=expansion_pos_weight)
     entropy = -(out.evidence_weights.clamp_min(1e-8) * out.evidence_weights.clamp_min(1e-8).log()).sum(dim=1).mean()
-    total = loss_mob + loss_amr + loss_exp + 0.005 * entropy
-    return total, {"loss": float(total.detach().cpu()), "loss_mobility": float(loss_mob.detach().cpu())}
+    return loss_mob + loss_amr + loss_exp + 0.005 * entropy
 
 
 def train_model(model: DnaSentinel, train_ds: Dataset, val_ds: Dataset, cfg: TrainConfig) -> tuple[Path, list[dict[str, float]]]:
@@ -70,24 +69,35 @@ def train_model(model: DnaSentinel, train_ds: Dataset, val_ds: Dataset, cfg: Tra
     model.to(device)
     artifact_dir = Path(cfg.artifact_dir)
     artifact_dir.mkdir(parents=True, exist_ok=True)
-    loader = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=True)
+    import os
+    loader = DataLoader(
+        train_ds,
+        batch_size=cfg.batch_size,
+        shuffle=True,
+        pin_memory=(device.type == "cuda"),
+        num_workers=min(4, os.cpu_count() or 1) if device.type == "cuda" else 0,
+    )
     opt = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
     weights = _task_weights(train_ds, device) if cfg.weighted_loss else (None, None, None)
     history: list[dict[str, float]] = []
     best_score = -1.0
     ckpt = artifact_dir / "best.pt"
+    scaler = torch.amp.GradScaler("cuda", enabled=(device.type == "cuda"))
     for epoch in range(1, cfg.epochs + 1):
         model.train()
         losses = []
         for batch in loader:
             opt.zero_grad(set_to_none=True)
-            loss, loss_parts = _loss(model, batch, device, *weights)
-            loss.backward()
+            with torch.autocast(device_type=device.type, enabled=(device.type == "cuda")):
+                loss = _loss(model, batch, device, *weights)
+            scaler.scale(loss).backward()
+            scaler.unscale_(opt)
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            opt.step()
-            losses.append(loss_parts["loss"])
+            scaler.step(opt)
+            scaler.update()
+            losses.append(loss.detach())
         metrics = evaluate(model, val_ds, cfg.batch_size, device=str(device))
-        row = {"epoch": float(epoch), "train_loss": float(np.mean(losses)), **metrics}
+        row = {"epoch": float(epoch), "train_loss": float(torch.stack([l.cpu() for l in losses]).mean().item()), **metrics}
         history.append(row)
         score = metrics.get("amr_auroc", 0.0) + metrics.get("expansion_auroc", 0.0) + metrics.get("mobility_balanced_accuracy", 0.0)
         if score > best_score:
@@ -105,12 +115,12 @@ def train_model(model: DnaSentinel, train_ds: Dataset, val_ds: Dataset, cfg: Tra
     return ckpt, history
 
 
-@torch.no_grad()
+@torch.inference_mode()
 def evaluate(model: DnaSentinel, ds: Dataset, batch_size: int = 32, device: str = "auto") -> dict[str, float]:
     dev = _device(device)
     model.to(dev)
     model.eval()
-    loader = DataLoader(ds, batch_size=batch_size)
+    loader = DataLoader(ds, batch_size=batch_size, pin_memory=(dev.type == "cuda"))
     ys_mob, logits_mob, ys_amr, ps_amr, ys_exp, ps_exp = [], [], [], [], [], []
     for batch in loader:
         out = model(batch["tokens"].to(dev), batch["mask"].to(dev))

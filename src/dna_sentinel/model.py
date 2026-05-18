@@ -81,6 +81,7 @@ class DnaSentinel(nn.Module):
 
     def _forward_once(self, tokens: torch.Tensor, mask: torch.Tensor) -> DnaSentinelOutput:
         b, w, length = tokens.shape
+        assert mask.shape == (b, w, length), f"Shape mismatch: tokens {tokens.shape} vs mask {mask.shape}"
         flat_tokens = tokens.reshape(b * w, length)
         flat_mask = mask.reshape(b * w, length)
         z = self.encoder(flat_tokens, flat_mask).reshape(b, w, -1)

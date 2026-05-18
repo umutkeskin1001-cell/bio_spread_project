@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import random
+import zlib
 from dataclasses import dataclass
 from typing import Any
 
@@ -44,19 +45,17 @@ def _sampled_kmers(seq: str, k: int, max_kmers: int = 2000) -> list[str]:
 
 
 def _sketch(seq: str, k: int = 15, n: int = 32) -> tuple[int, ...]:
-    vals = []
-    for kmer in _sampled_kmers(seq, k):
-        digest = hashlib.blake2b(kmer.encode(), digest_size=8).digest()
-        vals.append(int.from_bytes(digest, "little"))
+    vals = [zlib.crc32(kmer.encode()) for kmer in _sampled_kmers(seq, k)]
     return tuple(sorted(vals)[:n])
 
 
-def _sketch_similarity(a: tuple[int, ...], b: tuple[int, ...]) -> float:
-    sa, sb = set(a), set(b)
+
+def _sketch_similarity(sa: set[int], sb: set[int]) -> float:
     if not sa and not sb:
         return 1.0
     overlap = len(sa & sb)
-    return max(overlap / max(1, len(sa | sb)), overlap / max(1, min(len(sa), len(sb))))
+    union_len = len(sa) + len(sb) - overlap
+    return max(overlap / max(1, union_len), overlap / max(1, min(len(sa), len(sb))))
 
 
 class _DSU:
@@ -100,9 +99,12 @@ def cluster_split(
             dsu.union(i, exact_seen[digest])
         else:
             exact_seen[digest] = i
-    sketches = [_sketch(rec.dna, k=15, n=48) for rec in records]
+    from multiprocessing import Pool
+    with Pool() as pool:
+        raw_sketches = pool.starmap(_sketch, [(rec.dna, 15, 48) for rec in records])
+    sketches = [set(s) for s in raw_sketches]
     buckets: dict[int, list[int]] = {}
-    for i, sketch in enumerate(sketches):
+    for i, sketch in enumerate(raw_sketches):
         for key in sketch[:12]:
             buckets.setdefault(key, []).append(i)
     seen: set[tuple[int, int]] = set()

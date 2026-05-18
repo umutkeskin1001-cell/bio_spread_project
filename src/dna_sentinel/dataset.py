@@ -26,31 +26,29 @@ class LabeledSequence:
 
 class DnaDataset(Dataset):
     def __init__(self, records: list[LabeledSequence], window_size: int, stride: int, max_windows: int) -> None:
-        self.records = [r.clean() for r in records if r.dna]
+        self.records = [r for r in records if r.dna]
         self.window_size = window_size
         self.stride = stride
         self.max_windows = max_windows
         self.tokenizer = DnaTokenizer()
-        self._tokens: list[torch.Tensor] = []
-        self._masks: list[torch.Tensor] = []
-        for rec in self.records:
-            tokens, mask = self.tokenizer.batch_windows([rec.dna], self.window_size, self.stride, self.max_windows)
-            self._tokens.append(tokens.squeeze(0).to(torch.uint8))
-            self._masks.append(mask.squeeze(0).to(torch.bool))
 
     def __len__(self) -> int:
         return len(self.records)
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor | str]:
         rec = self.records[idx]
+        tokens, mask = self.tokenizer.batch_windows(
+            [rec.dna], self.window_size, self.stride, self.max_windows
+        )
         return {
             "sequence_id": rec.sequence_id,
-            "tokens": self._tokens[idx].long(),
-            "mask": self._masks[idx].float(),
+            "tokens": tokens.squeeze(0).long(),
+            "mask": mask.squeeze(0).float(),
             "mobility": torch.tensor(rec.mobility, dtype=torch.long),
             "amr": torch.tensor(float(rec.amr), dtype=torch.float32),
             "expansion": torch.tensor(float(rec.expansion), dtype=torch.float32),
         }
+
 
 
 def save_jsonl(records: list[LabeledSequence], path: str | Path) -> None:

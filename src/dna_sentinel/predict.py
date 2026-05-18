@@ -20,7 +20,7 @@ class Prediction:
     top_windows: list[dict[str, float]]
 
 
-@torch.no_grad()
+@torch.inference_mode()
 def predict_one(model: DnaSentinel, sequence_id: str, dna: str, device: str = "cpu", top_k: int = 5) -> Prediction:
     model.to(device)
     model.eval()
