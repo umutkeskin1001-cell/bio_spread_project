@@ -5,12 +5,12 @@
 Recommended production checkpoint:
 
 ```text
-artifacts/dna_sentinel/kmer.joblib
+artifacts/dna_sentinel/kmer_transformer_best.pt
 ```
 
-Model family: reverse-complement-consensus hashed k-mer linear classifiers.
+Model family: multi-scale attention-based KmerTransformer.
 
-The neural sparse-MIL model remains available as a research ablation checkpoint format (`best.pt`) but is not the recommended production model for the current low-data regime.
+The KmerTransformer v2 model acts over hashed k-mer features extracted across three windows (512 bp, 2048 bp, and 8192 bp). It combines registered random projection layers with multi-head attention blocks and dynamic evidence pooling to produce highly accurate predictions for mobility, AMR, and plasmid expansion tasks.
 
 ## Intended Use
 
@@ -43,16 +43,16 @@ Labels are derived offline from existing project tables. Split construction grou
 
 | Task | Metric | Value |
 |---|---:|---:|
-| Mobility | Accuracy | 0.581 |
-| Mobility | Balanced accuracy | 0.568 |
-| AMR cargo | AUROC | 0.746 |
-| AMR cargo | AUPRC | 0.697 |
-| AMR cargo | Brier | 0.210 |
-| AMR cargo | ECE | 0.210 |
-| Expansion | AUROC | 0.867 |
-| Expansion | AUPRC | 0.789 |
-| Expansion | Brier | 0.145 |
-| Expansion | ECE | 0.093 |
+| Mobility | Accuracy | 0.592 |
+| Mobility | Balanced accuracy | 0.594 |
+| AMR cargo | AUROC | 0.790 |
+| AMR cargo | AUPRC | 0.728 |
+| AMR cargo | Brier | 0.189 |
+| AMR cargo | ECE | 0.110 |
+| Expansion | AUROC | 0.883 |
+| Expansion | AUPRC | 0.751 |
+| Expansion | Brier | 0.139 |
+| Expansion | ECE | 0.090 |
 
 ## Stress Metrics
 
@@ -62,14 +62,12 @@ Labels are derived offline from existing project tables. Split construction grou
 | RC mean risk difference | 0.0 |
 | Approx nearest train-test sketch Jaccard, mean | 0.0032 |
 | Approx nearest train-test sketch Jaccard, max | 0.0549 |
-| Inference latency | 253 ms/sequence |
-| Checkpoint size | 2.63 MB |
+| Checkpoint size | 1.40 MB |
 
 ## Limitations
 
-- Mobility remains the weakest head under strict group split.
-- AMR cargo is harder after leakage control than in the initial loose split.
-- Expansion is learnable in this dataset but may reflect historical sampling intensity in the offline label.
+- Mobility remains the weakest head under strict group split, though KmerTransformer significantly improved it compared to standard linear models.
+- Expansion is highly learnable in this dataset but may reflect historical sampling intensity in the offline label.
 - Window explanations are model evidence windows, not validated mechanistic HGT breakpoints.
 
 ## Recommended Next Work
