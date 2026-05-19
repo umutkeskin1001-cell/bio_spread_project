@@ -128,10 +128,15 @@ def train_kmer_transformer(model, train_data, val_data, config):
     exp_pos_weight = torch.tensor([(1 - exp_pos) / max(exp_pos, 1e-6)], device=device)
 
     best_score, patience_counter, history = -1.0, 0, []
+    loss_buffer = {"mob": [], "amr": [], "exp": []}
+    w_mob, w_amr, w_exp = 1.0, 1.0, 1.0
 
     for epoch in range(1, config["epochs"] + 1):
         model.train()
         losses = []
+        losses_mob_epoch = []
+        losses_amr_epoch = []
+        losses_exp_epoch = []
         idx = torch.randperm(n_train, device=device)
         for start in range(0, n_train, config["batch_size"]):
             bi = idx[start:start + config["batch_size"]]
@@ -147,11 +152,11 @@ def train_kmer_transformer(model, train_data, val_data, config):
             loss_amr = binary_focal_loss(out1["amr_logits"], amr, pos_weight=amr_pos_weight, gamma=2.0)
             loss_exp = binary_focal_loss(out1["expansion_logits"], exp, pos_weight=exp_pos_weight, gamma=2.0)
 
-            loss_task = (
-                torch.exp(-model.log_vars[0]) * loss_mob + model.log_vars[0] +
-                torch.exp(-model.log_vars[1]) * loss_amr + model.log_vars[1] +
-                torch.exp(-model.log_vars[2]) * loss_exp + model.log_vars[2]
-            )
+            loss_task = w_mob * loss_mob + w_amr * loss_amr + w_exp * loss_exp
+
+            losses_mob_epoch.append(loss_mob.item())
+            losses_amr_epoch.append(loss_amr.item())
+            losses_exp_epoch.append(loss_exp.item())
 
             with torch.no_grad():
                 ema_out = ema_model(feat1, spec1, mask1, sid)
@@ -174,6 +179,23 @@ def train_kmer_transformer(model, train_data, val_data, config):
             optimizer.step()
             update_ema(model, ema_model, ema_beta)
             losses.append(loss.item())
+
+        avg_mob_loss = sum(losses_mob_epoch) / len(losses_mob_epoch)
+        avg_amr_loss = sum(losses_amr_epoch) / len(losses_amr_epoch)
+        avg_exp_loss = sum(losses_exp_epoch) / len(losses_exp_epoch)
+
+        loss_buffer["mob"].append(avg_mob_loss)
+        loss_buffer["amr"].append(avg_amr_loss)
+        loss_buffer["exp"].append(avg_exp_loss)
+
+        if len(loss_buffer["mob"]) >= 2:
+            r_mob = loss_buffer["mob"][-1] / (loss_buffer["mob"][-2] + 1e-8)
+            r_amr = loss_buffer["amr"][-1] / (loss_buffer["amr"][-2] + 1e-8)
+            r_exp = loss_buffer["exp"][-1] / (loss_buffer["exp"][-2] + 1e-8)
+
+            r_tensor = torch.tensor([r_mob, r_amr, r_exp])
+            weights = 3.0 * F.softmax(r_tensor / 2.0, dim=0)
+            w_mob, w_amr, w_exp = weights[0].item(), weights[1].item(), weights[2].item()
 
         scheduler.step()
         avg_loss = sum(losses) / len(losses)

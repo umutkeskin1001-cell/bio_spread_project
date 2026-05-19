@@ -77,7 +77,11 @@ class KmerTransformer(nn.Module):
             for _ in range(self.config.n_layers)
         ])
         self.encoder_norm = nn.LayerNorm(h)
-        self.evidence_scorer = nn.Sequential(nn.Linear(h, h // 2), nn.GELU(), nn.Linear(h // 2, 1))
+
+        self.task_evidence_scorers = nn.ModuleList([
+            nn.Sequential(nn.Linear(h, h // 2), nn.GELU(), nn.Linear(h // 2, 1))
+            for _ in range(3)
+        ])
 
         self.cross_gate = nn.Sequential(nn.Linear(h, h), nn.GELU())
         self.local_norm = nn.LayerNorm(h)
@@ -99,6 +103,20 @@ class KmerTransformer(nn.Module):
         self.register_buffer("exp_calib_b", torch.tensor(0.0))
         self.register_buffer("mobility_calib_t", torch.tensor(1.0))
 
+    def _pool_with_evidence(self, x_local, x_macro, window_mask, ev_task):
+        slices = [(0, 16, True), (16, 24, True), (24, 28, False)]
+        pooled_scales = []
+        for start, end, is_local in slices:
+            sub_x = x_local[:, start:end] if is_local else x_macro
+            sub_mask = window_mask[:, start:end]
+            sub_ev = ev_task[:, start:end].masked_fill(~sub_mask, -1e4)
+            w = sub_ev.softmax(dim=-1).unsqueeze(-1)
+            p = (sub_x * w).sum(dim=1) * sub_mask.any(dim=-1, keepdim=True).float()
+            pooled_scales.append(p)
+        p0, p1, p2 = pooled_scales
+        local_features = p0 + p1
+        return local_features * torch.sigmoid(p2) + p2 * torch.sigmoid(local_features)
+
     def forward(self, kmer_features, spec_features, window_mask, scale_ids):
         h_lex = self.lex_proj(kmer_features)
         h_spec = self.spec_proj(spec_features)
@@ -113,7 +131,6 @@ class KmerTransformer(nn.Module):
         for layer in self.encoder:
             x = layer(x, window_mask)
         x = self.encoder_norm(x)
-        ev = self.evidence_scorer(x).squeeze(-1)
 
         x_local, x_macro = x[:, :24], x[:, 24:]
         m_macro = window_mask[:, 24:]
@@ -123,32 +140,33 @@ class KmerTransformer(nn.Module):
         x_local = self.local_norm(x_local + torch.sigmoid(self.cross_gate(context)) * context)
         x_macro = self.macro_norm(x_macro)
 
-        pooled_scales = []
-        slices = [(0, 16), (16, 24), (24, 28)]
-        for i, (start, end) in enumerate(slices):
-            sub_x = x_local[:, start:end] if i < 2 else x_macro
-            sub_mask = window_mask[:, start:end]
-            sub_ev = ev[:, start:end].masked_fill(~sub_mask, -1e4)
-            w = sub_ev.softmax(dim=-1).unsqueeze(-1)
-            p = (sub_x * w).sum(dim=1) * sub_mask.any(dim=-1, keepdim=True).float()
-            pooled_scales.append(p)
+        ev_mob = self.task_evidence_scorers[0](x).squeeze(-1)
+        ev_amr = self.task_evidence_scorers[1](x).squeeze(-1)
+        ev_exp = self.task_evidence_scorers[2](x).squeeze(-1)
 
-        p0, p1, p2 = pooled_scales
-        local_features = p0 + p1
-        pooled = local_features * torch.sigmoid(p2) + p2 * torch.sigmoid(local_features)
+        pooled_mob_raw = self._pool_with_evidence(x_local, x_macro, window_mask, ev_mob)
+        pooled_amr_raw = self._pool_with_evidence(x_local, x_macro, window_mask, ev_amr)
+        pooled_exp_raw = self._pool_with_evidence(x_local, x_macro, window_mask, ev_exp)
 
-        pooled_mob = self.mob_proj(pooled)
-        pooled_amr = self.amr_proj(pooled)
-        pooled_exp = self.exp_proj(pooled)
+        pooled_mob = self.mob_proj(pooled_mob_raw)
+        pooled_amr = self.amr_proj(pooled_amr_raw)
+        pooled_exp = self.exp_proj(pooled_exp_raw)
 
-        weights = ev.masked_fill(~window_mask, -1e4).softmax(dim=-1)
+        weights_mob = ev_mob.masked_fill(~window_mask, -1e4).softmax(dim=-1)
+        weights_amr = ev_amr.masked_fill(~window_mask, -1e4).softmax(dim=-1)
+        weights_exp = ev_exp.masked_fill(~window_mask, -1e4).softmax(dim=-1)
+        weights_avg = torch.stack([weights_mob, weights_amr, weights_exp]).mean(dim=0)
+
         temp = 1.0 + F.softplus(self.logit_scale)
         return {
             "mobility_logits": (self.mobility_head(pooled_mob) / temp[0]) / self.mobility_calib_t,
             "amr_logits": (self.amr_head(pooled_amr).squeeze(-1) / temp[1]) * self.amr_calib_w + self.amr_calib_b,
             "expansion_logits": (self.expansion_head(pooled_exp).squeeze(-1) / temp[2]) * self.exp_calib_w + self.exp_calib_b,
-            "evidence_weights": weights,
-            "pooled": pooled,
+            "evidence_weights": weights_avg,
+            "evidence_weights_mob": weights_mob,
+            "evidence_weights_amr": weights_amr,
+            "evidence_weights_exp": weights_exp,
+            "pooled": pooled_mob_raw,
         }
 
     def save(self, path) -> None:
