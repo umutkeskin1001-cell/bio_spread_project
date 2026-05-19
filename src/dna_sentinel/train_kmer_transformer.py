@@ -128,7 +128,7 @@ def train_kmer_transformer(model, train_data, val_data, config):
             amr = device_train["amr"][bi]
             exp = device_train["expansion"][bi]
             
-            if torch.rand(1).item() < 0.3 and len(bi) > 1:
+            if torch.rand(1).item() < 0.15 and len(bi) > 1:
                 lam = float(torch.distributions.Beta(0.2, 0.2).sample())
                 idx_mix = torch.randperm(len(bi), device=device)
                 feat = lam * feat + (1.0 - lam) * feat[idx_mix]
