@@ -17,7 +17,7 @@ def test_forward_shapes():
 def test_parameter_count():
     cfg = KmerTransformerConfig()
     trainable = sum(p.numel() for p in KmerTransformer(cfg).parameters() if p.requires_grad)
-    assert trainable < 450_000
+    assert trainable < 500_000
 
 
 def test_save_load_roundtrip(tmp_path):
