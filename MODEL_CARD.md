@@ -43,16 +43,16 @@ Labels are derived offline from existing project tables. Split construction grou
 
 | Task | Metric | Value |
 |---|---:|---:|
-| Mobility | Accuracy | **0.6943** |
-| Mobility | Balanced accuracy | **0.7024** |
-| AMR cargo | AUROC | **0.8117** |
-| AMR cargo | AUPRC | **0.7768** |
-| AMR cargo | Brier | **0.1839** |
-| AMR cargo | ECE | **0.1359** |
-| Expansion | AUROC | **0.8848** |
-| Expansion | AUPRC | **0.8318** |
-| Expansion | Brier | **0.1375** |
-| Expansion | ECE | **0.1212** |
+| Mobility | Accuracy | **0.6453** |
+| Mobility | Balanced accuracy | **0.6434** |
+| AMR cargo | AUROC | **0.8069** |
+| AMR cargo | AUPRC | **0.7380** |
+| AMR cargo | Brier | **0.1743** |
+| AMR cargo | ECE | **0.0715** |
+| Expansion | AUROC | **0.8700** |
+| Expansion | AUPRC | **0.8226** |
+| Expansion | Brier | **0.1299** |
+| Expansion | ECE | **0.0653** |
 
 ## Stress Metrics
 

@@ -1,6 +1,6 @@
 import torch
 
-from dna_sentinel.kmer_features import MultiScaleKmerConfig, MultiScaleKmerExtractor
+from dna_sentinel.features import MultiScaleKmerConfig, MultiScaleKmerExtractor
 
 
 def test_extract_shapes():
@@ -15,7 +15,7 @@ def test_extract_shapes():
 
 
 def test_rc_consensus_makes_features_symmetric():
-    from dna_sentinel.fasta import revcomp
+    from dna_sentinel.utils import revcomp
     ext = MultiScaleKmerExtractor(MultiScaleKmerConfig(n_features=256, rc_consensus=True))
     seq = "ATGCGT" * 1000
     f1, s1, m1, _ = ext.extract(seq)

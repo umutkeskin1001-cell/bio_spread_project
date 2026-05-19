@@ -1,6 +1,6 @@
 import torch
 
-from dna_sentinel.kmer_transformer import KmerTransformer, KmerTransformerConfig
+from dna_sentinel.model import KmerTransformer, KmerTransformerConfig
 
 
 def test_forward_shapes():
@@ -13,10 +13,12 @@ def test_forward_shapes():
     assert out["evidence_weights"].shape == (4, 28)
     assert torch.allclose(out["evidence_weights"].sum(dim=1), torch.ones(4), atol=1e-5)
 
+
 def test_parameter_count():
     cfg = KmerTransformerConfig()
     trainable = sum(p.numel() for p in KmerTransformer(cfg).parameters() if p.requires_grad)
     assert trainable < 450_000
+
 
 def test_save_load_roundtrip(tmp_path):
     cfg = KmerTransformerConfig(hidden_dim=32, n_heads=2, n_layers=1, n_kmer_features=256)

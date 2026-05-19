@@ -1,6 +1,5 @@
-"""DNA Sentinel: sequence-only mobile genetic element risk modeling."""
+"""DNA Sentinel: sequence-only mobile genetic element risk modeling (Multi-Scale K-mer Transformer)."""
 
-from dna_sentinel.kmer_transformer import KmerTransformer, KmerTransformerConfig
-from dna_sentinel.model import DnaSentinel, DnaSentinelConfig
+from dna_sentinel.model import KmerTransformer, KmerTransformerConfig
 
-__all__ = ["DnaSentinel", "DnaSentinelConfig", "KmerTransformer", "KmerTransformerConfig"]
+__all__ = ["KmerTransformer", "KmerTransformerConfig"]

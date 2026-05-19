@@ -1,0 +1,2 @@
+[console_scripts]
+dna-sentinel = dna_sentinel.cli:cli

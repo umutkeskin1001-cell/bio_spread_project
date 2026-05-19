@@ -40,16 +40,16 @@ Split is group-aware and exact-duplicate-aware. Metadata is used only to constru
 
 | Task | Metric | Final k-mer | Standard KmerTransformer | **DNA Sentinel KmerTransformer (BDSG)** |
 |---|---:|---:|---:|---:|
-| Mobility | Accuracy | 0.5811 | 0.5623 | **0.6943** |
-| Mobility | Balanced accuracy | 0.5682 | 0.5503 | **0.7024** |
-| AMR cargo | AUROC | 0.7463 | 0.7854 | **0.8117** |
-| AMR cargo | AUPRC | 0.6970 | 0.6996 | **0.7768** |
-| AMR cargo | Brier | 0.2104 | 0.1901 | **0.1839** |
-| AMR cargo | ECE | 0.2096 | 0.1333 | **0.1359** |
-| Expansion | AUROC | 0.8674 | 0.8379 | **0.8848** |
-| Expansion | AUPRC | 0.7886 | 0.6821 | **0.8318** |
-| Expansion | Brier | 0.1449 | 0.1609 | **0.1375** |
-| Expansion | ECE | 0.0934 | 0.1092 | **0.1212** |
+| Mobility | Accuracy | 0.5811 | 0.5623 | **0.6453** |
+| Mobility | Balanced accuracy | 0.5682 | 0.5503 | **0.6434** |
+| AMR cargo | AUROC | 0.7463 | 0.7854 | **0.8069** |
+| AMR cargo | AUPRC | 0.6970 | 0.6996 | **0.7380** |
+| AMR cargo | Brier | 0.2104 | 0.1901 | **0.1743** |
+| AMR cargo | ECE | 0.2096 | 0.1333 | **0.0715** |
+| Expansion | AUROC | 0.8674 | 0.8379 | **0.8700** |
+| Expansion | AUPRC | 0.7886 | 0.6821 | **0.8226** |
+| Expansion | Brier | 0.1449 | 0.1609 | **0.1299** |
+| Expansion | ECE | 0.0934 | 0.1092 | **0.0653** |
 
 ## Stress Tests
 

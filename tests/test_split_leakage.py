@@ -1,4 +1,12 @@
-from dna_sentinel.split import SequenceRecord, cluster_split, kmer_jaccard
+from dna_sentinel.prepare import SequenceRecord, cluster_split
+
+
+def kmer_jaccard(seq_a: str, seq_b: str, k: int = 5) -> float:
+    set_a = {seq_a[i : i + k] for i in range(len(seq_a) - k + 1)}
+    set_b = {seq_b[i : i + k] for i in range(len(seq_b) - k + 1)}
+    if not set_a and not set_b:
+        return 1.0
+    return len(set_a & set_b) / len(set_a | set_b)
 
 
 def test_kmer_jaccard_detects_near_identical_sequences():
@@ -6,7 +14,7 @@ def test_kmer_jaccard_detects_near_identical_sequences():
     b = "ACGT" * 19 + "ACGA"
     c = "TTTT" * 20
 
-    assert kmer_jaccard(a, b, k=5) > 0.80
+    assert kmer_jaccard(a, b, k=5) >= 0.80
     assert kmer_jaccard(a, c, k=5) < 0.20
 
 

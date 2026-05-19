@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from dna_sentinel.fasta import canonical_dna, read_fasta, revcomp, write_fasta
+from dna_sentinel.utils import canonical_dna, read_fasta, revcomp, write_fasta
 
 
 def test_canonical_dna_uppercases_and_masks_ambiguous_bases():

@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from dna_sentinel.service import InferenceService
+from dna_sentinel.utils import InferenceService
 
 CHECKPOINT = os.getenv("DNA_SENTINEL_CHECKPOINT", "artifacts/dna_sentinel/kmer_transformer_best.pt")
 DEVICE = os.getenv("DNA_SENTINEL_DEVICE", "cpu")
