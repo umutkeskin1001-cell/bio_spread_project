@@ -5,6 +5,7 @@ from pathlib import Path
 
 import torch
 
+from dna_sentinel.fasta import canonical_dna
 from dna_sentinel.predict import predict_one as predict_neural
 from dna_sentinel.train import load_checkpoint
 
@@ -31,6 +32,7 @@ class InferenceService:
 
     @torch.inference_mode()
     def predict(self, sequence_id: str, dna: str) -> dict:
+        dna = canonical_dna(dna)
         if self.model_type == "kmer":
             return self.model.predict_one(sequence_id, dna)
         elif self.model_type == "kmer_transformer":
@@ -47,7 +49,7 @@ class InferenceService:
             amr = float(torch.sigmoid(out["amr_logits"]).item())
             expansion = float(torch.sigmoid(out["expansion_logits"]).item())
             mobile = max(mobility[1], mobility[2])
-            risk = float(math.prod([max(1e-6, mobile), max(1e-6, amr), max(1e-6, expansion)]) ** (1 / 3))
+            risk = float(((mobile**2 + amr**2 + expansion**2) / 3.0)**0.5)
 
             weights = out["evidence_weights"].squeeze(0).cpu()
             active_mask = mask.squeeze(0).cpu().bool()

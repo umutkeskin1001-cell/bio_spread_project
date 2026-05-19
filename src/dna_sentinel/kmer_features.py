@@ -27,7 +27,7 @@ class PureTensorKmerExtractor:
         self.ngram_min = ngram_min
         self.ngram_max = ngram_max
         self.n_features = n_features
-        char_map = torch.zeros(256, dtype=torch.long)
+        char_map = torch.full((256,), 4, dtype=torch.long)
         for idx, char in enumerate(["A", "C", "G", "T"]):
             char_map[ord(char)] = idx
             char_map[ord(char.lower())] = idx
@@ -56,19 +56,22 @@ class PureTensorKmerExtractor:
             base4 = char_map[torch.from_numpy(b).long()].to(device)
             for k in range(self.ngram_min, min(self.ngram_max + 1, len(b) + 1)):
                 kmers = base4.unfold(dimension=-1, size=k, step=1)
+                valid = (kmers < 4).all(dim=-1)
+                if not valid.any():
+                    continue
                 mult = self.multipliers[k].to(device)
-                hashes = (kmers * mult).sum(dim=-1)
+                hashes = (kmers[valid] * mult).sum(dim=-1)
                 hashed_indices = (hashes * 2654435761) % self.n_features
                 out_kmer[idx] += torch.bincount(hashed_indices, minlength=self.n_features).float()
-            one_hot = F.one_hot(base4.clamp(0, 3), num_classes=4).float()
+            one_hot = F.one_hot(base4, num_classes=5)[:, :4].float()
             fft_coefs = torch.fft.rfft(one_hot, dim=0)
             mags = torch.abs(fft_coefs)
-            K = 128
-            M = mags.shape[0]
-            if M >= K:
-                spec_feat = mags[:K, :]
-            else:
-                spec_feat = F.pad(mags, (0, 0, 0, K - M))
+            phases = torch.angle(fft_coefs)
+            x_mags = mags.t().unsqueeze(0)
+            x_phases = phases.t().unsqueeze(0)
+            x_mags_i = F.interpolate(x_mags, size=64, mode="linear", align_corners=True).squeeze(0).t()
+            x_phases_i = F.interpolate(x_phases, size=64, mode="linear", align_corners=True).squeeze(0).t()
+            spec_feat = torch.cat([x_mags_i, x_phases_i], dim=0)
             out_spec[idx] = spec_feat.flatten()
         norms_kmer = torch.norm(out_kmer, p=2, dim=-1, keepdim=True).clamp_min(1e-8)
         norms_spec = torch.norm(out_spec, p=2, dim=-1, keepdim=True).clamp_min(1e-8)

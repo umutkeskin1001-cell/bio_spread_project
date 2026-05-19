@@ -32,7 +32,7 @@ def predict_one(model: DnaSentinel, sequence_id: str, dna: str, device: str = "c
     amr = float(torch.sigmoid(out.amr_logits).item())
     expansion = float(torch.sigmoid(out.expansion_logits).item())
     mobile = max(mobility[1], mobility[2])
-    risk = float(math.prod([max(1e-6, mobile), max(1e-6, amr), max(1e-6, expansion)]) ** (1 / 3))
+    risk = float(((mobile**2 + amr**2 + expansion**2) / 3.0)**0.5)
     weights = out.evidence_weights.squeeze(0).cpu()
     windows = window_sequence(dna, cfg.window_size, cfg.stride, cfg.max_windows)
     top = torch.topk(weights, k=min(top_k, len(windows))).indices.tolist()
@@ -41,3 +41,4 @@ def predict_one(model: DnaSentinel, sequence_id: str, dna: str, device: str = "c
         start = idx * cfg.stride
         top_windows.append({"start": float(start), "end": float(start + len(windows[idx])), "weight": float(weights[idx])})
     return Prediction(sequence_id, mobility, amr, expansion, risk, top_windows)
+

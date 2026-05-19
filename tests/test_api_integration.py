@@ -84,10 +84,25 @@ def test_api_endpoints_with_mocked_service(tmp_path: Path, monkeypatch):
 
         response = client.post(
             "/predict",
-            json={"sequence_id": "test_api", "dna": "ATGCGT" * 10},
+            json={"sequence_id": "test_api", "dna": "ATGCGT" * 20},
         )
         assert response.status_code == 200
         data = response.json()
         assert data["sequence_id"] == "test_api"
         assert data["risk_score"] == 0.85
         assert data["mobility_probs"] == [0.1, 0.2, 0.7]
+
+        response = client.post(
+            "/predict-batch",
+            json={
+                "sequences": [
+                    {"sequence_id": "seq1", "dna": "ATGCGT" * 20},
+                    {"sequence_id": "seq2", "dna": "ATGCGT" * 25},
+                ]
+            },
+        )
+        assert response.status_code == 200
+        batch_data = response.json()
+        assert len(batch_data) == 2
+        assert batch_data[0]["sequence_id"] == "seq1"
+        assert batch_data[1]["sequence_id"] == "seq2"

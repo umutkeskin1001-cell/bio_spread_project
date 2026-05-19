@@ -105,7 +105,7 @@ class KmerSentinel:
         amr = float(self._predict_binary(self.amr, [dna])[0])
         expansion = float(self._predict_binary(self.expansion, [dna])[0])
         mobile = max(mobility_probs[1], mobility_probs[2]) if len(mobility_probs) >= 3 else 0.0
-        risk = float(math.prod([max(1e-6, mobile), max(1e-6, amr), max(1e-6, expansion)]) ** (1 / 3))
+        risk = float(((mobile**2 + amr**2 + expansion**2) / 3.0)**0.5)
         return {
             "sequence_id": sequence_id,
             "mobility_probs": mobility_probs,
@@ -123,7 +123,7 @@ class KmerSentinel:
         amr = self.amr.predict_proba(x)[:, 1]
         exp = self.expansion.predict_proba(x)[:, 1]
         mob = self.mobility.predict_proba(x)[:, 1:].max(axis=1)
-        score = np.cbrt(np.clip(amr, 1e-6, 1) * np.clip(exp, 1e-6, 1) * np.clip(mob, 1e-6, 1))
+        score = np.sqrt((amr**2 + exp**2 + mob**2) / 3.0)
         order = np.argsort(-score)[: min(5, len(windows))]
         return [
             {
@@ -133,6 +133,8 @@ class KmerSentinel:
             }
             for i in order
         ]
+
+
 
     def _predict_binary(self, clf: Any, sequences: list[str]) -> np.ndarray:
         p = self._raw_predict_binary(clf, sequences)

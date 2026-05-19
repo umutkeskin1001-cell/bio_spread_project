@@ -1,3 +1,4 @@
+"""FASTA file parsing and sequence normalization utilities."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -14,8 +15,11 @@ for char in " \t\r\n-":
 
 
 def canonical_dna(seq: str) -> str:
-    """Return uppercase A/C/G/T/N DNA; gaps and whitespace are removed."""
-    return seq.upper().translate(_CANONICAL_TABLE)
+    upper = seq.upper()
+    translated = upper.translate(_CANONICAL_TABLE)
+    if any(ord(c) >= 256 for c in translated):
+        return "".join(c if c in DNA_ALPHABET else "N" for c in translated)
+    return translated
 
 
 def revcomp(seq: str) -> str:
@@ -36,7 +40,6 @@ def read_fasta(path: str | Path) -> Iterator[tuple[str, str]]:
                 chunks.append(raw)
     if sid is not None:
         yield sid, canonical_dna("".join(chunks))
-
 
 
 def write_fasta(records: Iterable[tuple[str, str]], path: str | Path, width: int = 80) -> None:
