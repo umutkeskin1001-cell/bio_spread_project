@@ -11,7 +11,7 @@ class KmerTransformerConfig:
     n_kmer_features: int = 4096
     hidden_dim: int = 64
     n_heads: int = 4
-    n_layers: int = 2
+    n_layers: int = 3
     ffn_ratio: int = 4
     dropout: float = 0.25
     max_windows: int = 28
@@ -27,18 +27,24 @@ class TransformerBlock(nn.Module):
         self.attn = nn.MultiheadAttention(hidden_dim, n_heads, dropout=dropout, batch_first=True)
         self.norm1 = nn.LayerNorm(hidden_dim)
         self.norm2 = nn.LayerNorm(hidden_dim)
-        self.ffn = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim * ffn_ratio),
-            nn.GELU(),
+
+        mid_dim = (hidden_dim * ffn_ratio) // 2
+        self.ffn_gate = nn.Linear(hidden_dim, mid_dim)
+        self.ffn_value = nn.Linear(hidden_dim, mid_dim)
+        self.ffn_out = nn.Sequential(
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim * ffn_ratio, hidden_dim),
+            nn.Linear(mid_dim, hidden_dim),
             nn.Dropout(dropout),
         )
 
     def forward(self, x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         attn_out, _ = self.attn(x, x, x, key_padding_mask=~mask)
         x = self.norm1(x + attn_out)
-        return self.norm2(x + self.ffn(x))
+
+        gate = self.ffn_gate(x)
+        value = self.ffn_value(x)
+        ffn_out = self.ffn_out(F.gelu(gate) * value)
+        return self.norm2(x + ffn_out)
 
 
 def make_mlp(h: int, mid: int, out: int, dropout: float) -> nn.Sequential:
@@ -56,8 +62,11 @@ class KmerTransformer(nn.Module):
         super().__init__()
         self.config = config or KmerTransformerConfig()
         h = self.config.hidden_dim
+
         self.lex_proj = nn.Sequential(
-            nn.Linear(self.config.n_kmer_features, h),
+            nn.Linear(self.config.n_kmer_features, 48, bias=False),
+            nn.GELU(),
+            nn.Linear(48, h),
             nn.LayerNorm(h),
             nn.GELU(),
         )
@@ -87,6 +96,9 @@ class KmerTransformer(nn.Module):
         self.local_norm = nn.LayerNorm(h)
         self.macro_norm = nn.LayerNorm(h)
 
+        self.scale_pred_0_to_2 = nn.Linear(h, h)
+        self.scale_pred_2_to_0 = nn.Linear(h, h)
+
         self.mob_proj = nn.Sequential(nn.Linear(h, h), nn.LayerNorm(h), nn.GELU())
         self.amr_proj = nn.Sequential(nn.Linear(h, h // 2), nn.LayerNorm(h // 2), nn.GELU())
         self.exp_proj = nn.Sequential(nn.Linear(h, h // 2), nn.LayerNorm(h // 2), nn.GELU())
@@ -115,7 +127,8 @@ class KmerTransformer(nn.Module):
             pooled_scales.append(p)
         p0, p1, p2 = pooled_scales
         local_features = p0 + p1
-        return local_features * torch.sigmoid(p2) + p2 * torch.sigmoid(local_features)
+        pooled = local_features * torch.sigmoid(p2) + p2 * torch.sigmoid(local_features)
+        return pooled, pooled_scales
 
     def forward(self, kmer_features, spec_features, window_mask, scale_ids):
         h_lex = self.lex_proj(kmer_features)
@@ -144,9 +157,9 @@ class KmerTransformer(nn.Module):
         ev_amr = self.task_evidence_scorers[1](x).squeeze(-1)
         ev_exp = self.task_evidence_scorers[2](x).squeeze(-1)
 
-        pooled_mob_raw = self._pool_with_evidence(x_local, x_macro, window_mask, ev_mob)
-        pooled_amr_raw = self._pool_with_evidence(x_local, x_macro, window_mask, ev_amr)
-        pooled_exp_raw = self._pool_with_evidence(x_local, x_macro, window_mask, ev_exp)
+        pooled_mob_raw, pooled_scales_mob = self._pool_with_evidence(x_local, x_macro, window_mask, ev_mob)
+        pooled_amr_raw, _ = self._pool_with_evidence(x_local, x_macro, window_mask, ev_amr)
+        pooled_exp_raw, _ = self._pool_with_evidence(x_local, x_macro, window_mask, ev_exp)
 
         pooled_mob = self.mob_proj(pooled_mob_raw)
         pooled_amr = self.amr_proj(pooled_amr_raw)
@@ -167,6 +180,8 @@ class KmerTransformer(nn.Module):
             "evidence_weights_amr": weights_amr,
             "evidence_weights_exp": weights_exp,
             "pooled": pooled_mob_raw,
+            "p0_mob": pooled_scales_mob[0],
+            "p2_mob": pooled_scales_mob[2],
         }
 
     def save(self, path) -> None:

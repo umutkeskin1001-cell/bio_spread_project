@@ -128,15 +128,10 @@ def train_kmer_transformer(model, train_data, val_data, config):
     exp_pos_weight = torch.tensor([(1 - exp_pos) / max(exp_pos, 1e-6)], device=device)
 
     best_score, patience_counter, history = -1.0, 0, []
-    loss_buffer = {"mob": [], "amr": [], "exp": []}
-    w_mob, w_amr, w_exp = 1.0, 1.0, 1.0
 
     for epoch in range(1, config["epochs"] + 1):
         model.train()
         losses = []
-        losses_mob_epoch = []
-        losses_amr_epoch = []
-        losses_exp_epoch = []
         idx = torch.randperm(n_train, device=device)
         for start in range(0, n_train, config["batch_size"]):
             bi = idx[start:start + config["batch_size"]]
@@ -152,11 +147,11 @@ def train_kmer_transformer(model, train_data, val_data, config):
             loss_amr = binary_focal_loss(out1["amr_logits"], amr, pos_weight=amr_pos_weight, gamma=2.0)
             loss_exp = binary_focal_loss(out1["expansion_logits"], exp, pos_weight=exp_pos_weight, gamma=2.0)
 
-            loss_task = w_mob * loss_mob + w_amr * loss_amr + w_exp * loss_exp
+            with torch.no_grad():
+                raw_weights = torch.stack([loss_mob.detach(), loss_amr.detach(), loss_exp.detach()])
+                w_mob, w_amr, w_exp = (3.0 * F.softmax(raw_weights / 0.5, dim=0)).tolist()
 
-            losses_mob_epoch.append(loss_mob.item())
-            losses_amr_epoch.append(loss_amr.item())
-            losses_exp_epoch.append(loss_exp.item())
+            loss_task = w_mob * loss_mob + w_amr * loss_amr + w_exp * loss_exp
 
             with torch.no_grad():
                 ema_out = ema_model(feat1, spec1, mask1, sid)
@@ -172,30 +167,26 @@ def train_kmer_transformer(model, train_data, val_data, config):
             loss_cl = (1.0 - F.cosine_similarity(out1["pooled"], out2["pooled"], dim=-1)).mean()
             entropy = -(out1["evidence_weights"].clamp_min(1e-8) * out1["evidence_weights"].clamp_min(1e-8).log()).sum(dim=1).mean()
 
-            loss = loss_task + 0.5 * (loss_distill_mob + loss_distill_amr + loss_distill_exp) + 0.1 * loss_cl + 0.005 * entropy
+            pred_0_from_2 = model.scale_pred_2_to_0(out1["p2_mob"].detach())
+            pred_2_from_0 = model.scale_pred_0_to_2(out1["p0_mob"].detach())
+            loss_cross_scale = (
+                (1.0 - F.cosine_similarity(pred_0_from_2, out1["p0_mob"], dim=-1)).mean() +
+                (1.0 - F.cosine_similarity(pred_2_from_0, out1["p2_mob"], dim=-1)).mean()
+            )
+
+            loss = (
+                loss_task
+                + 0.5 * (loss_distill_mob + loss_distill_amr + loss_distill_exp)
+                + 0.1 * loss_cl
+                + 0.005 * entropy
+                + 0.05 * loss_cross_scale
+            )
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
             update_ema(model, ema_model, ema_beta)
             losses.append(loss.item())
-
-        avg_mob_loss = sum(losses_mob_epoch) / len(losses_mob_epoch)
-        avg_amr_loss = sum(losses_amr_epoch) / len(losses_amr_epoch)
-        avg_exp_loss = sum(losses_exp_epoch) / len(losses_exp_epoch)
-
-        loss_buffer["mob"].append(avg_mob_loss)
-        loss_buffer["amr"].append(avg_amr_loss)
-        loss_buffer["exp"].append(avg_exp_loss)
-
-        if len(loss_buffer["mob"]) >= 2:
-            r_mob = loss_buffer["mob"][-1] / (loss_buffer["mob"][-2] + 1e-8)
-            r_amr = loss_buffer["amr"][-1] / (loss_buffer["amr"][-2] + 1e-8)
-            r_exp = loss_buffer["exp"][-1] / (loss_buffer["exp"][-2] + 1e-8)
-
-            r_tensor = torch.tensor([r_mob, r_amr, r_exp])
-            weights = 3.0 * F.softmax(r_tensor / 2.0, dim=0)
-            w_mob, w_amr, w_exp = weights[0].item(), weights[1].item(), weights[2].item()
 
         scheduler.step()
         avg_loss = sum(losses) / len(losses)
