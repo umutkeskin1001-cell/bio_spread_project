@@ -9,9 +9,9 @@ import torch.nn.functional as F
 @dataclass(frozen=True)
 class KmerTransformerConfig:
     n_kmer_features: int = 5376  # Direct, collision-free indexing
-    hidden_dim: int = 64          # Full standard width restored!
-    n_heads: int = 8             # Ultra-expressive multi-head attention
-    n_layers: int = 4            # Stacked 4 deep transformer layers for rich grammatical reasoning!
+    hidden_dim: int = 56          # The absolute golden sweet spot width!
+    n_heads: int = 8             # Highly expressive multi-head attention
+    n_layers: int = 2            # Golden peak depth for 28-window plasmid sequences
     ffn_ratio: int = 4
     dropout: float = 0.25
     max_windows: int = 28
@@ -63,22 +63,11 @@ class KmerTransformer(nn.Module):
         else:
             self.register_buffer("rev_comp_map", torch.arange(self.config.n_kmer_features, dtype=torch.long))
 
-        # 1. Multi-Group Factorized Bottleneck Projection (Huge Parameter Savings!)
-        if self.config.n_kmer_features >= 5376:
-            self.k4_proj = nn.Sequential(nn.Linear(256, h), nn.GELU())
-            self.k5_proj = nn.Sequential(nn.Linear(1024, h), nn.GELU())
-            self.k6_proj = nn.Sequential(
-                nn.Linear(4096, 16),
-                nn.GELU(),
-                nn.Linear(16, h)
-            )
-        else:
-            # Fallback for custom unit test shapes
-            self.k4_proj = nn.Sequential(nn.Linear(self.config.n_kmer_features, h), nn.GELU())
-            self.k5_proj = None
-            self.k6_proj = None
-
-        # 2. Spectral Fourier Projection
+        # Direct flat linear projections (Preserves full-rank raw genomic resolution!)
+        self.lex_proj = nn.Sequential(
+            nn.Linear(self.config.n_kmer_features, h),
+            nn.GELU()
+        )
         self.spec_proj = nn.Sequential(
             nn.Linear(512, h),
             nn.GELU()
@@ -99,7 +88,7 @@ class KmerTransformer(nn.Module):
         )
         self.context_norm = nn.LayerNorm(h)
 
-        # 3. Stacked 4 Deep Transformer Layers (Backbone capacity maximized!)
+        # Golden Peak 2-layer encoder
         self.encoder = nn.ModuleList([
             TransformerBlock(h, self.config.n_heads, self.config.ffn_ratio, self.config.dropout)
             for _ in range(self.config.n_layers)
@@ -140,16 +129,6 @@ class KmerTransformer(nn.Module):
             rev_comp_map[i] = rc_val
         return rev_comp_map
 
-    def _project_lexical(self, kmer_features) -> torch.Tensor:
-        # B, W, C = kmer_features.shape
-        if self.k5_proj is not None and kmer_features.shape[-1] >= 5376:
-            k4 = self.k4_proj(kmer_features[:, :, :256])
-            k5 = self.k5_proj(kmer_features[:, :, 256:1280])
-            k6 = self.k6_proj(kmer_features[:, :, 1280:])
-            return k4 + k5 + k6
-        else:
-            return self.k4_proj(kmer_features)
-
     def forward(self, kmer_features, spec_features, window_mask, scale_ids):
         B, W, C = kmer_features.shape
 
@@ -162,8 +141,8 @@ class KmerTransformer(nn.Module):
         spec_rc = spec_features.flip(dims=[1])
         spec_features = 0.5 * (spec_features + spec_rc)
 
-        # 2. Embedding Projection & Multiscale Fusion (Grouped Factorized Embedding)
-        h_lex = self._project_lexical(kmer_features)
+        # 2. Embedding Projection & Multiscale Fusion
+        h_lex = self.lex_proj(kmer_features)
         h_spec = self.spec_proj(spec_features)
         x = self.fusion(torch.cat([h_lex, h_spec], dim=-1)) + self.scale_embed(scale_ids)
         x = self.input_norm(x + self.pos_embed)
@@ -184,7 +163,7 @@ class KmerTransformer(nn.Module):
         # Re-concatenate scales back
         x = torch.cat([x_local, x_macro], dim=1)
 
-        # 4. Deep Transformer Encoder Pass (4 deep stacked layers)
+        # 4. Transformer Encoder Pass
         for layer in self.encoder:
             x = layer(x, window_mask)
         x = self.encoder_norm(x)

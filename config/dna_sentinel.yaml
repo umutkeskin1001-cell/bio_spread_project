@@ -48,9 +48,9 @@ kmer_transformer:
   window_sizes: [512, 2048, 8192]
   strides: [256, 1024, 4096]
   max_windows: [16, 8, 4]
-  hidden_dim: 64
+  hidden_dim: 56
   n_heads: 8
-  n_layers: 4
+  n_layers: 2
   ffn_ratio: 4
   dropout: 0.25
   window_dropout: 0.10
