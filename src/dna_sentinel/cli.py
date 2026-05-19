@@ -174,9 +174,11 @@ def train_kmer_transformer_cmd(config: str) -> None:
         "weight_decay": kt_cfg.get("weight_decay", 0.05),
         "patience": kt_cfg.get("patience", 5),
         "window_dropout": kt_cfg.get("window_dropout", 0.25),
+        "pretrain_epochs": kt_cfg.get("pretrain_epochs", 5),
         "artifact_dir": cfg["training"]["artifact_dir"],
     })
     click.echo(json.dumps({"checkpoint": str(ckpt), "last": history[-1] if history else {}}, indent=2))
+
 
 
 @cli.command("evaluate-kmer-transformer")
