@@ -35,6 +35,7 @@ def test_api_endpoints_with_mocked_service(tmp_path: Path, monkeypatch):
                 "top_windows": [{"start": 0.0, "end": 100.0, "weight": 0.9}],
             }
 
+    monkeypatch.setenv("DNA_SENTINEL_CHECKPOINT", str(tmp_path / "non_existent.pt"))
     with TestClient(app) as client:
         monkeypatch.setattr(api, "service", MockService())
 

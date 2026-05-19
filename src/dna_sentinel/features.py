@@ -105,7 +105,7 @@ class MultiScaleKmerExtractor:
         return out_kmer, out_spec, mask
 
     def extract(self, dna: str, device: str = "cpu") -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        b = np.frombuffer(dna.encode("ascii", errors="ignore"), dtype=np.uint8)
+        b = np.frombuffer(dna.encode("ascii", errors="ignore"), dtype=np.uint8).copy()
         base4_f = self.char_map[torch.from_numpy(b).long()].to(device)
 
         all_kmer, all_spec, all_mask, all_sid = [], [], [], []
