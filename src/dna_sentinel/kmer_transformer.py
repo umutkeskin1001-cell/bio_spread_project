@@ -83,9 +83,9 @@ class KmerTransformer(nn.Module):
         self.encoder = nn.TransformerEncoder(layer, num_layers=self.config.n_layers, norm=nn.LayerNorm(h), enable_nested_tensor=False)
         self.evidence_scorer = nn.Sequential(nn.Linear(h, h // 2), nn.GELU(), nn.Linear(h // 2, 1))
 
-        self.mobility_head = nn.Linear(h, 3)
-        self.amr_head = nn.Linear(h, 1)
-        self.expansion_head = nn.Linear(h, 1)
+        self.mobility_head = nn.Sequential(nn.Linear(h, h), nn.LayerNorm(h), nn.GELU(), nn.Dropout(self.config.dropout), nn.Linear(h, 3))
+        self.amr_head = nn.Sequential(nn.Linear(h, h // 2), nn.LayerNorm(h // 2), nn.GELU(), nn.Dropout(self.config.dropout), nn.Linear(h // 2, 1))
+        self.expansion_head = nn.Sequential(nn.Linear(h, h // 2), nn.LayerNorm(h // 2), nn.GELU(), nn.Dropout(self.config.dropout), nn.Linear(h // 2, 1))
         self.logit_scale = nn.Parameter(torch.zeros(3))
 
     def forward(self, kmer_features, spec_features, window_mask, scale_ids):
