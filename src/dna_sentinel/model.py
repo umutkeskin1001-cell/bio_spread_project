@@ -8,9 +8,9 @@ import torch.nn.functional as F
 
 @dataclass(frozen=True)
 class KmerTransformerConfig:
-    n_kmer_features: int = 4096
-    hidden_dim: int = 64
-    n_heads: int = 4
+    n_kmer_features: int = 5376  # Direct collision-free indexing
+    hidden_dim: int = 56          # Scaled to fit comfortably under 450K budget
+    n_heads: int = 8             # Highly expressive multi-head attention
     n_layers: int = 2
     ffn_ratio: int = 4
     dropout: float = 0.25
@@ -57,13 +57,13 @@ class KmerTransformer(nn.Module):
         self.config = config or KmerTransformerConfig()
         h = self.config.hidden_dim
 
-        # Setup reverse complement index map for zero-parameter input-level averaging
+        # Setup reverse complement index map
         if self.config.n_kmer_features == 4096:
             self.register_buffer("rev_comp_map", self._get_rev_comp_indices())
         else:
             self.register_buffer("rev_comp_map", torch.arange(self.config.n_kmer_features, dtype=torch.long))
 
-        # Direct linear projections instead of complex Kronecker factorizations
+        # Direct linear projections
         self.lex_proj = nn.Sequential(
             nn.Linear(self.config.n_kmer_features, h),
             nn.GELU()
@@ -80,6 +80,13 @@ class KmerTransformer(nn.Module):
         self.pos_embed = nn.Parameter(torch.zeros(1, self.config.max_windows, h))
         nn.init.normal_(self.pos_embed, std=0.02)
         self.input_norm = nn.LayerNorm(h)
+
+        # Pyramidal Scale Context Routing Gate
+        self.context_gate = nn.Sequential(
+            nn.Linear(h, h),
+            nn.GELU()
+        )
+        self.context_norm = nn.LayerNorm(h)
 
         # Unified 2-layer encoder
         self.encoder = nn.ModuleList([
@@ -125,7 +132,7 @@ class KmerTransformer(nn.Module):
     def forward(self, kmer_features, spec_features, window_mask, scale_ids):
         B, W, C = kmer_features.shape
 
-        # 1. Zero-Parameter Input-Level Averaging (100% Sequence Invariance at 2.5x Training Speedup!)
+        # 1. Zero-Parameter Input-Level Averaging
         kmer_rc = kmer_features.flip(dims=[1])
         if C == 4096:
             kmer_rc = kmer_rc.gather(dim=-1, index=self.rev_comp_map.view(1, 1, 4096).expand(B, W, 4096))
@@ -140,19 +147,35 @@ class KmerTransformer(nn.Module):
         x = self.fusion(torch.cat([h_lex, h_spec], dim=-1)) + self.scale_embed(scale_ids)
         x = self.input_norm(x + self.pos_embed)
 
-        # 3. Transformer Encoder Pass (Processed exactly once!)
+        # 3. Hierarchical Pyramidal Scale Routing
+        x_local = x[:, :24]
+        x_macro = x[:, 24:]
+        m_macro = window_mask[:, 24:]
+
+        # Aggregate macro context (representing global backbone features)
+        w_macro = m_macro.float().unsqueeze(-1)
+        macro_context = (x_macro * w_macro).sum(dim=1) / w_macro.sum(dim=1).clamp_min(1.0)
+
+        # Inject macro scale context into local and intermediate window scales
+        local_context = self.context_gate(macro_context).unsqueeze(1)
+        x_local = self.context_norm(x_local + torch.sigmoid(local_context) * local_context)
+
+        # Re-concatenate scales back
+        x = torch.cat([x_local, x_macro], dim=1)
+
+        # 4. Transformer Encoder Pass
         for layer in self.encoder:
             x = layer(x, window_mask)
         x = self.encoder_norm(x)
 
-        # 4. Minimal Sequence Attention Evidence Scorer
+        # 5. Minimal Sequence Attention Scorer
         ev = self.evidence_proj(x).squeeze(-1)  # (B, W)
-        evidence_weights = ev.masked_fill(~window_mask, -1e4).softmax(dim=-1)  # Sums to 1.0 along dim=1
+        evidence_weights = ev.masked_fill(~window_mask, -1e4).softmax(dim=-1)
 
-        # 5. Attention-Weighted Pooling
-        pooled = (x * evidence_weights.unsqueeze(-1)).sum(dim=1)  # (B, H)
+        # 6. Attention-Weighted Pooling
+        pooled = (x * evidence_weights.unsqueeze(-1)).sum(dim=1)
 
-        # 6. Task Projections and Logit Heads
+        # 7. Task Projections and Logit Heads
         pooled_mob = self.mob_proj(pooled)
         pooled_amr = self.amr_proj(pooled)
         pooled_exp = self.exp_proj(pooled)
