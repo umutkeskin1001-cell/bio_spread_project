@@ -11,6 +11,7 @@ import yaml
 from dna_sentinel.features import MultiScaleKmerConfig, preprocess_all_features
 from dna_sentinel.model import KmerTransformer, KmerTransformerConfig
 from dna_sentinel.prepare import prepare_dataset
+from dna_sentinel.pretrain import pretrain_mwr
 from dna_sentinel.train import evaluate_kmer_transformer, train_kmer_transformer
 from dna_sentinel.utils import load_jsonl, predict_one, read_fasta
 
@@ -18,6 +19,20 @@ from dna_sentinel.utils import load_jsonl, predict_one, read_fasta
 @click.group()
 def cli() -> None:
     """DNA-only mobile genetic element risk modeling (Multi-Scale K-mer Transformer)."""
+
+
+def _feature_config(kt_cfg: dict) -> MultiScaleKmerConfig:
+    return MultiScaleKmerConfig(
+        window_sizes=tuple(kt_cfg.get("window_sizes", [512, 2048, 8192])),
+        strides=tuple(kt_cfg.get("strides", [256, 1024, 4096])),
+        max_windows=tuple(kt_cfg.get("max_windows", [16, 8, 4])),
+        ngram_min=kt_cfg.get("ngram_min", 4),
+        ngram_max=kt_cfg.get("ngram_max", 6),
+        n_features=kt_cfg.get("n_kmer_features", 4096),
+        rc_consensus=kt_cfg.get("rc_consensus", True),
+        length_weighting=kt_cfg.get("length_weighting", False),
+        coverage_feature=kt_cfg.get("coverage_feature", False),
+    )
 
 
 @cli.command()
@@ -34,12 +49,7 @@ def prepare_kmer_transformer(config: str) -> None:
     cfg = yaml.safe_load(Path(config).read_text(encoding="utf-8"))
     data_dir = Path(cfg["data"]["out_dir"])
     kt_cfg = cfg.get("kmer_transformer", {})
-    kmer_cfg = MultiScaleKmerConfig(
-        ngram_min=kt_cfg.get("ngram_min", 4),
-        ngram_max=kt_cfg.get("ngram_max", 6),
-        n_features=kt_cfg.get("n_kmer_features", 4096),
-        rc_consensus=kt_cfg.get("rc_consensus", True),
-    )
+    kmer_cfg = _feature_config(kt_cfg)
     train_records = load_jsonl(data_dir / "train.jsonl")
     if not kmer_cfg.rc_consensus:
         from dna_sentinel.utils import rc_augment
@@ -60,7 +70,8 @@ def prepare_kmer_transformer(config: str) -> None:
 
 @cli.command("train-kmer-transformer")
 @click.option("--config", default="config/dna_sentinel.yaml", type=click.Path(exists=True))
-def train_kmer_transformer_cmd(config: str) -> None:
+@click.option("--pretrain", is_flag=True, help="Run masked window reconstruction pre-training before fine-tuning.")
+def train_kmer_transformer_cmd(config: str, pretrain: bool) -> None:
     cfg = yaml.safe_load(Path(config).read_text(encoding="utf-8"))
     data_dir = Path(cfg["data"]["out_dir"])
     kt_cfg = cfg.get("kmer_transformer", {})
@@ -75,23 +86,52 @@ def train_kmer_transformer_cmd(config: str) -> None:
         n_scales=len(kt_cfg.get("window_sizes", [512, 2048, 8192])),
     )
     model = KmerTransformer(model_cfg)
+    kmer_cfg = _feature_config(kt_cfg)
+
+    pretrain_history = []
+    if pretrain:
+        pretrain_history = pretrain_mwr(
+            model,
+            kt_cfg.get("pretrain_fasta_path", cfg["data"]["fasta_path"]),
+            kmer_cfg,
+            {
+                "seed": cfg["training"].get("seed", 42),
+                "batch_size": kt_cfg.get("batch_size", 32),
+                "weight_decay": kt_cfg.get("weight_decay", 0.05),
+                "pretrain_epochs": kt_cfg.get("pretrain_epochs", 1),
+                "pretrain_batch_size": kt_cfg.get("pretrain_batch_size", kt_cfg.get("batch_size", 32)),
+                "pretrain_lr": kt_cfg.get("pretrain_lr", kt_cfg.get("lr", 1e-3)),
+                "pretrain_weight_decay": kt_cfg.get("pretrain_weight_decay", kt_cfg.get("weight_decay", 0.05)),
+                "pretrain_limit": kt_cfg.get("pretrain_limit"),
+                "pretrain_min_len": kt_cfg.get("pretrain_min_len", cfg["data"].get("min_len", 0)),
+                "pretrain_max_len": kt_cfg.get("pretrain_max_len", cfg["data"].get("max_len")),
+                "mwr_mask_ratio": kt_cfg.get("mwr_mask_ratio", 0.15),
+            },
+        )
 
     def load_split(name):
         feat = torch.load(data_dir / f"{name}_features.pt", weights_only=True)
         lab = torch.load(data_dir / f"{name}_labels.pt", weights_only=True)
         return {**feat, **lab}
+    base_lr = kt_cfg.get("lr", 1e-3)
     ckpt, history = train_kmer_transformer(model, load_split("train"), load_split("val"), {
         "epochs": kt_cfg.get("epochs", 15),
         "batch_size": kt_cfg.get("batch_size", 32),
-        "lr": kt_cfg.get("lr", 1e-3),
-        "backbone_lr": kt_cfg.get("backbone_lr", kt_cfg.get("lr", 1e-3) * 0.1),
-        "head_lr": kt_cfg.get("head_lr", kt_cfg.get("lr", 1e-3)),
+        "lr": base_lr,
+        "backbone_lr": kt_cfg.get("backbone_lr", base_lr * 0.5 if pretrain else base_lr),
+        "head_lr": kt_cfg.get("head_lr", base_lr),
         "weight_decay": kt_cfg.get("weight_decay", 0.05),
         "patience": kt_cfg.get("patience", 5),
         "window_dropout": kt_cfg.get("window_dropout", 0.25),
+        "min_lr": kt_cfg.get("min_lr", 1e-5),
+        "warmup_epochs": kt_cfg.get("warmup_epochs", 0),
         "artifact_dir": cfg["training"]["artifact_dir"],
     })
-    click.echo(json.dumps({"checkpoint": str(ckpt), "last": history[-1] if history else {}}, indent=2))
+    click.echo(json.dumps({
+        "checkpoint": str(ckpt),
+        "pretrain_last": pretrain_history[-1] if pretrain_history else {},
+        "last": history[-1] if history else {},
+    }, indent=2))
 
 
 @cli.command("evaluate-kmer-transformer")

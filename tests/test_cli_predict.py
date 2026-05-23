@@ -20,3 +20,10 @@ def test_cli_predict_returns_json_for_fasta(tmp_path: Path):
     assert result.exit_code == 0, result.output
     assert '"sequence_id": "query"' in result.output
     assert '"risk_score"' in result.output
+
+
+def test_train_kmer_transformer_exposes_pretrain_flag():
+    result = CliRunner().invoke(cli, ["train-kmer-transformer", "--help"])
+
+    assert result.exit_code == 0, result.output
+    assert "--pretrain" in result.output

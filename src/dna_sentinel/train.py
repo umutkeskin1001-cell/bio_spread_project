@@ -8,6 +8,77 @@ from sklearn.linear_model import LogisticRegression
 
 from dna_sentinel.utils import WindowDropout, binary_metrics, multiclass_metrics
 
+_HEAD_PREFIXES = (
+    "evidence_proj",
+    "mob_evidence_proj",
+    "amr_evidence_proj",
+    "exp_evidence_proj",
+    "mob_proj",
+    "amr_proj",
+    "exp_proj",
+    "mobility_head",
+    "amr_head",
+    "expansion_head",
+    "logit_scale",
+)
+
+
+def _build_optimizer(model, config):
+    backbone_lr = config.get("backbone_lr", config["lr"])
+    head_lr = config.get("head_lr", config["lr"])
+    backbone_params = []
+    head_params = []
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        if name == "logit_scale" or name.startswith(_HEAD_PREFIXES):
+            head_params.append(param)
+        else:
+            backbone_params.append(param)
+
+    param_groups = []
+    if backbone_params:
+        param_groups.append({"params": backbone_params, "lr": backbone_lr})
+    if head_params:
+        param_groups.append({"params": head_params, "lr": head_lr})
+    return torch.optim.AdamW(param_groups, lr=config["lr"], weight_decay=config["weight_decay"])
+
+
+def _build_scheduler(optimizer, config):
+    epochs = int(config["epochs"])
+    warmup_epochs = int(config.get("warmup_epochs", 0))
+    min_lr = float(config.get("min_lr", 1e-5))
+    if warmup_epochs > 0 and epochs > warmup_epochs:
+        warmup = torch.optim.lr_scheduler.LinearLR(
+            optimizer,
+            start_factor=float(config.get("warmup_start_factor", 0.1)),
+            total_iters=warmup_epochs,
+        )
+        cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=max(1, epochs - warmup_epochs),
+            eta_min=min_lr,
+        )
+        return torch.optim.lr_scheduler.SequentialLR(optimizer, [warmup, cosine], milestones=[warmup_epochs])
+    return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=min_lr)
+
+
+def _task_loss_multipliers(config):
+    return (
+        float(config.get("mobility_loss_weight", 1.0)),
+        float(config.get("amr_loss_weight", 1.0)),
+        float(config.get("expansion_loss_weight", 1.0)),
+    )
+
+
+def _score_metrics(metrics, config):
+    weights = config.get("score_weights", {})
+    return (
+        float(weights.get("amr", 1.0)) * metrics.get("amr_auroc", 0.0)
+        + float(weights.get("expansion", 1.0)) * metrics.get("expansion_auroc", 0.0)
+        + float(weights.get("mobility", 2.0)) * metrics.get("mobility_balanced_accuracy", 0.0)
+    )
+
 
 def fit_temperature(model, val_data, device):
     model.eval()
@@ -73,9 +144,8 @@ def train_kmer_transformer(model, train_data, val_data, config):
     device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
     model.to(device)
 
-    # Simplified optimizer setup
-    optimizer = torch.optim.AdamW(model.parameters(), lr=config["lr"], weight_decay=config["weight_decay"])
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config["epochs"], eta_min=1e-5)
+    optimizer = _build_optimizer(model, config)
+    scheduler = _build_scheduler(optimizer, config)
     window_dropout = WindowDropout(config.get("window_dropout", 0.25))
 
     n_train = len(train_data["features"])
@@ -91,6 +161,7 @@ def train_kmer_transformer(model, train_data, val_data, config):
     exp_pos = float(device_train["expansion"].sum().item() / max(1, n_train))
     amr_pos_weight = torch.tensor([(1 - amr_pos) / max(amr_pos, 1e-6)], device=device)
     exp_pos_weight = torch.tensor([(1 - exp_pos) / max(exp_pos, 1e-6)], device=device)
+    mob_loss_mult, amr_loss_mult, exp_loss_mult = _task_loss_multipliers(config)
 
     best_score, patience_counter, history = -1.0, 0, []
 
@@ -117,7 +188,7 @@ def train_kmer_transformer(model, train_data, val_data, config):
                 raw_weights = torch.stack([loss_mob.detach(), loss_amr.detach(), loss_exp.detach()])
                 w_mob, w_amr, w_exp = (3.0 * F.softmax(raw_weights / 0.5, dim=0)).tolist()
 
-            loss = w_mob * loss_mob + w_amr * loss_amr + w_exp * loss_exp
+            loss = mob_loss_mult * w_mob * loss_mob + amr_loss_mult * w_amr * loss_amr + exp_loss_mult * w_exp * loss_exp
 
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
@@ -130,7 +201,7 @@ def train_kmer_transformer(model, train_data, val_data, config):
         val_metrics = evaluate_kmer_transformer(model, device_val, device)
         row = {"epoch": epoch, "train_loss": avg_loss, **val_metrics}
         history.append(row)
-        score = val_metrics.get("amr_auroc", 0.0) + val_metrics.get("expansion_auroc", 0.0) + 2.0 * val_metrics.get("mobility_balanced_accuracy", 0.0)
+        score = _score_metrics(val_metrics, config)
 
         print(
             f"Epoch {epoch:02d}/{config['epochs']:02d} | "

@@ -22,6 +22,13 @@ def test_inference_service_supports_kmer_transformer(tmp_path: Path):
     assert len(kt_pred["mobility_probs"]) == 3
     assert isinstance(kt_pred["top_windows"], list)
 
+    kt_preds = kt_service.predict_batch([("q1", "ATGCGT" * 10), ("q2", "ATGCGT" * 12)])
+    assert len(kt_preds) == 2
+    assert kt_preds[0]["sequence_id"] == "q1"
+    assert kt_preds[1]["sequence_id"] == "q2"
+    assert "risk_score" in kt_preds[0]
+    assert "risk_score" in kt_preds[1]
+
 
 def test_api_endpoints_with_mocked_service(tmp_path: Path, monkeypatch):
     class MockService:
@@ -34,6 +41,15 @@ def test_api_endpoints_with_mocked_service(tmp_path: Path, monkeypatch):
                 "risk_score": 0.85,
                 "top_windows": [{"start": 0.0, "end": 100.0, "weight": 0.9}],
             }
+
+        def predict_batch(self, sequences: list) -> list[dict]:
+            parsed = []
+            for s in sequences:
+                if isinstance(s, dict):
+                    parsed.append(s)
+                elif hasattr(s, "sequence_id") and hasattr(s, "dna"):
+                    parsed.append({"sequence_id": s.sequence_id, "dna": s.dna})
+            return [self.predict(p["sequence_id"], p["dna"]) for p in parsed]
 
     monkeypatch.setenv("DNA_SENTINEL_CHECKPOINT", str(tmp_path / "non_existent.pt"))
     with TestClient(app) as client:

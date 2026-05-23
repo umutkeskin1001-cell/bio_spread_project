@@ -5,7 +5,7 @@ import json
 import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterable, Iterator
+from typing import TYPE_CHECKING, Any, Iterable, Iterator
 
 import numpy as np
 import torch
@@ -38,7 +38,7 @@ for char in " \t\r\n-":
 def canonical_dna(seq: str) -> str:
     upper = seq.upper()
     translated = upper.translate(_CANONICAL_TABLE)
-    if any(ord(c) >= 256 for c in translated):
+    if not translated.isascii():
         return "".join(c if c in DNA_ALPHABET else "N" for c in translated)
     return translated
 
@@ -188,52 +188,79 @@ class Prediction:
 
 
 @torch.inference_mode()
-def predict_one(model: KmerTransformer, sequence_id: str, dna: str, device: str = "cpu", top_k: int = 5) -> Prediction:
+def predict_batch(
+    model: KmerTransformer,
+    sequences: list[tuple[str, str]],
+    device: str = "cpu",
+    top_k: int = 5,
+) -> list[Prediction]:
     from dna_sentinel.features import MultiScaleKmerConfig, MultiScaleKmerExtractor, window_sequence
     model.to(device)
     model.eval()
 
-    dna = canonical_dna(dna)
+    if not sequences:
+        return []
+
     extractor = MultiScaleKmerExtractor(MultiScaleKmerConfig(n_features=model.config.n_kmer_features))
-    feat, spec, mask, sid = extractor.extract(dna)
+    feats, specs, masks, sids = [], [], [], []
+    for _, dna in sequences:
+        feat, spec, mask, sid = extractor.extract(canonical_dna(dna))
+        feats.append(feat)
+        specs.append(spec)
+        masks.append(mask)
+        sids.append(sid)
 
-    feat = feat.unsqueeze(0).to(device)
-    spec = spec.unsqueeze(0).to(device)
-    mask = mask.unsqueeze(0).to(device)
-    sid = sid.unsqueeze(0).to(device)
+    feat_t = torch.stack(feats).to(device)
+    spec_t = torch.stack(specs).to(device)
+    mask_t = torch.stack(masks).to(device)
+    sid_t = torch.stack(sids).to(device)
 
-    out = model(feat, spec, mask, sid)
+    out = model(feat_t, spec_t, mask_t, sid_t)
 
-    mobility = torch.softmax(out["mobility_logits"], dim=-1).squeeze(0).cpu().tolist()
-    amr = float(torch.sigmoid(out["amr_logits"]).item())
-    expansion = float(torch.sigmoid(out["expansion_logits"]).item())
-    mobile = max(mobility[1], mobility[2])
-    risk = float(((mobile**2 + amr**2 + expansion**2) / 3.0)**0.5)
+    mobility_all = torch.softmax(out["mobility_logits"], dim=-1).cpu()
+    amr_all = torch.sigmoid(out["amr_logits"]).cpu()
+    expansion_all = torch.sigmoid(out["expansion_logits"]).cpu()
+    weights_all = out["evidence_weights"].cpu()
 
-    weights = out["evidence_weights"].squeeze(0).cpu()
-    active_mask = mask.squeeze(0).cpu().bool()
+    predictions = []
+    for idx, (seq_id, dna) in enumerate(sequences):
+        mobility = mobility_all[idx].tolist()
+        amr = float(amr_all[idx].item())
+        expansion = float(expansion_all[idx].item())
+        mobile = max(mobility[1], mobility[2])
+        risk = float(((mobile**2 + amr**2 + expansion**2) / 3.0)**0.5)
 
-    all_windows_info = []
-    for ws, st, mw in zip(extractor.config.window_sizes, extractor.config.strides, extractor.config.max_windows):
-        windows = window_sequence(dna, ws, st, mw)
-        for i in range(mw):
-            if i < len(windows):
-                w = windows[i]
-                start = i * st
-                all_windows_info.append({"start": float(start), "end": float(start + len(w))})
-            else:
-                all_windows_info.append({"start": 0.0, "end": 0.0})
+        weights = weights_all[idx]
+        active_mask = mask_t[idx].cpu().bool()
 
-    sorted_indices = torch.argsort(weights, descending=True)
-    top_windows = []
-    for idx in sorted_indices.tolist():
-        if len(top_windows) >= top_k:
-            break
-        if active_mask[idx]:
-            info = all_windows_info[idx]
-            top_windows.append({"start": info["start"], "end": info["end"], "weight": float(weights[idx])})
+        all_windows_info = []
+        for ws, st, mw in zip(extractor.config.window_sizes, extractor.config.strides, extractor.config.max_windows):
+            windows = window_sequence(dna, ws, st, mw)
+            for i in range(mw):
+                if i < len(windows):
+                    w = windows[i]
+                    start = i * st
+                    all_windows_info.append({"start": float(start), "end": float(start + len(w))})
+                else:
+                    all_windows_info.append({"start": 0.0, "end": 0.0})
 
-    return Prediction(sequence_id, mobility, amr, expansion, risk, top_windows)
+        sorted_indices = torch.argsort(weights, descending=True)
+        top_windows = []
+        for w_idx in sorted_indices.tolist():
+            if len(top_windows) >= top_k:
+                break
+            if active_mask[w_idx]:
+                info = all_windows_info[w_idx]
+                top_windows.append({"start": info["start"], "end": info["end"], "weight": float(weights[w_idx])})
+
+        predictions.append(Prediction(seq_id, mobility, amr, expansion, risk, top_windows))
+
+    return predictions
+
+
+@torch.inference_mode()
+def predict_one(model: KmerTransformer, sequence_id: str, dna: str, device: str = "cpu", top_k: int = 5) -> Prediction:
+    return predict_batch(model, [(sequence_id, dna)], device, top_k)[0]
 
 
 class InferenceService:
@@ -248,6 +275,18 @@ class InferenceService:
     def predict(self, sequence_id: str, dna: str) -> dict:
         pred = predict_one(self.model, sequence_id, dna, device=self.device)
         return asdict(pred)
+
+    def predict_batch(self, sequences: list[Any]) -> list[dict]:
+        parsed = []
+        for s in sequences:
+            if isinstance(s, dict):
+                parsed.append((s["sequence_id"], s["dna"]))
+            elif hasattr(s, "sequence_id") and hasattr(s, "dna"):
+                parsed.append((s.sequence_id, s.dna))
+            else:
+                parsed.append(s)
+        preds = predict_batch(self.model, parsed, device=self.device)
+        return [asdict(p) for p in preds]
 
 
 # =====================================================================

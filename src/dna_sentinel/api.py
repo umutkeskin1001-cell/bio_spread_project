@@ -50,4 +50,4 @@ def predict(req: PredictRequest) -> dict:
 def predict_batch(req: PredictBatchRequest) -> list[dict]:
     if service is None:
         raise HTTPException(status_code=503, detail=f"checkpoint not loaded: {CHECKPOINT}")
-    return [service.predict(s.sequence_id, s.dna) for s in req.sequences]
+    return service.predict_batch(req.sequences)

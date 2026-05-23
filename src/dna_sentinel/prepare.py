@@ -28,14 +28,13 @@ class SequenceRecord:
 
 
 def _sampled_kmers(seq: str, k: int, max_kmers: int = 2000) -> list[str]:
-    dna = canonical_dna(seq)
-    if len(dna) < k:
-        return [dna]
-    total = len(dna) - k + 1
+    if len(seq) < k:
+        return [seq]
+    total = len(seq) - k + 1
     if total <= max_kmers:
-        return [dna[i : i + k] for i in range(total)]
+        return [seq[i : i + k] for i in range(total)]
     step = total / max_kmers
-    return [dna[int(i * step) : int(i * step) + k] for i in range(max_kmers)]
+    return [seq[int(i * step) : int(i * step) + k] for i in range(max_kmers)]
 
 
 def _sketch(seq: str, k: int = 15, n: int = 32) -> tuple[int, ...]:
@@ -89,7 +88,7 @@ def cluster_split(
                 dsu.union(i, group_seen[group_key])
             else:
                 group_seen[group_key] = i
-        digest = hashlib.blake2b(canonical_dna(rec.dna).encode(), digest_size=16).hexdigest()
+        digest = hashlib.blake2b(rec.dna.encode(), digest_size=16).hexdigest()
         if digest in exact_seen:
             dsu.union(i, exact_seen[digest])
         else:
