@@ -28,6 +28,7 @@ __pycache__/
 .cache/
 .tox/
 .nox/
+*.egg-info/
 .venv/
 venv/
 env/
@@ -67,6 +68,7 @@ reports/**
 # Machine Learning Weights, Checkpoints & Logging
 # ==============================================================================
 *.pt
+!artifacts/**/*.pt
 *.pth
 *.onnx
 *.safetensors

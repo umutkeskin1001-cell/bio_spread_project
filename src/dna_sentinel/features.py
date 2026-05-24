@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 from dataclasses import dataclass
 from multiprocessing import get_all_start_methods, get_context
@@ -7,251 +9,234 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from dna_sentinel.utils import LabeledSequence
+from dna_sentinel.utils import LabeledSequence, load_jsonl
 
-_FEATURE_WORKER: "MultiScaleKmerExtractor | None" = None
+
+def _canonical_vocab(k: int) -> int:
+    return ((4 ** k) + (4 ** (k // 2) if k % 2 == 0 else 0)) // 2
 
 
 @dataclass(frozen=True)
-class MultiScaleKmerConfig:
+class CanonicalKmerConfig:
     window_sizes: tuple[int, ...] = (512, 2048, 8192)
     strides: tuple[int, ...] = (256, 1024, 4096)
     max_windows: tuple[int, ...] = (16, 8, 4)
     ngram_min: int = 4
     ngram_max: int = 6
-    n_features: int = 5376  # Direct, collision-free vocabulary mapping (4-mer: 256, 5-mer: 1024, 6-mer: 4096 = 5376)
-    rc_consensus: bool = True
-    length_weighting: bool = False
-    coverage_feature: bool = False
+    rc_consensus: bool = False
+    n_features: int | None = None
+    n_structural_features: int = 19
 
 
-def window_sequence(seq: str, window: int, stride: int, max_windows: int) -> list[str]:
-    if not seq:
-        return [""]
-    if len(seq) <= window:
-        return [seq]
-    starts = list(range(0, max(1, len(seq) - window + 1), stride))
-    if starts[-1] != len(seq) - window:
-        starts.append(len(seq) - window)
-    if len(starts) > max_windows:
-        if max_windows == 1:
-            starts = [starts[len(starts) // 2]]
-        else:
-            step = (len(starts) - 1) / (max_windows - 1)
-            starts = [starts[round(i * step)] for i in range(max_windows)]
-    return [seq[s : s + window] for s in starts]
+def _canonical_map(k: int) -> torch.Tensor:
+    n = 4 ** k
+    cmap = torch.zeros(n, dtype=torch.long)
+    assigned, idx = {}, 0
+    for i in range(n):
+        if i in assigned:
+            cmap[i] = assigned[i]
+            continue
+        val, rc = i, 0
+        for _ in range(k):
+            rc = rc * 4 + (3 - val % 4)
+            val //= 4
+        assigned[i] = assigned[rc] = idx
+        cmap[i] = idx
+        if i != rc:
+            cmap[rc] = idx
+        idx += 1
+    return cmap
 
 
-_BOUNDARIES_CACHE: dict[tuple[int, int, int], np.ndarray] = {}
+def _vocab_offsets(ngram_min: int, ngram_max: int) -> dict[int, int]:
+    off, offsets = 0, {}
+    for k in range(ngram_min, ngram_max + 1):
+        offsets[k] = off
+        off += _canonical_vocab(k)
+    return offsets
 
 
-def log_bin_spectral(mags: torch.Tensor, low_res: int = 64, n_bins: int = 64) -> torch.Tensor:
-    mw, F_bins, C = mags.shape
-    if F_bins <= low_res + n_bins:
-        res = torch.zeros((mw, low_res + n_bins, C), device=mags.device)
-        actual = min(F_bins, low_res + n_bins)
-        res[:, :actual, :] = mags[:, :actual, :]
-        return res
+class CanonicalKmerExtractor:
+    def __init__(self, config: CanonicalKmerConfig | None = None):
+        self.config = config or CanonicalKmerConfig()
+        self.char_map = torch.full((256,), -1, dtype=torch.long)
+        for idx, ch in enumerate("ACGT"):
+            self.char_map[ord(ch)] = self.char_map[ord(ch.lower())] = idx
 
-    low_part = mags[:, :low_res, :]
+        self._km_range = range(self.config.ngram_min, self.config.ngram_max + 1)
+        self._mult = {k: 4 ** torch.arange(k - 1, -1, -1, dtype=torch.long) for k in self._km_range}
+        self._cmap = {k: _canonical_map(k) for k in self._km_range}
+        self._offsets = _vocab_offsets(self.config.ngram_min, self.config.ngram_max)
+        self.n_features = sum(_canonical_vocab(k) for k in self._km_range)
+        self._dev = None
+        self._mult_dev = {}
+        self._cmap_dev = {}
 
-    key = (F_bins, low_res, n_bins)
-    if key not in _BOUNDARIES_CACHE:
-        boundaries = np.geomspace(low_res, F_bins, n_bins + 1).astype(int)
-        for idx in range(1, len(boundaries)):
-            if boundaries[idx] <= boundaries[idx - 1]:
-                boundaries[idx] = boundaries[idx - 1] + 1
-        _BOUNDARIES_CACHE[key] = boundaries
-    else:
-        boundaries = _BOUNDARIES_CACHE[key]
+    def _ensure_device(self, dev):
+        if self._dev != dev:
+            self._dev = dev
+            self._mult_dev = {k: v.to(dev) for k, v in self._mult.items()}
+            self._cmap_dev = {k: v.to(dev) for k, v in self._cmap.items()}
 
-    high_parts = []
-    for b in range(n_bins):
-        start = boundaries[b]
-        end = min(F_bins, boundaries[b + 1])
-        if start < end:
-            high_parts.append(mags[:, start:end, :].mean(dim=1))
-        else:
-            high_parts.append(torch.zeros((mw, C), device=mags.device))
+    def _struct(self, w: torch.Tensor, lengths: torch.Tensor, ws: int) -> torch.Tensor:
+        dev = w.device
+        ar = torch.arange(ws, device=dev)
+        v = (ar.unsqueeze(0) < lengths.unsqueeze(1)) & (w >= 0)
+        wc = w.clamp_min(0)
+        g, c, a, t = (wc == 2).float(), (wc == 1).float(), (wc == 0).float(), (wc == 3).float()
+        vf = v.float()
+        gc_sum = ((g + c) * vf).sum(dim=1)
+        gc = gc_sum / lengths.float().clamp_min(1)
+        gs = ((g - c) * vf).sum(dim=1) / gc_sum.clamp_min(1)
+        at_s = ((a - t) * vf).sum(dim=1) / ((a + t) * vf).sum(dim=1).clamp_min(1)
+        pv = v[:, :-1] & v[:, 1:]
+        di = (F.one_hot((wc[:, :-1] * 4 + wc[:, 1:]).long().clamp_max(15), 16).float()
+              * pv.unsqueeze(-1)).sum(dim=1)
+        di = di / di.sum(dim=-1, keepdim=True).clamp_min(1)
+        return torch.cat([gc.unsqueeze(-1), gs.unsqueeze(-1), at_s.unsqueeze(-1), di], dim=-1)
 
-    high_part = torch.stack(high_parts, dim=1)
-    return torch.cat([low_part, high_part], dim=1)
-
-
-class MultiScaleKmerExtractor:
-    def __init__(self, config: MultiScaleKmerConfig | None = None):
-        self.config = config or MultiScaleKmerConfig()
-        self.n_features = self.config.n_features
-        self.char_map = torch.zeros(256, dtype=torch.long)
-        for idx, char in enumerate(["A", "C", "G", "T"]):
-            self.char_map[ord(char)] = idx
-            self.char_map[ord(char.lower())] = idx
-
-        self.multipliers = {
-            k: 4 ** torch.arange(k - 1, -1, -1, dtype=torch.long)
-            for k in range(self.config.ngram_min, self.config.ngram_max + 1)
-        }
-
-    def _extract_strand(
-        self,
-        base4_seq: torch.Tensor,
-        ws: int,
-        st: int,
-        mw: int,
-        device: str,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        n_bases = base4_seq.shape[0]
-
-        if n_bases < ws:
-            padded_seq = F.pad(base4_seq, (0, ws - n_bases), value=0)
-            windows_tensor = padded_seq.unsqueeze(0)
-            actual_lengths = torch.tensor([n_bases], dtype=torch.long, device=device)
+    def _extract(self, seq: torch.Tensor, ws: int, st: int, mw: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        dev, n = seq.device, seq.shape[0]
+        self._ensure_device(dev)
+        seq = seq.clamp_min(0)
+        if n < ws:
+            w = F.pad(seq, (0, ws - n)).unsqueeze(0)
+            lengths = torch.tensor([n], dtype=torch.long, device=dev)
             N = 1
         else:
-            starts = list(range(0, n_bases - ws + 1, st))
-            final_start = n_bases - ws
-            if starts[-1] != final_start:
-                starts.append(final_start)
+            starts = list(range(0, n - ws + 1, st))
+            if starts[-1] != n - ws:
+                starts.append(n - ws)
             N = len(starts)
-            starts_t = torch.tensor(starts, device=device, dtype=torch.long)
-            indices = starts_t.unsqueeze(1) + torch.arange(ws, device=device)
-            windows_tensor = base4_seq[indices]
-            actual_lengths = torch.full((N,), ws, dtype=torch.long, device=device)
+            idx = torch.tensor(starts, device=dev, dtype=torch.long).unsqueeze(1) + torch.arange(ws, device=dev)
+            w = seq[idx]
+            lengths = torch.full((N,), ws, dtype=torch.long, device=dev)
 
-        out_kmer_all = torch.zeros((N, self.n_features), device=device)
+        struct = self._struct(w, lengths, ws)
+        nf = self.n_features
+        raw = torch.zeros(N, nf, device=dev)
+
         for k in range(self.config.ngram_min, self.config.ngram_max + 1):
-            kmers = windows_tensor.unfold(dimension=-1, size=k, step=1)
-            mult = self.multipliers[k].to(device)
-            hashes = (kmers * mult).sum(dim=-1)
-
-            # Robust fallback for custom unit test vocabulary sizes
-            if self.n_features < 5376:
-                hashed_indices = hashes % self.n_features
-            else:
-                if k == 4:
-                    hashed_indices = hashes
-                elif k == 5:
-                    hashed_indices = 256 + hashes
-                else:
-                    hashed_indices = 1280 + hashes
-
-            valid_kmers = torch.arange(ws - k + 1, device=device).unsqueeze(0) < (
-                actual_lengths - k + 1
-            ).clamp_min(0).unsqueeze(1)
-            if not valid_kmers.any():
+            m = ws - k + 1
+            kmers = w.unfold(-1, k, 1)
+            hashes = (kmers * self._mult_dev[k]).sum(dim=-1)
+            canon = self._cmap_dev[k][hashes] + self._offsets[k]
+            valid = (torch.arange(m, device=dev).unsqueeze(0)
+                     < (lengths - k + 1).clamp_min(0).unsqueeze(1))
+            if not valid.any():
                 continue
-
-            offset = torch.arange(N, device=device).unsqueeze(1) * self.n_features
-            flat_indices = (hashed_indices + offset)[valid_kmers]
-            flat_counts = torch.bincount(flat_indices, minlength=N * self.n_features)
-            out_kmer_all += flat_counts.view(N, self.n_features).float()
-
-        norms_kmer = torch.norm(out_kmer_all, p=2, dim=-1, keepdim=True).clamp_min(1e-8)
-        out_kmer_all = out_kmer_all / norms_kmer
-
-        valid_bases = torch.arange(ws, device=device).unsqueeze(0) < actual_lengths.unsqueeze(1)
-        one_hot = F.one_hot(windows_tensor.clamp(0, 3), num_classes=4).float()
-        one_hot = one_hot * valid_bases.unsqueeze(-1)
-        fft_coefs = torch.fft.rfft(one_hot, dim=1)
-        mags = torch.abs(fft_coefs)
-        phases = torch.angle(fft_coefs)
-
-        mag_feat = log_bin_spectral(mags, low_res=32, n_bins=32).flatten(start_dim=1)
-        phase_feat = log_bin_spectral(phases, low_res=32, n_bins=32).flatten(start_dim=1)
-        out_spec_all = torch.cat([mag_feat, phase_feat], dim=1)
-
-        norms_spec = torch.norm(out_spec_all, p=2, dim=-1, keepdim=True).clamp_min(1e-8)
-        out_spec_all = out_spec_all / norms_spec
-        coverage = (actual_lengths.float() / float(ws)).clamp(0.0, 1.0).unsqueeze(1)
-        if self.config.length_weighting:
-            out_kmer_all = out_kmer_all * coverage
-            out_spec_all = out_spec_all * coverage
-        if self.config.coverage_feature:
-            out_spec_all[:, -1] = coverage.squeeze(1)
+            offsets = torch.arange(N, device=dev).unsqueeze(1) * nf
+            raw += torch.bincount((canon + offsets)[valid], minlength=N * nf).view(N, nf).float()
 
         if N > mw:
-            out_kmer = torch.zeros((mw, self.n_features), device=device)
-            out_spec = torch.zeros((mw, 512), device=device)
-            mask = torch.ones(mw, dtype=torch.bool, device=device)
-
-            bin_size = N / mw
+            out = torch.zeros(mw, nf, device=dev)
+            out_s = torch.zeros(mw, self.config.n_structural_features, device=dev)
+            bs = N / mw
+            idx = ((torch.arange(mw, device=dev, dtype=torch.float32) * bs).round().long())
+            idx_end = torch.cat([idx[1:], torch.tensor([N], device=dev)])
+            cum = raw.cumsum(dim=0)
+            cum_s = struct.cumsum(dim=0)
             for i in range(mw):
-                start_idx = int(round(i * bin_size))
-                end_idx = max(start_idx + 1, int(round((i + 1) * bin_size)))
-                out_kmer[i] = out_kmer_all[start_idx:end_idx].mean(dim=0)
-                out_spec[i] = out_spec_all[start_idx:end_idx].mean(dim=0)
+                s, e = idx[i].item(), idx_end[i].item()
+                cnt = max(1, e - s)
+                out[i] = (cum[e - 1] - (cum[s - 1] if s > 0 else 0)) / cnt
+                out_s[i] = (cum_s[e - 1] - (cum_s[s - 1] if s > 0 else 0)) / cnt
+            out = F.normalize(out + 1e-6, p=2, dim=-1)
+            mask = torch.ones(mw, dtype=torch.bool, device=dev)
         else:
-            out_kmer = torch.zeros((mw, self.n_features), device=device)
-            out_spec = torch.zeros((mw, 512), device=device)
-            mask = torch.zeros(mw, dtype=torch.bool, device=device)
-            out_kmer[:N] = out_kmer_all
-            out_spec[:N] = out_spec_all
+            out = torch.zeros(mw, nf, device=dev)
+            out_s = torch.zeros(mw, self.config.n_structural_features, device=dev)
+            out[:N] = F.normalize(raw + 1e-6, p=2, dim=-1)
+            out_s[:N] = struct
+            mask = torch.zeros(mw, dtype=torch.bool, device=dev)
             mask[:N] = True
 
-        out_kmer = out_kmer * mask.unsqueeze(1).float()
-        out_spec = out_spec * mask.unsqueeze(1).float()
-
-        return out_kmer, out_spec, mask
+        return out * mask.unsqueeze(1), out_s * mask.unsqueeze(1), mask
 
     def extract(self, dna: str, device: str = "cpu") -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         b = np.frombuffer(dna.encode("ascii", errors="ignore"), dtype=np.uint8).copy()
-        base4_f = self.char_map[torch.from_numpy(b).long()].to(device)
-
-        all_kmer, all_spec, all_mask, all_sid = [], [], [], []
+        seq = self.char_map[torch.from_numpy(b).long()].to(device)
+        feat_l, struct_l, mask_l, sid_l = [], [], [], []
         for idx, (ws, st, mw) in enumerate(zip(self.config.window_sizes, self.config.strides, self.config.max_windows)):
-            kmer_f, spec_f, mask = self._extract_strand(base4_f, ws, st, mw, device)
-
+            f, s, m = self._extract(seq, ws, st, mw)
             if self.config.rc_consensus:
-                base4_rc = 3 - torch.flip(base4_f, dims=[0])
-                kmer_rc, spec_rc, _ = self._extract_strand(base4_rc, ws, st, mw, device)
-                kmer = 0.5 * (kmer_f + kmer_rc)
-                spec = 0.5 * (spec_f + spec_rc)
-            else:
-                kmer, spec = kmer_f, spec_f
-
-            all_kmer.append(kmer.cpu())
-            all_spec.append(spec.cpu())
-            all_mask.append(mask.cpu())
-            all_sid.append(torch.full((mw,), idx, dtype=torch.long))
-
-        return torch.cat(all_kmer), torch.cat(all_spec), torch.cat(all_mask), torch.cat(all_sid)
+                rc = 3 - torch.flip(seq, dims=[0])
+                fr, sr, _ = self._extract(rc.clamp_min(0), ws, st, mw)
+                f, s = 0.5 * (f + fr), 0.5 * (s + sr)
+            feat_l.append(f.cpu())
+            struct_l.append(s.cpu())
+            mask_l.append(m.cpu())
+            sid_l.append(torch.full((mw,), idx, dtype=torch.long))
+        return torch.cat(feat_l), torch.cat(struct_l), torch.cat(mask_l), torch.cat(sid_l)
 
 
-def _init_feature_worker(config: MultiScaleKmerConfig) -> None:
-    global _FEATURE_WORKER
-    _FEATURE_WORKER = MultiScaleKmerExtractor(config)
+_WORKER: CanonicalKmerExtractor | None = None
 
 
-def _extract_record_features(dna: str) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    if _FEATURE_WORKER is None:
-        raise RuntimeError("Feature worker was not initialized")
-    return _FEATURE_WORKER.extract(dna)
+def _init_worker(cfg: CanonicalKmerConfig) -> None:
+    global _WORKER
+    _WORKER = CanonicalKmerExtractor(cfg)
 
 
-def preprocess_all_features(
-    records: list[LabeledSequence],
-    config: MultiScaleKmerConfig,
-    out_path: str | Path,
-    num_workers: int | None = None,
-    parallel_threshold: int = 32,
-) -> None:
-    extractor = MultiScaleKmerExtractor(config)
+def _run(dna: str):
+    if _WORKER is None:
+        raise RuntimeError("worker not initialized")
+    return _WORKER.extract(dna)
+
+
+def preprocess_all_features(records: list[LabeledSequence], config: CanonicalKmerConfig,
+                             out_path: str | Path, num_workers: int | None = None,
+                             parallel_threshold: int = 32) -> None:
     if num_workers is None:
         num_workers = os.cpu_count() or 1
-    use_parallel = num_workers > 1 and len(records) >= parallel_threshold
-
-    if use_parallel:
-        start_method = "fork" if "fork" in get_all_start_methods() else "spawn"
-        ctx = get_context(start_method)
-        with ctx.Pool(processes=num_workers, initializer=_init_feature_worker, initargs=(config,)) as pool:
-            extracted = pool.map(_extract_record_features, [rec.dna for rec in records])
+    use = num_workers > 1 and len(records) >= parallel_threshold
+    if use:
+        ctx = get_context("fork" if "fork" in get_all_start_methods() else "spawn")
+        with ctx.Pool(processes=num_workers, initializer=_init_worker, initargs=(config,)) as p:
+            extracted = p.map(_run, [r.dna for r in records])
     else:
-        extracted = [extractor.extract(rec.dna) for rec in records]
+        ex = CanonicalKmerExtractor(config)
+        extracted = [ex.extract(r.dna) for r in records]
 
-    feats, specs, masks, sids = zip(*extracted, strict=True) if extracted else ([], [], [], [])
-    torch.save({
-        "features": torch.stack(feats),
-        "spec_features": torch.stack(specs),
-        "masks": torch.stack(masks),
-        "scale_ids": torch.stack(sids)
-    }, out_path)
+    feats, structs, masks, sids = zip(*extracted) if extracted else ([], [], [], [])
+    torch.save({"features": torch.stack(feats), "struct_features": torch.stack(structs),
+                "masks": torch.stack(masks), "scale_ids": torch.stack(sids)}, out_path)
+
+
+def extract_features(data_dir: str | Path, config: dict | None = None) -> None:
+    data_dir = Path(data_dir)
+    kt = config or {}
+    mw = kt.get("max_windows", (16, 8, 4))
+    if isinstance(mw, int):
+        ws = kt.get("window_sizes", (512, 2048, 8192))
+        ratios = [w / sum(ws) for w in ws]
+        mw = tuple(max(1, round(mw * r)) for r in ratios)
+    feat_cfg = CanonicalKmerConfig(
+        window_sizes=tuple(kt.get("window_sizes", (512, 2048, 8192))),
+        strides=tuple(kt.get("strides", (256, 1024, 4096))),
+        max_windows=tuple(mw),
+        ngram_min=kt.get("ngram_min", 4),
+        ngram_max=kt.get("ngram_max", 6),
+        n_structural_features=kt.get("n_structural_features", 19),
+        rc_consensus=kt.get("rc_consensus", False),
+    )
+    expansion_n = kt.get("expansion_classes", 1)
+    for name in ("train", "val", "test", "heldout_test", "nonplasmid_control"):
+        jsonl_path = data_dir / f"{name}.jsonl"
+        if not jsonl_path.exists():
+            continue
+        records = load_jsonl(jsonl_path)
+        if not records:
+            continue
+        labels = {
+            "mobility": torch.tensor([r.mobility for r in records], dtype=torch.long),
+            "amr": torch.tensor([float(r.amr) for r in records]),
+        }
+        if expansion_n > 1:
+            labels["expansion"] = torch.tensor(
+                [min(int(r.expansion), expansion_n - 1) for r in records], dtype=torch.long)
+        else:
+            labels["expansion"] = torch.tensor([float(r.expansion) for r in records])
+        torch.save(labels, data_dir / f"{name}_labels.pt")
+        preprocess_all_features(records, feat_cfg, data_dir / f"{name}_features.pt",
+                                 num_workers=kt.get("num_workers", 4))

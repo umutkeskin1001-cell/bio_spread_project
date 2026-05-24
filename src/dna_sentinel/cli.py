@@ -1,167 +1,112 @@
+"""Cassiopeia CLI."""
+
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
+import os
 from pathlib import Path
 
 import click
 import torch
 import yaml
 
-from dna_sentinel.features import MultiScaleKmerConfig, preprocess_all_features
-from dna_sentinel.model import KmerTransformer, KmerTransformerConfig
+from dna_sentinel.features import extract_features
+from dna_sentinel.model import Cassiopeia, CassiopeiaConfig
 from dna_sentinel.prepare import prepare_dataset
-from dna_sentinel.pretrain import pretrain_mwr
-from dna_sentinel.train import evaluate_kmer_transformer, train_kmer_transformer
-from dna_sentinel.utils import load_jsonl, predict_one, read_fasta
+from dna_sentinel.train import evaluate, train_cassiopeia
+from dna_sentinel.utils import predict_one, read_fasta
+
+
+def _load_data(data_dir: Path, name: str, n_struct: int = 0) -> dict:
+    feat = torch.load(data_dir / f"{name}_features.pt", weights_only=True)
+    lab = torch.load(data_dir / f"{name}_labels.pt", weights_only=True)
+    if "struct_features" not in feat and n_struct > 0:
+        B, W = feat["features"].shape[:2]
+        feat["struct_features"] = feat["features"].new_zeros(B, W, n_struct)
+    return {**feat, **lab}
+
+
+def _make_model(cfg: dict):
+    return Cassiopeia(CassiopeiaConfig.from_yaml(cfg))
 
 
 @click.group()
 def cli() -> None:
-    """DNA-only mobile genetic element risk modeling (Multi-Scale K-mer Transformer)."""
-
-
-def _feature_config(kt_cfg: dict) -> MultiScaleKmerConfig:
-    return MultiScaleKmerConfig(
-        window_sizes=tuple(kt_cfg.get("window_sizes", [512, 2048, 8192])),
-        strides=tuple(kt_cfg.get("strides", [256, 1024, 4096])),
-        max_windows=tuple(kt_cfg.get("max_windows", [16, 8, 4])),
-        ngram_min=kt_cfg.get("ngram_min", 4),
-        ngram_max=kt_cfg.get("ngram_max", 6),
-        n_features=kt_cfg.get("n_kmer_features", 4096),
-        rc_consensus=kt_cfg.get("rc_consensus", True),
-        length_weighting=kt_cfg.get("length_weighting", False),
-        coverage_feature=kt_cfg.get("coverage_feature", False),
-    )
+    """Cassiopeia: DNA-only plasmid risk modeling."""
 
 
 @cli.command()
 @click.option("--config", default="config/dna_sentinel.yaml", type=click.Path(exists=True))
 def prepare(config: str) -> None:
-    cfg = yaml.safe_load(Path(config).read_text(encoding="utf-8"))
-    stats = prepare_dataset(**cfg["data"])
-    click.echo(json.dumps(stats, indent=2))
+    cfg = yaml.safe_load(Path(config).read_text())
+    click.echo(json.dumps(prepare_dataset(**cfg.get("data", cfg)), indent=2))
 
 
-@cli.command("prepare-kmer-transformer")
+@cli.command("prepare-features")
 @click.option("--config", default="config/dna_sentinel.yaml", type=click.Path(exists=True))
-def prepare_kmer_transformer(config: str) -> None:
-    cfg = yaml.safe_load(Path(config).read_text(encoding="utf-8"))
-    data_dir = Path(cfg["data"]["out_dir"])
-    kt_cfg = cfg.get("kmer_transformer", {})
-    kmer_cfg = _feature_config(kt_cfg)
-    train_records = load_jsonl(data_dir / "train.jsonl")
-    if not kmer_cfg.rc_consensus:
-        from dna_sentinel.utils import rc_augment
-        train_records = rc_augment(train_records)
-    val_records = load_jsonl(data_dir / "val.jsonl")
-    test_records = load_jsonl(data_dir / "test.jsonl")
-    preprocess_all_features(train_records, kmer_cfg, data_dir / "train_features.pt")
-    preprocess_all_features(val_records, kmer_cfg, data_dir / "val_features.pt")
-    preprocess_all_features(test_records, kmer_cfg, data_dir / "test_features.pt")
-    for name, records in [("train", train_records), ("val", val_records), ("test", test_records)]:
-        torch.save({
-            "mobility": torch.tensor([r.mobility for r in records], dtype=torch.long),
-            "amr": torch.tensor([float(r.amr) for r in records]),
-            "expansion": torch.tensor([float(r.expansion) for r in records]),
-        }, data_dir / f"{name}_labels.pt")
-    click.echo(json.dumps({"train_n": len(train_records), "val_n": len(val_records), "test_n": len(test_records)}, indent=2))
+def prepare_features(config: str) -> None:
+    cfg = yaml.safe_load(Path(config).read_text())
+    data_cfg = cfg.get("data", cfg)
+    kt = cfg.get("features", {})
+    extract_features(data_cfg["out_dir"], {**kt, **cfg.get("model", {})})
 
 
-@cli.command("train-kmer-transformer")
+@cli.command("train")
 @click.option("--config", default="config/dna_sentinel.yaml", type=click.Path(exists=True))
-@click.option("--pretrain", is_flag=True, help="Run masked window reconstruction pre-training before fine-tuning.")
-def train_kmer_transformer_cmd(config: str, pretrain: bool) -> None:
-    cfg = yaml.safe_load(Path(config).read_text(encoding="utf-8"))
+def train_cmd(config: str) -> None:
+    cfg = yaml.safe_load(Path(config).read_text())
     data_dir = Path(cfg["data"]["out_dir"])
-    kt_cfg = cfg.get("kmer_transformer", {})
-    model_cfg = KmerTransformerConfig(
-        n_kmer_features=kt_cfg.get("n_kmer_features", 4096),
-        hidden_dim=kt_cfg.get("hidden_dim", 64),
-        n_heads=kt_cfg.get("n_heads", 4),
-        n_layers=kt_cfg.get("n_layers", 2),
-        ffn_ratio=kt_cfg.get("ffn_ratio", 4),
-        dropout=kt_cfg.get("dropout", 0.25),
-        max_windows=sum(kt_cfg.get("max_windows", [16, 8, 4])),
-        n_scales=len(kt_cfg.get("window_sizes", [512, 2048, 8192])),
+    model_cfg = cfg.get("model", {})
+    train_cfg = cfg.get("training", {})
+
+    model = _make_model(cfg)
+    ns = model_cfg.get("n_structural_features", 19)
+    train_data = _load_data(data_dir, "train", ns)
+    val_data = _load_data(data_dir, "val", ns)
+
+    ckpt, history = train_cassiopeia(
+        model, train_data, val_data,
+        {**train_cfg, "artifact_dir": train_cfg.get("artifact_dir", "artifacts/default")},
     )
-    model = KmerTransformer(model_cfg)
-    kmer_cfg = _feature_config(kt_cfg)
-
-    pretrain_history = []
-    if pretrain:
-        pretrain_history = pretrain_mwr(
-            model,
-            kt_cfg.get("pretrain_fasta_path", cfg["data"]["fasta_path"]),
-            kmer_cfg,
-            {
-                "seed": cfg["training"].get("seed", 42),
-                "batch_size": kt_cfg.get("batch_size", 32),
-                "weight_decay": kt_cfg.get("weight_decay", 0.05),
-                "pretrain_epochs": kt_cfg.get("pretrain_epochs", 1),
-                "pretrain_batch_size": kt_cfg.get("pretrain_batch_size", kt_cfg.get("batch_size", 32)),
-                "pretrain_lr": kt_cfg.get("pretrain_lr", kt_cfg.get("lr", 1e-3)),
-                "pretrain_weight_decay": kt_cfg.get("pretrain_weight_decay", kt_cfg.get("weight_decay", 0.05)),
-                "pretrain_limit": kt_cfg.get("pretrain_limit"),
-                "pretrain_min_len": kt_cfg.get("pretrain_min_len", cfg["data"].get("min_len", 0)),
-                "pretrain_max_len": kt_cfg.get("pretrain_max_len", cfg["data"].get("max_len")),
-                "mwr_mask_ratio": kt_cfg.get("mwr_mask_ratio", 0.15),
-            },
-        )
-
-    def load_split(name):
-        feat = torch.load(data_dir / f"{name}_features.pt", weights_only=True)
-        lab = torch.load(data_dir / f"{name}_labels.pt", weights_only=True)
-        return {**feat, **lab}
-    base_lr = kt_cfg.get("lr", 1e-3)
-    ckpt, history = train_kmer_transformer(model, load_split("train"), load_split("val"), {
-        "epochs": kt_cfg.get("epochs", 15),
-        "batch_size": kt_cfg.get("batch_size", 32),
-        "lr": base_lr,
-        "backbone_lr": kt_cfg.get("backbone_lr", base_lr * 0.5 if pretrain else base_lr),
-        "head_lr": kt_cfg.get("head_lr", base_lr),
-        "weight_decay": kt_cfg.get("weight_decay", 0.05),
-        "patience": kt_cfg.get("patience", 5),
-        "window_dropout": kt_cfg.get("window_dropout", 0.25),
-        "min_lr": kt_cfg.get("min_lr", 1e-5),
-        "warmup_epochs": kt_cfg.get("warmup_epochs", 0),
-        "artifact_dir": cfg["training"]["artifact_dir"],
-    })
-    click.echo(json.dumps({
-        "checkpoint": str(ckpt),
-        "pretrain_last": pretrain_history[-1] if pretrain_history else {},
-        "last": history[-1] if history else {},
-    }, indent=2))
+    click.echo(json.dumps({"checkpoint": str(ckpt), "last": history[-1] if history else {}}, indent=2))
 
 
-@cli.command("evaluate-kmer-transformer")
+@cli.command("evaluate")
 @click.option("--checkpoint", required=True, type=click.Path(exists=True))
-@click.option("--data-dir", default="data/dna_sentinel")
-def evaluate_kmer_transformer_cmd(checkpoint: str, data_dir: str) -> None:
-    model = KmerTransformer.load(checkpoint)
-    data_path = Path(data_dir)
-    feat = torch.load(data_path / "test_features.pt", weights_only=True)
-    lab = torch.load(data_path / "test_labels.pt", weights_only=True)
-    click.echo(json.dumps(evaluate_kmer_transformer(model, {**feat, **lab}), indent=2))
+@click.option("--data-dir", default=None)
+def evaluate_cmd(checkpoint: str, data_dir: str | None) -> None:
+    model = Cassiopeia.load(checkpoint)
+    if data_dir is None:
+        data_dir = str(Path(checkpoint).parent.parent / "data" / "dna_sentinel")
+    data = _load_data(Path(data_dir), "test", model.config.n_structural_features)
+    click.echo(json.dumps(evaluate(model, data), indent=2))
 
 
-@cli.command()
+@cli.command("predict")
 @click.option("--checkpoint", required=True, type=click.Path(exists=True))
 @click.option("--fasta", "fasta_path", required=True, type=click.Path(exists=True))
 @click.option("--json", "as_json", is_flag=True)
-def predict(checkpoint: str, fasta_path: str, as_json: bool) -> None:
-    model = KmerTransformer.load(checkpoint)
+def predict_cmd(checkpoint: str, fasta_path: str, as_json: bool) -> None:
+    from dataclasses import asdict
+    model = Cassiopeia.load(checkpoint)
     rows = [asdict(predict_one(model, sid, seq)) for sid, seq in read_fasta(fasta_path)]
     if as_json:
         click.echo(json.dumps(rows, indent=2))
     else:
-        for row in rows:
-            click.echo(f"{row['sequence_id']}\trisk={row['risk_score']:.4f}\tamr={row['amr_probability']:.4f}")
+        for r in rows:
+            click.echo(f"{r['sequence_id']}\trisk={r['risk_score']:.4f}\tamr={r['amr_probability']:.4f}")
 
 
-# Compatibility Aliases
-cli.add_command(train_kmer_transformer_cmd, "train")
-cli.add_command(evaluate_kmer_transformer_cmd, "evaluate")
+@cli.command("serve")
+@click.option("--checkpoint", required=True, type=click.Path(exists=True))
+@click.option("--port", default=8000, type=int)
+@click.option("--host", default="0.0.0.0")
+def serve(checkpoint: str, port: int, host: str) -> None:
+    import uvicorn
+
+    from dna_sentinel.api import app
+    os.environ["CASSIOPEIA_CHECKPOINT"] = checkpoint
+    uvicorn.run(app, host=host, port=port, log_level="info")
 
 
 if __name__ == "__main__":

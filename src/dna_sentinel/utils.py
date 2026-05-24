@@ -1,8 +1,6 @@
-"""Consolidated utilities: FASTA, Dataset, Metrics, Prediction, Service, Augmentation, and Muon."""
 from __future__ import annotations
 
 import json
-import math
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable, Iterator
@@ -16,65 +14,46 @@ from sklearn.metrics import (
     brier_score_loss,
     roc_auc_score,
 )
-from torch.optim import Optimizer
 
 if TYPE_CHECKING:
-    from dna_sentinel.model import KmerTransformer
+    from dna_sentinel.model import Cassiopeia
 
-# =====================================================================
-# 1. FASTA & SEQUENCE UTILITIES
-# =====================================================================
-
-DNA_ALPHABET = frozenset("ACGT")
-_RC_TABLE = str.maketrans("ACGTNacgtn", "TGCANtgcan")
-
-_CANONICAL_TABLE = {i: "N" for i in range(256)}
-for char in "ACGT":
-    _CANONICAL_TABLE[ord(char)] = char
-for char in " \t\r\n-":
-    _CANONICAL_TABLE[ord(char)] = None
+_TRANSLATE_TABLE = str.maketrans("ACGTNacgtn", "TGCANtgcan")
+_A = frozenset("ACGT")
+_SKIP = frozenset(" \t\r\n-")
 
 
 def canonical_dna(seq: str) -> str:
-    upper = seq.upper()
-    translated = upper.translate(_CANONICAL_TABLE)
-    if not translated.isascii():
-        return "".join(c if c in DNA_ALPHABET else "N" for c in translated)
-    return translated
+    return "".join(c if c in _A else "N" for c in seq.upper() if c not in _SKIP)
 
 
 def revcomp(seq: str) -> str:
-    return canonical_dna(seq).translate(_RC_TABLE)[::-1]
+    return canonical_dna(seq).translate(_TRANSLATE_TABLE)[::-1]
 
 
 def read_fasta(path: str | Path) -> Iterator[tuple[str, str]]:
-    sid: str | None = None
-    chunks: list[str] = []
-    with Path(path).open("rt", encoding="utf-8", errors="ignore") as handle:
-        for raw in handle:
+    sid, chunks = None, []
+    with Path(path).open("rt", encoding="utf-8", errors="ignore") as f:
+        for raw in f:
             if raw.startswith(">"):
                 if sid is not None:
                     yield sid, canonical_dna("".join(chunks))
                 sid = raw[1:].split()[0]
                 chunks = []
             else:
-                chunks.append(raw)
+                chunks.append(raw.rstrip("\n\r"))
     if sid is not None:
         yield sid, canonical_dna("".join(chunks))
 
 
 def write_fasta(records: Iterable[tuple[str, str]], path: str | Path, width: int = 80) -> None:
-    with Path(path).open("wt", encoding="utf-8") as handle:
+    with Path(path).open("wt", encoding="utf-8") as f:
         for sid, seq in records:
             dna = canonical_dna(seq)
-            handle.write(f">{sid}\n")
+            f.write(f">{sid}\n")
             for i in range(0, len(dna), width):
-                handle.write(dna[i : i + width] + "\n")
+                f.write(f"{dna[i:i+width]}\n")
 
-
-# =====================================================================
-# 2. DATASET DEFINITIONS & AUGMENTATIONS
-# =====================================================================
 
 @dataclass(frozen=True)
 class LabeledSequence:
@@ -84,75 +63,46 @@ class LabeledSequence:
     amr: int
     expansion: int
 
-    def clean(self) -> LabeledSequence:
-        return LabeledSequence(self.sequence_id, canonical_dna(self.dna), int(self.mobility), int(self.amr), int(self.expansion))
-
 
 def save_jsonl(records: list[LabeledSequence], path: str | Path) -> None:
-    with Path(path).open("wt", encoding="utf-8") as handle:
-        for rec in records:
-            handle.write(json.dumps(asdict(rec.clean()), sort_keys=True) + "\n")
+    with Path(path).open("wt", encoding="utf-8") as f:
+        for r in records:
+            f.write(json.dumps(asdict(r), sort_keys=True) + "\n")
 
 
 def load_jsonl(path: str | Path) -> list[LabeledSequence]:
-    records: list[LabeledSequence] = []
-    with Path(path).open("rt", encoding="utf-8") as handle:
-        for line in handle:
-            if line.strip():
-                records.append(LabeledSequence(**json.loads(line)))
-    return records
-
-
-def rc_augment(records: list[LabeledSequence]) -> list[LabeledSequence]:
-    augmented = []
-    for rec in records:
-        augmented.append(rec)
-        augmented.append(LabeledSequence(
-            sequence_id=f"{rec.sequence_id}_rc",
-            dna=revcomp(rec.dna),
-            mobility=rec.mobility,
-            amr=rec.amr,
-            expansion=rec.expansion,
-        ))
-    return augmented
+    return [LabeledSequence(**json.loads(line))
+            for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
 class WindowDropout:
-    def __init__(self, drop_rate: float = 0.25):
+    def __init__(self, drop_rate: float = 0.10):
         self.drop_rate = drop_rate
 
-    def __call__(self, features: torch.Tensor | list[torch.Tensor], mask: torch.Tensor, training: bool = True):
+    def __call__(self, feat: torch.Tensor, mask: torch.Tensor, training: bool = True):
         if not training:
-            return features, mask
-        B, W = mask.shape[:2]
-        keep = (torch.rand((B, W), device=mask.device) >= self.drop_rate).float()
-        keep[:, 0] = 1.0
-        keep_u = keep.unsqueeze(-1)
-        if isinstance(features, list):
-            return [feat * keep_u for feat in features], mask & keep.bool()
-        return features * keep_u, mask & keep.bool()
+            return feat, mask
+        B = mask.shape[0]
+        keep = torch.rand(B, mask.shape[1], device=mask.device) >= self.drop_rate
+        keep = keep | (~keep.any(dim=1, keepdim=True))
+        return feat * keep.unsqueeze(-1), mask & keep
 
-
-# =====================================================================
-# 3. EVALUATION METRICS
-# =====================================================================
 
 def expected_calibration_error(y: np.ndarray, p: np.ndarray, bins: int = 10) -> float:
     if y.size == 0:
         return 0.0
-    edges = np.linspace(0.0, 1.0, bins + 1)
+    edges = np.linspace(0, 1, bins + 1)
     ece = 0.0
     for lo, hi in zip(edges[:-1], edges[1:]):
-        mask = (p >= lo) & (p < hi if hi < 1.0 else p <= hi)
-        if mask.any():
-            ece += float(mask.mean() * abs(y[mask].mean() - p[mask].mean()))
+        m = (p >= lo) & (p < hi if hi < 1 else p <= hi)
+        if m.any():
+            ece += float(m.mean() * abs(y[m].mean() - p[m].mean()))
     return ece
 
 
-def binary_metrics(y_true: list[float] | np.ndarray, y_prob: list[float] | np.ndarray, prefix: str) -> dict[str, float]:
-    y = np.asarray(y_true, dtype=float)
-    p = np.asarray(y_prob, dtype=float)
-    out: dict[str, float] = {}
+def binary_metrics(y_true, y_prob, prefix: str) -> dict[str, float]:
+    y, p = np.asarray(y_true, dtype=float), np.nan_to_num(np.asarray(y_prob, dtype=float), nan=0.5)
+    out = {}
     if len(np.unique(y)) < 2:
         out[f"{prefix}_auroc"] = 0.5
         out[f"{prefix}_auprc"] = float(y.mean()) if y.size else 0.0
@@ -164,18 +114,14 @@ def binary_metrics(y_true: list[float] | np.ndarray, y_prob: list[float] | np.nd
     return out
 
 
-def multiclass_metrics(y_true: list[int] | np.ndarray, logits: np.ndarray, prefix: str) -> dict[str, float]:
+def multiclass_metrics(y_true, probs: np.ndarray, prefix: str) -> dict[str, float]:
     y = np.asarray(y_true, dtype=int)
-    pred = logits.argmax(axis=1)
+    pred = probs.argmax(axis=1)
     return {
         f"{prefix}_accuracy": float(accuracy_score(y, pred)),
         f"{prefix}_balanced_accuracy": float(balanced_accuracy_score(y, pred)),
     }
 
-
-# =====================================================================
-# 4. PREDICTION & INFERENCE SERVICE
-# =====================================================================
 
 @dataclass(frozen=True)
 class Prediction:
@@ -188,173 +134,62 @@ class Prediction:
 
 
 @torch.inference_mode()
-def predict_batch(
-    model: KmerTransformer,
-    sequences: list[tuple[str, str]],
-    device: str = "cpu",
-    top_k: int = 5,
-) -> list[Prediction]:
-    from dna_sentinel.features import MultiScaleKmerConfig, MultiScaleKmerExtractor, window_sequence
-    model.to(device)
-    model.eval()
+def predict_batch(model: Cassiopeia, sequences: list[tuple[str, str]],
+                  device: str = "cpu", top_k: int = 5) -> list[Prediction]:
+    from dna_sentinel.features import CanonicalKmerConfig, CanonicalKmerExtractor
 
+    model.to(device).eval()
     if not sequences:
         return []
-
-    extractor = MultiScaleKmerExtractor(MultiScaleKmerConfig(n_features=model.config.n_kmer_features))
-    feats, specs, masks, sids = [], [], [], []
+    ex = CanonicalKmerExtractor(CanonicalKmerConfig())
+    feats, structs, masks = [], [], []
     for _, dna in sequences:
-        feat, spec, mask, sid = extractor.extract(canonical_dna(dna))
-        feats.append(feat)
-        specs.append(spec)
-        masks.append(mask)
-        sids.append(sid)
+        f, s, m, _ = ex.extract(canonical_dna(dna))
+        feats.append(f)
+        structs.append(s)
+        masks.append(m)
+    out = model(torch.stack(feats).to(device), torch.stack(masks).to(device),
+                struct_features=torch.stack(structs).to(device) if model.has_struct else None)
 
-    feat_t = torch.stack(feats).to(device)
-    spec_t = torch.stack(specs).to(device)
-    mask_t = torch.stack(masks).to(device)
-    sid_t = torch.stack(sids).to(device)
+    mob = torch.softmax(out["mobility_logits"], dim=-1).cpu()
+    amr = torch.sigmoid(out["amr_logits"]).cpu()
+    exp_raw = out["expansion_logits"].cpu()
+    if model.config.expansion_classes > 1:
+        exp_prob = torch.softmax(exp_raw, dim=-1)
+    else:
+        exp_prob = torch.sigmoid(exp_raw)
+    ws = out["mob_evidence"].cpu()
+    am = torch.stack(masks).cpu()
 
-    out = model(feat_t, spec_t, mask_t, sid_t)
-
-    mobility_all = torch.softmax(out["mobility_logits"], dim=-1).cpu()
-    amr_all = torch.sigmoid(out["amr_logits"]).cpu()
-    expansion_all = torch.sigmoid(out["expansion_logits"]).cpu()
-    weights_all = out["evidence_weights"].cpu()
-
-    predictions = []
-    for idx, (seq_id, dna) in enumerate(sequences):
-        mobility = mobility_all[idx].tolist()
-        amr = float(amr_all[idx].item())
-        expansion = float(expansion_all[idx].item())
-        mobile = max(mobility[1], mobility[2])
-        risk = float(((mobile**2 + amr**2 + expansion**2) / 3.0)**0.5)
-
-        weights = weights_all[idx]
-        active_mask = mask_t[idx].cpu().bool()
-
-        all_windows_info = []
-        for ws, st, mw in zip(extractor.config.window_sizes, extractor.config.strides, extractor.config.max_windows):
-            windows = window_sequence(dna, ws, st, mw)
-            for i in range(mw):
-                if i < len(windows):
-                    w = windows[i]
-                    start = i * st
-                    all_windows_info.append({"start": float(start), "end": float(start + len(w))})
-                else:
-                    all_windows_info.append({"start": 0.0, "end": 0.0})
-
-        sorted_indices = torch.argsort(weights, descending=True)
-        top_windows = []
-        for w_idx in sorted_indices.tolist():
-            if len(top_windows) >= top_k:
-                break
-            if active_mask[w_idx]:
-                info = all_windows_info[w_idx]
-                top_windows.append({"start": info["start"], "end": info["end"], "weight": float(weights[w_idx])})
-
-        predictions.append(Prediction(seq_id, mobility, amr, expansion, risk, top_windows))
-
-    return predictions
+    preds = []
+    for idx, (seq_id, _) in enumerate(sequences):
+        mobile = 1.0 - mob[idx, 0].item()
+        exp_val = float(exp_prob[idx, 1]) if model.config.expansion_classes > 1 else float(exp_prob[idx])
+        risk = (mobile * float(amr[idx]) * exp_val) ** (1.0 / 3.0)
+        top = torch.topk(ws[idx] + (~am[idx]).float() * (-1e9),
+                          k=min(top_k, int(am[idx].sum().item()))).indices
+        wins = [{"window": float(i), "weight": float(ws[idx, i])} for i in top.tolist() if am[idx, i]]
+        preds.append(Prediction(seq_id, mob[idx].tolist(), float(amr[idx]),
+                                 exp_val, risk, wins))
+    return preds
 
 
-@torch.inference_mode()
-def predict_one(model: KmerTransformer, sequence_id: str, dna: str, device: str = "cpu", top_k: int = 5) -> Prediction:
+def predict_one(model: Cassiopeia, sequence_id: str, dna: str,
+                device: str = "cpu", top_k: int = 5) -> Prediction:
     return predict_batch(model, [(sequence_id, dna)], device, top_k)[0]
 
 
 class InferenceService:
     def __init__(self, checkpoint: str, device: str = "cpu") -> None:
-        from dna_sentinel.model import KmerTransformer
+        from dna_sentinel.model import Cassiopeia
         self.device = device
-        self.checkpoint_path = Path(checkpoint)
-        self.model = KmerTransformer.load(self.checkpoint_path, device=device)
-        self.model.to(device)
-        self.model.eval()
+        self.model = Cassiopeia.load(checkpoint, device=device)
 
     def predict(self, sequence_id: str, dna: str) -> dict:
-        pred = predict_one(self.model, sequence_id, dna, device=self.device)
-        return asdict(pred)
+        return asdict(predict_one(self.model, sequence_id, dna, device=self.device))
 
     def predict_batch(self, sequences: list[Any]) -> list[dict]:
-        parsed = []
-        for s in sequences:
-            if isinstance(s, dict):
-                parsed.append((s["sequence_id"], s["dna"]))
-            elif hasattr(s, "sequence_id") and hasattr(s, "dna"):
-                parsed.append((s.sequence_id, s.dna))
-            else:
-                parsed.append(s)
-        preds = predict_batch(self.model, parsed, device=self.device)
-        return [asdict(p) for p in preds]
-
-
-# =====================================================================
-# 5. MUON OPTIMIZER
-# =====================================================================
-
-class Muon(Optimizer):
-    def __init__(self, params, lr=1e-4, momentum=0.9, ns_steps=5, adamw_lr=3e-4, adamw_betas=(0.9, 0.95), adamw_wd=0.01):
-        defaults = dict(
-            lr=lr,
-            momentum=momentum,
-            ns_steps=ns_steps,
-            adamw_lr=adamw_lr,
-            adamw_betas=adamw_betas,
-            adamw_wd=adamw_wd
-        )
-        super().__init__(params, defaults)
-
-    @torch.no_grad()
-    def step(self, closure=None):
-        loss = None
-        if closure is not None:
-            with torch.enable_grad():
-                loss = closure()
-
-        for group in self.param_groups:
-            for p in group["params"]:
-                if p.grad is None:
-                    continue
-
-                state = self.state[p]
-                if p.ndim == 2 and min(p.shape) >= 16:
-                    if "momentum" not in state:
-                        state["momentum"] = torch.zeros_like(p.grad)
-                    buf = state["momentum"]
-                    buf.mul_(group["momentum"]).add_(p.grad)
-
-                    G = buf
-                    M, N = G.shape
-                    X = G / G.norm().clamp_min(1e-8)
-                    for _ in range(group["ns_steps"]):
-                        if M < N:
-                            A = X @ X.t()
-                            X = 0.5 * (3.0 * torch.eye(M, device=X.device, dtype=X.dtype) - A) @ X
-                        else:
-                            A = X.t() @ X
-                            X = 0.5 * X @ (3.0 * torch.eye(N, device=X.device, dtype=X.dtype) - A)
-                    p.add_(X, alpha=-group["lr"])
-                else:
-                    if "step" not in state:
-                        state["step"] = 0
-                        state["exp_avg"] = torch.zeros_like(p)
-                        state["exp_avg_sq"] = torch.zeros_like(p)
-
-                    state["step"] += 1
-                    exp_avg, exp_avg_sq = state["exp_avg"], state["exp_avg_sq"]
-                    beta1, beta2 = group["adamw_betas"]
-
-                    if group["adamw_wd"] > 0:
-                        p.mul_(1.0 - group["adamw_lr"] * group["adamw_wd"])
-
-                    exp_avg.mul_(beta1).add_(p.grad, alpha=1.0 - beta1)
-                    exp_avg_sq.mul_(beta2).addcmul_(p.grad, p.grad, value=1.0 - beta2)
-
-                    bias_correction1 = 1.0 - beta1 ** state["step"]
-                    bias_correction2 = 1.0 - beta2 ** state["step"]
-                    denom = (exp_avg_sq.sqrt() / math.sqrt(bias_correction2)).add_(1e-8)
-                    step_size = group["adamw_lr"] / bias_correction1
-                    p.addcdiv_(exp_avg, denom, value=-step_size)
-
-        return loss
+        parsed = [(s["sequence_id"], s["dna"]) if isinstance(s, dict)
+                  else s if isinstance(s, tuple) else (s.sequence_id, s.dna)
+                  for s in sequences]
+        return [asdict(p) for p in predict_batch(self.model, parsed, device=self.device)]

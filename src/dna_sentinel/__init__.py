@@ -1,5 +1,4 @@
-"""DNA Sentinel: sequence-only mobile genetic element risk modeling (Multi-Scale K-mer Transformer)."""
+"""Cassiopeia: multi-task plasmid risk modeling."""
+from dna_sentinel.model import Cassiopeia, CassiopeiaConfig
 
-from dna_sentinel.model import KmerTransformer, KmerTransformerConfig
-
-__all__ = ["KmerTransformer", "KmerTransformerConfig"]
+__all__ = ["Cassiopeia", "CassiopeiaConfig"]

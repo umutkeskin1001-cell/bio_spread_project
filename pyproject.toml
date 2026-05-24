@@ -1,39 +1,18 @@
-[build-system]
-requires = ["setuptools>=69"]
-build-backend = "setuptools.build_meta"
-
-[project]
-name = "dna-sentinel"
-version = "0.1.0"
-description = "DNA-only mobile genetic element risk modeling with sparse evidence windows"
-requires-python = ">=3.10"
-dependencies = [
-  "click>=8.0",
-  "numpy>=1.26,<3",
-  "polars>=0.20,<2",
-  "PyYAML>=6.0",
-  "scikit-learn>=1.4,<2",
-  "torch>=2.0,<3",
-]
-
-[project.optional-dependencies]
-api = ["fastapi>=0.100", "uvicorn>=0.20"]
-dev = ["pytest>=8,<10", "ruff>=0.6,<1", "mypy>=1.11,<2"]
-
-[project.scripts]
-dna-sentinel = "dna_sentinel.cli:cli"
-
-[tool.setuptools.packages.find]
-where = ["src"]
-
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+minversion = "7.0"
+addopts = "-v --tb=short -x"
 testpaths = ["tests"]
+python_files = ["test_*.py"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "W"]
-ignore = ["E501"]
+select = ["E", "F", "I", "N", "W"]
+ignore = ["N806", "N812"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = false
+ignore_missing_imports = true

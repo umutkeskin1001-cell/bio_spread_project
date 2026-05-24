@@ -1,3 +1,8 @@
+"""
+Cassiopeia training loop.
+"""
+from __future__ import annotations
+
 import json
 from pathlib import Path
 
@@ -6,263 +11,278 @@ import torch
 import torch.nn.functional as F
 from sklearn.linear_model import LogisticRegression
 
-from dna_sentinel.utils import WindowDropout, binary_metrics, multiclass_metrics
-
-_HEAD_PREFIXES = (
-    "evidence_proj",
-    "mob_evidence_proj",
-    "amr_evidence_proj",
-    "exp_evidence_proj",
-    "mob_proj",
-    "amr_proj",
-    "exp_proj",
-    "mobility_head",
-    "amr_head",
-    "expansion_head",
-    "logit_scale",
-)
+from dna_sentinel.utils import binary_metrics, multiclass_metrics
 
 
 def _build_optimizer(model, config):
-    backbone_lr = config.get("backbone_lr", config["lr"])
-    head_lr = config.get("head_lr", config["lr"])
-    backbone_params = []
-    head_params = []
-    for name, param in model.named_parameters():
-        if not param.requires_grad:
+    backbone_lr = config.get("backbone_lr", config.get("lr", 1e-3))
+    head_lr = config.get("head_lr", config.get("lr", 1e-3))
+    backbone, heads = [], []
+    for n, p in model.named_parameters():
+        if not p.requires_grad:
             continue
-        if name == "logit_scale" or name.startswith(_HEAD_PREFIXES):
-            head_params.append(param)
-        else:
-            backbone_params.append(param)
-
-    param_groups = []
-    if backbone_params:
-        param_groups.append({"params": backbone_params, "lr": backbone_lr})
-    if head_params:
-        param_groups.append({"params": head_params, "lr": head_lr})
-    return torch.optim.AdamW(param_groups, lr=config["lr"], weight_decay=config["weight_decay"])
+        (heads if n.startswith(("mob_", "amr_", "exp_", "log_vars")) else backbone).append(p)
+    groups = [{"params": g, "lr": lr} for g, lr in [(backbone, backbone_lr), (heads, head_lr)] if g]
+    return torch.optim.AdamW(groups, lr=config["lr"], weight_decay=config.get("weight_decay", 0.05))
 
 
 def _build_scheduler(optimizer, config):
     epochs = int(config["epochs"])
-    warmup_epochs = int(config.get("warmup_epochs", 0))
+    warmup = int(config.get("warmup_epochs", 0))
     min_lr = float(config.get("min_lr", 1e-5))
-    if warmup_epochs > 0 and epochs > warmup_epochs:
-        warmup = torch.optim.lr_scheduler.LinearLR(
-            optimizer,
-            start_factor=float(config.get("warmup_start_factor", 0.1)),
-            total_iters=warmup_epochs,
-        )
-        cosine = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer,
-            T_max=max(1, epochs - warmup_epochs),
-            eta_min=min_lr,
-        )
-        return torch.optim.lr_scheduler.SequentialLR(optimizer, [warmup, cosine], milestones=[warmup_epochs])
+    if warmup > 0 and epochs > warmup:
+        from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
+        return SequentialLR(optimizer, [
+            LinearLR(optimizer, start_factor=0.1, total_iters=warmup),
+            CosineAnnealingLR(optimizer, T_max=epochs - warmup, eta_min=min_lr),
+        ], milestones=[warmup])
     return torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=min_lr)
 
 
-def _task_loss_multipliers(config):
-    return (
-        float(config.get("mobility_loss_weight", 1.0)),
-        float(config.get("amr_loss_weight", 1.0)),
-        float(config.get("expansion_loss_weight", 1.0)),
-    )
-
-
-def _score_metrics(metrics, config):
-    weights = config.get("score_weights", {})
-    return (
-        float(weights.get("amr", 1.0)) * metrics.get("amr_auroc", 0.0)
-        + float(weights.get("expansion", 1.0)) * metrics.get("expansion_auroc", 0.0)
-        + float(weights.get("mobility", 2.0)) * metrics.get("mobility_balanced_accuracy", 0.0)
-    )
-
-
-def fit_temperature(model, val_data, device):
+def fit_calibration(model, val_data, device):
     model.eval()
-    feats, specs, masks, sids = val_data["features"], val_data["spec_features"], val_data["masks"], val_data["scale_ids"]
-    n, batch_size = len(feats), 32
-    mob_list, amr_list, exp_list = [], [], []
+    bs = 32
+    n = len(val_data["features"])
+    sf = val_data.get("struct_features", None)
+    mob_l, amr_l, exp_l = [], [], []
     with torch.no_grad():
-        model.amr_calib_w.fill_(1.0)
-        model.amr_calib_b.fill_(0.0)
-        model.exp_calib_w.fill_(1.0)
-        model.exp_calib_b.fill_(0.0)
-        model.mobility_calib_t.fill_(1.0)
-        for s in range(0, n, batch_size):
-            e = s + batch_size
-            out = model(feats[s:e].to(device), specs[s:e].to(device), masks[s:e].to(device), sids[s:e].to(device))
-            mob_list.append(out["mobility_logits"].cpu())
-            amr_list.append(out["amr_logits"].cpu())
-            exp_list.append(out["expansion_logits"].cpu())
+        for s in range(0, n, bs):
+            e = min(s + bs, n)
+            out = model(val_data["features"][s:e].to(device),
+                        val_data["masks"][s:e].to(device),
+                        struct_features=sf[s:e].to(device) if sf is not None else None)
+            mob_l.append(out["mobility_logits"].cpu())
+            amr_l.append(out["amr_logits"].cpu())
+            exp_l.append(out["expansion_logits"].cpu())
 
-    mob_logits, amr_logits, exp_logits = torch.cat(mob_list), torch.cat(amr_list), torch.cat(exp_list)
-    mob_targets, amr_targets, exp_targets = val_data["mobility"].cpu(), val_data["amr"].cpu(), val_data["expansion"].cpu()
+    mob_l = torch.cat(mob_l).to(device)
+    amr_l = torch.cat(amr_l).to(device)
+    exp_l = torch.cat(exp_l).to(device)
+    mt, at, et = (val_data[k].to(device) for k in ("mobility", "amr", "expansion"))
 
-    def optimize_t(logits, targets):
-        t = torch.ones(1, requires_grad=True)
-        opt = torch.optim.LBFGS([t], lr=0.01, max_iter=50)
-        def eval_loss():
-            opt.zero_grad()
-            loss = F.cross_entropy(logits / t, targets.long())
-            loss.backward()
-            return loss
-        opt.step(eval_loss)
-        return max(0.1, float(t.item()))
+    t = torch.tensor(1.0, requires_grad=True, device=device)
+    opt = torch.optim.LBFGS([t], lr=0.01, max_iter=50)
+    def _closure():
+        opt.zero_grad()
+        loss = F.cross_entropy(mob_l / t, mt.long())
+        loss.backward()
+        return loss
+    opt.step(_closure)
+    model.mob_t.data.copy_(t.clamp(min=0.1))
 
-    t_mob = optimize_t(mob_logits, mob_targets)
-
-    def optimize_platt(logits, targets):
-        X, y = logits.numpy().reshape(-1, 1), targets.numpy()
-        if len(np.unique(y)) < 2:
+    def _platt(logits, y):
+        X = logits.cpu().numpy().reshape(-1, 1)
+        yn = y.cpu().numpy()
+        if len(np.unique(yn)) < 2:
             return 1.0, 0.0
-        # Use smooth L2 regularization
-        lr = LogisticRegression(C=1.0).fit(X, y)
+        lr = LogisticRegression(C=1.0).fit(X, yn)
         return float(lr.coef_[0][0]), float(lr.intercept_[0])
 
-    w_amr, b_amr = optimize_platt(amr_logits, amr_targets)
-    w_exp, b_exp = optimize_platt(exp_logits, exp_targets)
-    model.amr_calib_w.copy_(torch.tensor(w_amr, device=device))
-    model.amr_calib_b.copy_(torch.tensor(b_amr, device=device))
-    model.exp_calib_w.copy_(torch.tensor(w_exp, device=device))
-    model.exp_calib_b.copy_(torch.tensor(b_exp, device=device))
-    model.mobility_calib_t.copy_(torch.tensor(t_mob, device=device))
+    ac = model.config.amr_classes
+    for i in range(max(1, ac)):
+        li = amr_l if ac == 1 else amr_l[:, i]
+        ti = at if ac == 1 else at[:, i]
+        w, b = _platt(li, ti)
+        idx = 0 if ac == 1 else i
+        model.amr_w.data[idx] = w
+        model.amr_b.data[idx] = b
+
+    ec = model.config.expansion_classes
+    if ec == 1:
+        w, b = _platt(exp_l, et)
+        model.exp_w.data[0] = w
+        model.exp_b.data[0] = b
 
 
-def binary_focal_loss(logits, targets, pos_weight=None, gamma=2.0):
-    bce = F.binary_cross_entropy_with_logits(logits, targets, pos_weight=pos_weight, reduction="none")
-    probs = torch.sigmoid(logits)
-    p_t = probs * targets + (1.0 - probs) * (1.0 - targets)
-    loss = ((1.0 - p_t) ** gamma) * bce
-    return loss.mean()
+@torch.inference_mode()
+def evaluate(model, data, device="cpu", batch_size=32):
+    model.eval()
+    n = len(data["features"])
+    mob_p, amr_p, exp_p = [], [], []
+    sf = data.get("struct_features", None)
+    for s in range(0, n, batch_size):
+        e = min(s + batch_size, n)
+        out = model(data["features"][s:e].to(device),
+                    data["masks"][s:e].to(device),
+                    struct_features=sf[s:e].to(device) if sf is not None else None)
+        mob_p.append(torch.softmax(out["mobility_logits"], dim=-1).cpu())
+        amr_p.append(torch.sigmoid(out["amr_logits"]).cpu())
+        if model.config.expansion_classes > 1:
+            exp_p.append(torch.softmax(out["expansion_logits"], dim=-1).cpu())
+        else:
+            exp_p.append(torch.sigmoid(out["expansion_logits"]).cpu())
+
+    mob_np = torch.cat(mob_p).numpy()
+    amr_np = torch.cat(amr_p).numpy()
+    exp_np = torch.cat(exp_p).numpy()
+    amr_true = data["amr"].cpu().numpy()
+    exp_true = data["expansion"].cpu().numpy()
+
+    m = multiclass_metrics(data["mobility"].cpu().numpy(), mob_np, "mobility")
+
+    if model.config.amr_classes > 1 and amr_true.ndim > 1:
+        aurocs = [binary_metrics(amr_true[:, i], amr_np[:, i], f"amr_{i}")[f"amr_{i}_auroc"]
+                  for i in range(min(model.config.amr_classes, amr_true.shape[1]))
+                  if len(np.unique(amr_true[:, i])) >= 2]
+        m["amr_auroc"] = float(np.mean(aurocs)) if aurocs else 0.5
+    else:
+        m.update(binary_metrics(amr_true, amr_np, "amr"))
+
+    if model.config.expansion_classes > 1:
+        from sklearn.metrics import roc_auc_score
+        aurocs = []
+        n_cls = min(model.config.expansion_classes, exp_np.shape[1])
+        for i in range(n_cls):
+            yc = (exp_true == i).astype(float)
+            if len(np.unique(yc)) >= 2 and not np.isnan(exp_np[:, i]).any():
+                try:
+                    aurocs.append(float(roc_auc_score(yc, exp_np[:, i])))
+                except ValueError:
+                    pass
+        m["expansion_auroc"] = float(np.mean(aurocs)) if aurocs else 0.5
+        m["expansion_accuracy"] = float(np.mean(exp_true == exp_np.argmax(axis=1)))
+    else:
+        m.update(binary_metrics(exp_true, exp_np, "expansion"))
+
+    return m
 
 
-def train_kmer_transformer(model, train_data, val_data, config):
+def _focal_loss(logits, target, pw, gamma):
+    loss = F.binary_cross_entropy_with_logits(logits, target, pos_weight=pw, reduction="none")
+    return ((1 - torch.exp(-loss)) ** gamma * loss).mean() if gamma > 0 else loss.mean()
+
+
+def _aux_loss(model, out, mob_t, amr_t):
+    if not model.training or model.config.aux_loss_weight <= 0:
+        return 0.0
+    loss = 0.0
+    if "aux_mob_logits" in out:
+        loss = loss + F.cross_entropy(out["aux_mob_logits"], mob_t.long())
+    if "aux_amr_logits" in out:
+        loss = loss + F.binary_cross_entropy_with_logits(out["aux_amr_logits"], amr_t)
+    return model.config.aux_loss_weight * loss
+
+
+def _uncertainty_weighted(lm, la, le, log_vars):
+    lv = log_vars.clamp(-6, 6)
+    losses = torch.stack([lm, la, le])
+    return (0.5 * torch.exp(-lv) * losses + 0.5 * lv).sum()
+
+
+def train_cassiopeia(model, train_data, val_data, config):
     torch.manual_seed(config.get("seed", 42))
-    device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
+    device = "mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu"
     model.to(device)
 
     optimizer = _build_optimizer(model, config)
     scheduler = _build_scheduler(optimizer, config)
-    window_dropout = WindowDropout(config.get("window_dropout", 0.25))
 
     n_train = len(train_data["features"])
-    device_train = {k: v.to(device) for k, v in train_data.items()}
-    device_val = {k: v.to(device) for k, v in val_data.items()}
+    dt, dv = train_data, val_data
     artifact_dir = Path(config["artifact_dir"])
     artifact_dir.mkdir(parents=True, exist_ok=True)
 
-    # Label class weights
-    mob_counts = torch.bincount(device_train["mobility"].long(), minlength=3).float().clamp(min=1)
-    mob_weight = mob_counts.sum() / (3 * mob_counts)
-    amr_pos = float(device_train["amr"].sum().item() / max(1, n_train))
-    exp_pos = float(device_train["expansion"].sum().item() / max(1, n_train))
-    amr_pos_weight = torch.tensor([(1 - amr_pos) / max(amr_pos, 1e-6)], device=device)
-    exp_pos_weight = torch.tensor([(1 - exp_pos) / max(exp_pos, 1e-6)], device=device)
-    mob_loss_mult, amr_loss_mult, exp_loss_mult = _task_loss_multipliers(config)
+    bs, accum = config.get("batch_size", 32), config.get("gradient_accumulation_steps", 1)
+    gamma = config.get("focal_loss_gamma", 2.0)
+    mixup_a = config.get("mixup_alpha", 0.0)
+    exp_cls = model.config.expansion_classes
 
-    best_score, patience_counter, history = -1.0, 0, []
+    amr_pos = float(dt["amr"].sum().item() / max(1, n_train))
+    amr_pw = torch.tensor([(1 - amr_pos) / max(amr_pos, 1e-6)], device=device)
+
+    if exp_cls > 1:
+        exp_counts = torch.bincount(dt["expansion"].long(), minlength=exp_cls).float()
+        raw_pw = (n_train - exp_counts) / exp_counts.clamp_min(1)
+        exp_pw_mc = (raw_pw / raw_pw.mean().clamp_min(1e-6)).to(device)
+    else:
+        exp_pw_mc = None
+        exp_pos = float(dt["expansion"].sum().item() / max(1, n_train))
+        exp_pw = torch.tensor([(1 - exp_pos) / max(exp_pos, 1e-6)], device=device)
+
+    best_score, patience, history = -1.0, 0, []
+    optimizer.zero_grad(set_to_none=True)
 
     for epoch in range(1, config["epochs"] + 1):
         model.train()
-        losses = []
-        idx = torch.randperm(n_train, device=device)
-        for start in range(0, n_train, config["batch_size"]):
-            bi = idx[start:start + config["batch_size"]]
-            feat, spec, mask, sid = device_train["features"][bi], device_train["spec_features"][bi], device_train["masks"][bi], device_train["scale_ids"][bi]
-            mob, amr, exp = device_train["mobility"][bi], device_train["amr"][bi], device_train["expansion"][bi]
+        total_loss, n_steps = 0.0, 0
+        idx = torch.randperm(n_train)
+        for step in range(0, n_train, bs):
+            bi = idx[step: step + bs].tolist()
+            feat = dt["features"][bi].to(device)
+            mask = dt["masks"][bi].to(device)
+            mob_t = dt["mobility"][bi].to(device)
+            amr_t = dt["amr"][bi].to(device)
+            exp_t = dt["expansion"][bi].to(device)
+            struct_b = dt["struct_features"][bi].to(device) if "struct_features" in dt else None
 
-            # Standard single forward pass (2.5x faster training speed!)
-            [feat1, spec1], mask1 = window_dropout([feat, spec], mask, training=True)
-            out = model(feat1, spec1, mask1, sid)
+            B = len(bi)
+            if mixup_a > 0 and B > 1 and exp_cls <= 1:
+                x, aux_features = model.encoder(feat, mask, struct_features=struct_b)
+                lam = torch.rand(B, device=device).mul_(2 * mixup_a).add_(1 - mixup_a).clamp_(0, 1)
+                perm = torch.randperm(B, device=device)
+                lam_v = lam.view(B, 1, 1)
+                x_mix = lam_v * x + (1 - lam_v) * x[perm]
+                out = model.forward_from_encoder(x_mix, mask, aux_features)
+                lm = -(lam.unsqueeze(1) * F.one_hot(mob_t.long(), 3).float()
+                       + (1 - lam.unsqueeze(1)) * F.one_hot(mob_t[perm].long(), 3).float()
+                       ) * F.log_softmax(out["mobility_logits"], dim=-1)
+                lm = lm.sum(dim=-1).mean()
+                amr_mix = lam * amr_t.float() + (1 - lam) * amr_t[perm].float()
+                la = _focal_loss(out["amr_logits"], amr_mix, amr_pw, gamma)
+                exp_mix = lam * exp_t.float() + (1 - lam) * exp_t[perm].float()
+                le = _focal_loss(out["expansion_logits"].squeeze(-1), exp_mix, exp_pw, gamma)
+            else:
+                out = model(feat, mask, struct_features=struct_b)
+                lm = F.cross_entropy(out["mobility_logits"], mob_t.long(), label_smoothing=model.config.label_smoothing)
+                pw = amr_pw if exp_cls <= 1 else None
+                la = _focal_loss(out["amr_logits"], amr_t, pw, gamma)
+                if exp_cls > 1:
+                    le = F.cross_entropy(out["expansion_logits"], exp_t.long(), weight=exp_pw_mc,
+                                          label_smoothing=model.config.label_smoothing)
+                else:
+                    le = _focal_loss(out["expansion_logits"].squeeze(-1), exp_t, exp_pw, gamma)
 
-            # Pure Joint Loss Pipeline (No over-engineered distill/CL/entropy losses!)
-            loss_mob = F.cross_entropy(out["mobility_logits"], mob.long(), weight=mob_weight, label_smoothing=0.1)
-            loss_amr = binary_focal_loss(out["amr_logits"], amr, pos_weight=amr_pos_weight, gamma=2.0)
-            loss_exp = binary_focal_loss(out["expansion_logits"], exp, pos_weight=exp_pos_weight, gamma=2.0)
+            aux_loss_val = _aux_loss(model, out, mob_t, amr_t)
+            loss = _uncertainty_weighted(lm, la, le, model.log_vars) + aux_loss_val
+            loss = loss / accum
 
-            # Standard multi-task loss weight balancing
-            with torch.no_grad():
-                raw_weights = torch.stack([loss_mob.detach(), loss_amr.detach(), loss_exp.detach()])
-                w_mob, w_amr, w_exp = (3.0 * F.softmax(raw_weights / 0.5, dim=0)).tolist()
-
-            loss = mob_loss_mult * w_mob * loss_mob + amr_loss_mult * w_amr * loss_amr + exp_loss_mult * w_exp * loss_exp
-
-            optimizer.zero_grad(set_to_none=True)
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            optimizer.step()
-            losses.append(loss.item())
+            total_loss += loss.item() * accum
+            n_steps += 1
+
+            if (step // bs + 1) % accum == 0 or step + bs >= n_train:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                optimizer.step()
+                optimizer.zero_grad(set_to_none=True)
 
         scheduler.step()
-        avg_loss = sum(losses) / len(losses)
-        val_metrics = evaluate_kmer_transformer(model, device_val, device)
-        row = {"epoch": epoch, "train_loss": avg_loss, **val_metrics}
-        history.append(row)
-        score = _score_metrics(val_metrics, config)
+        avg_loss = total_loss / max(1, n_steps)
+        val_metrics = evaluate(model, dv, device)
 
-        print(
-            f"Epoch {epoch:02d}/{config['epochs']:02d} | "
-            f"Loss: {avg_loss:.4f} | "
-            f"AMR AUROC: {val_metrics.get('amr_auroc', 0.0):.4f} | "
-            f"Exp AUROC: {val_metrics.get('expansion_auroc', 0.0):.4f} | "
-            f"Mob Acc: {val_metrics.get('mobility_balanced_accuracy', 0.0):.4f} | "
-            f"Score: {score:.4f}"
-        )
+        score = (val_metrics.get("amr_auroc", 0.0) + val_metrics.get("expansion_auroc", 0.0)
+                 + 2.0 * val_metrics.get("mobility_balanced_accuracy", 0.0))
+        print(f"Epoch {epoch:02d}/{config['epochs']:02d} | Loss: {avg_loss:.4f} | "
+              f"AMR: {val_metrics.get('amr_auroc', 0.0)*100:.1f}% | "
+              f"Exp: {val_metrics.get('expansion_auroc', 0.0)*100:.1f}% | "
+              f"Mob BA: {val_metrics.get('mobility_balanced_accuracy', 0.0)*100:.1f}% | Score: {score:.4f}")
+        history.append({"epoch": epoch, "train_loss": avg_loss, **val_metrics})
 
         if score > best_score:
-            best_score, patience_counter = score, 0
-            model.save(artifact_dir / "kmer_transformer_best.pt")
+            best_score, patience = score, 0
+            model.save(artifact_dir / "cassiopeia_best.pt")
         else:
-            patience_counter += 1
-            if patience_counter >= config.get("patience", 25):
+            patience += 1
+            if patience >= config.get("patience", 25):
                 print(f"Early stopping at epoch {epoch}")
                 break
 
-    # Load best checkpoint back
-    model = model.load(artifact_dir / "kmer_transformer_best.pt", device=device)
-
-    # Run calibration fitting
-    fit_temperature(model, device_val, device)
-
-    # Post-Calibration Diagnostic Evaluation
-    print("\n" + "=" * 50)
-    print("RUNNING POST-CALIBRATION DIAGNOSTIC EVALUATION...")
-    print("=" * 50)
-    calibrated_val_metrics = evaluate_kmer_transformer(model, device_val, device)
-    print(f"Mobility Balanced Acc: {calibrated_val_metrics.get('mobility_balanced_accuracy', 0.0)*100:.2f}%")
-    print(f"AMR AUROC:             {calibrated_val_metrics.get('amr_auroc', 0.0)*100:.2f}%")
-    print(f"AMR ECE:               {calibrated_val_metrics.get('amr_ece', 0.0)*100:.2f}%")
-    print(f"Expansion AUROC:       {calibrated_val_metrics.get('expansion_auroc', 0.0)*100:.2f}%")
-    print(f"Expansion ECE:         {calibrated_val_metrics.get('expansion_ece', 0.0)*100:.2f}% (PERFECTLY CALIBRATED!)")
-    print("=" * 50 + "\n")
-
-    # Save calibrated model state-dict
-    model.save(artifact_dir / "kmer_transformer_best.pt")
-    (artifact_dir / "kmer_transformer_history.json").write_text(json.dumps(history, indent=2))
-    return artifact_dir / "kmer_transformer_best.pt", history
-
-
-@torch.inference_mode()
-def evaluate_kmer_transformer(model, data, device="cpu", batch_size: int = 32):
-    model.eval()
-    model.to(device)
-    feats, specs, masks, sids = data["features"], data["spec_features"], data["masks"], data["scale_ids"]
-    n = len(feats)
-    mob_list, amr_list, exp_list = [], [], []
-    for start in range(0, n, batch_size):
-        end = start + batch_size
-        out = model(feats[start:end].to(device), specs[start:end].to(device), masks[start:end].to(device), sids[start:end].to(device))
-        mob_list.append(torch.softmax(out["mobility_logits"], dim=-1).cpu())
-        amr_list.append(torch.sigmoid(out["amr_logits"]).cpu())
-        exp_list.append(torch.sigmoid(out["expansion_logits"]).cpu())
-    mob_p = torch.cat(mob_list).numpy() if mob_list else np.zeros((0, 3))
-    amr_p = torch.cat(amr_list).numpy() if amr_list else np.zeros((0,))
-    exp_p = torch.cat(exp_list).numpy() if exp_list else np.zeros((0,))
-    m = {}
-    m.update(multiclass_metrics(data["mobility"].cpu().numpy(), mob_p, "mobility"))
-    m.update(binary_metrics(data["amr"].cpu().numpy(), amr_p, "amr"))
-    m.update(binary_metrics(data["expansion"].cpu().numpy(), exp_p, "expansion"))
-    return m
+    model_class = type(model)
+    model = model_class.load(artifact_dir / "cassiopeia_best.pt", device=device)
+    fit_calibration(model, dv, device)
+    calibrated = evaluate(model, dv, device)
+    print(f"\nCalibrated: Mob BA {calibrated.get('mobility_balanced_accuracy', 0.0)*100:.2f}% | "
+          f"AMR AUROC {calibrated.get('amr_auroc', 0.0)*100:.2f}% | "
+          f"Exp AUROC {calibrated.get('expansion_auroc', 0.0)*100:.2f}%")
+    model.save(artifact_dir / "cassiopeia_best.pt")
+    (artifact_dir / "cassiopeia_history.json").write_text(json.dumps(history, indent=2, default=str))
+    return artifact_dir / "cassiopeia_best.pt", history

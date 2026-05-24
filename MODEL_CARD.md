@@ -1,76 +1,64 @@
-# DNA Sentinel Model Card
+# Cassiopeia Model Card
 
-## Model
+## Model Overview
 
-Recommended production checkpoint:
+| Property | Value |
+|----------|-------|
+| **Name** | Cassiopeia |
+| **Type** | Multi-task neural network (FRP + F-LoRA + GLUMixer + evidence pooling) |
+| **Parameters** | 418,000 |
+| **Input** | Raw DNA sequence (FASTA) → multi-scale canonical k-mer features (28 windows × 2728-dim) |
+| **Outputs** | Mobility class (3-class), AMR probability, expansion probability, per-window evidence scores |
+| **Inference latency** | ~4.5 ms/sequence on CPU |
+| **Checkpoint size** | ~1.4 MB (FRP matrix regenerated from seed, not stored) |
 
-```text
-artifacts/dna_sentinel/kmer_transformer_best.pt
-```
+## Architecture Components
 
-Model family: Genomic Coordinate Gated Bio-Spectral BDSG Transformer.
-
-The DNA Sentinel KmerTransformer integrates a dual-stream architecture with **Genomic Coordinate Aligned Positional Embeddings (GCAPE)** projected via a continuous **Genomic Coordinate MLP (GC-MLP)**. Length-invariant scale coordinates are injected early before **Coordinate-Aware Gated Bilinear Fusion** of lexical and spectral features. In the pooling layer, multi-scale representations are integrated using **Bi-Directional Scale Gating (BDSG)**, forming a soft-differentiable logical AND gate between local motif scales (Scale 0/1) and macro-genomic structures (Scale 2) with zero parameter overhead. The model remains exceptionally lightweight at under 100k parameters and **4.5 ms CPU latency**.
-
-## Intended Use
-
-DNA-only screening of plasmid/mobile genetic element sequences for:
-
-- mobility class (non-mobile, plasmid, phage)
-- AMR cargo probability
-- high-dissemination expansion probability
-- ranked sequence windows contributing to risk
-
-The system is for prioritization and research triage. It does not generate DNA, optimize sequences, or provide wet-lab protocols.
-
-## Inputs
-
-Only raw FASTA DNA is accepted at inference. Metadata, taxonomy, geography, host, year, GC/length features, annotations, BLAST hits, and protein embeddings are not model inputs.
+1. **FRP** — Fast Random Projection (2728 → 256), seeded deterministic ternary matrix (1/6 each ±1, 2/3 zero)
+2. **F-LoRA** — Low-rank correction (rank 8) adapts the FRP projection
+3. **Bottleneck** — LayerNorm + Linear(256→128) + GELU
+4. **ContextGate** — Gated cross-window context modulation via learned gate
+5. **2× GLUMixer** — Hybrid token-mixing (window axis) + channel-mixing (feature axis) with GELU gating
+6. **Stochastic Depth** — DropPath regularization (rate 0.1)
+7. **Task Adapters** — Bottleneck adapters (128→8→128) per task, applied to shared representation
+8. **Multi-Query Evidence Pooling** — Attention-weighted pooling over windows (1 head)
+9. **Deep Supervision** — Auxiliary classification heads on intermediate layer outputs (weight 0.3)
+10. **Task heads** — Mobility: Linear(128→3), AMR: Linear(128→1), Expansion: Linear(128+3+1→1)
 
 ## Training Data
 
-Curated local dataset:
+Curated from PLSDB plasmid database. Split is group-aware (exact duplicates and known backbone groups are kept together).
 
 | Split | Sequences |
-|---|---:|
-| Train | 1484 |
-| Validation | 299 |
-| Test | 265 |
+|-------|----------:|
+| Train | 1,414 |
+| Validation | 280 |
+| Test | 354 |
+| Held-out test | 1,200 |
 
-Labels are derived offline from existing project tables. Split construction groups exact duplicates and known backbone groups to reduce leakage.
+Features: multi-scale canonical k-mer counts at window sizes 512 bp, 2048 bp, 8192 bp (k=4–6).
 
-## Test Metrics (DNA Sentinel KmerTransformer)
+## Performance (Held-out Test)
 
 | Task | Metric | Value |
-|---|---:|---:|
-| Mobility | Accuracy | **0.6453** |
-| Mobility | Balanced accuracy | **0.6434** |
-| AMR cargo | AUROC | **0.8069** |
-| AMR cargo | AUPRC | **0.7380** |
-| AMR cargo | Brier | **0.1743** |
-| AMR cargo | ECE | **0.0715** |
-| Expansion | AUROC | **0.8700** |
-| Expansion | AUPRC | **0.8226** |
-| Expansion | Brier | **0.1299** |
-| Expansion | ECE | **0.0653** |
+|------|--------|------:|
+| Mobility | Balanced accuracy | **77.94%** |
+| AMR | AUROC | **92.51%** |
+| Expansion | AUROC | **80.36%** |
 
-## Stress Metrics
+## Training Configuration
 
-| Check | Value |
-|---|---|
-| RC max risk difference | 0.0 |
-| RC mean risk difference | 0.0 |
-| Approx nearest train-test sketch Jaccard, mean | 0.0032 |
-| Approx nearest train-test sketch Jaccard, max | 0.0549 |
-| Checkpoint size | 1.62 MB |
-| Inference latency | **4.5 ms/sequence** (56x speedup) |
+- Optimizer: AdamW (backbone lr=3e-4, head lr=3e-4, weight decay=0.05)
+- Scheduler: Linear warmup (5 epochs) → Cosine decay to 1e-5
+- Loss: Focal loss (γ=2.0) for binary tasks, cross-entropy (label smoothing 0.1) for mobility
+- Uncertainty weighting: Learned log-variance per task
+- Regularization: Stochastic depth (0.1), manifold mixup (α=0.3), WindowDropout (0.15)
+- Deep supervision aux loss weight: 0.3
+- Gradient accumulation: 2 steps
+- Early stopping: 25 epochs patience
 
 ## Limitations
 
-- The model profiles sequences based on multi-scale k-mer, coordinate mappings, and Fourier structural periodicities; it does not perform full sequence generation or mechanistic base-by-base editing.
-- Window explanations are model evidence weights, not validated biological HGT breakpoints.
-
-## Recommended Next Work
-
-- Scale curated dataset to 4096 sequences while preserving group split.
-- Validate evidence windows against known mobility/AMR loci without feeding those annotations into the model.
+- The model profiles sequences based on multi-scale k-mer histograms with random projection, not base-level editing
+- Window evidence scores indicate model attention, not validated HGT breakpoints
+- Performance on out-of-distribution sequences (non-plasmid, novel backbones) may degrade

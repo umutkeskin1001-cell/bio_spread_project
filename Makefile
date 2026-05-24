@@ -11,16 +11,18 @@ lint:
 
 prepare:
 	dna-sentinel prepare --config config/dna_sentinel.yaml
-	dna-sentinel prepare-kmer-transformer --config config/dna_sentinel.yaml
+	dna-sentinel prepare-features --config config/dna_sentinel.yaml
 
 train:
-	dna-sentinel train-kmer-transformer --config config/dna_sentinel.yaml
+	dna-sentinel train --config config/dna_sentinel.yaml
 
 evaluate:
-	dna-sentinel evaluate-kmer-transformer --checkpoint artifacts/dna_sentinel/kmer_transformer_best.pt --data-dir data/dna_sentinel
+	dna-sentinel evaluate \
+	  --checkpoint artifacts/dna_sentinel/cassiopeia_best.pt \
+	  --data-dir data/dna_sentinel
 
 predict:
-	dna-sentinel predict --checkpoint artifacts/dna_sentinel/kmer_transformer_best.pt --fasta data/dna_sentinel/query.fa --json
+	dna-sentinel predict --checkpoint artifacts/dna_sentinel/cassiopeia_best.pt --fasta data/dna_sentinel/query.fa --json
 
 docker-build:
 	docker build -t dna-sentinel .
@@ -30,4 +32,3 @@ docker-run:
 
 clean:
 	rm -rf artifacts/dna_sentinel .pytest_cache .ruff_cache
-

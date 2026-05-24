@@ -1,4 +1,7 @@
-from dataclasses import asdict, dataclass
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass, fields
 
 import torch
 import torch.nn as nn
@@ -6,324 +9,256 @@ import torch.nn.functional as F
 
 
 @dataclass(frozen=True)
-class KmerTransformerConfig:
-    n_kmer_features: int = 5376  # Direct, collision-free indexing
-    hidden_dim: int = 56          # The absolute golden sweet spot width!
-    n_heads: int = 8             # Highly expressive multi-head attention
-    n_layers: int = 2            # Golden peak depth for 28-window plasmid sequences
-    ffn_ratio: int = 4
-    dropout: float = 0.25
+class CassiopeiaConfig:
+    variant: str = "small"
+    n_canonical_features: int = 2728
+    n_structural_features: int = 19
+    hidden_dim: int = 128
+    frp_out_dim: int = 256
+    n_layers: int = 2
+    lora_rank: int = 8
+    n_evidence_heads: int = 1
+    drop_path_rate: float = 0.1
+    aux_loss_weight: float = 0.3
+    dropout: float = 0.15
     max_windows: int = 28
-    n_scales: int = 3
-    task_specific_pooling: bool = True
-    scale_isolated_conv: bool = True
+    expansion_classes: int = 1
+    amr_classes: int = 1
+    label_smoothing: float = 0.1
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        return {f.name: getattr(self, f.name) for f in fields(self)}
+
+    @classmethod
+    def from_yaml(cls, cfg: dict) -> CassiopeiaConfig:
+        m = cfg.get("model", cfg)
+        known = _config_fields()
+        return cls(**{k: v for k, v in m.items() if k in known})
 
 
-class TransformerBlock(nn.Module):
-    def __init__(self, hidden_dim: int, n_heads: int, ffn_ratio: int = 4, dropout: float = 0.1):
+_FRP_SCALE = math.sqrt(3.0)
+
+
+def _config_fields():
+    return {f.name for f in fields(CassiopeiaConfig)}
+
+
+@torch.no_grad()
+def _make_frp(in_dim: int, out_dim: int, seed: int = 42) -> torch.Tensor:
+    g = torch.Generator().manual_seed(seed)
+    r = torch.rand(in_dim, out_dim, generator=g)
+    return torch.where(r < 1.0 / 6, 1.0, torch.where(r < 2.0 / 6, -1.0, 0.0))
+
+
+class GLUMixer(nn.Module):
+    def __init__(self, n_tokens: int, hidden_dim: int, expansion: int = 3, dropout: float = 0.1):
         super().__init__()
-        self.attn = nn.MultiheadAttention(hidden_dim, n_heads, dropout=dropout, batch_first=True)
-        self.norm1 = nn.LayerNorm(hidden_dim)
-        self.norm2 = nn.LayerNorm(hidden_dim)
-        self.ffn = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim * ffn_ratio),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim * ffn_ratio, hidden_dim),
-            nn.Dropout(dropout),
-        )
+        self.t_norm = nn.LayerNorm(hidden_dim)
+        self.t_w1 = nn.Linear(n_tokens, n_tokens * 2)
+        self.t_w2 = nn.Linear(n_tokens, n_tokens)
+        self.t_drop = nn.Dropout(dropout)
+        self.c_norm = nn.LayerNorm(hidden_dim)
+        self.c_w1 = nn.Linear(hidden_dim, hidden_dim * expansion * 2)
+        self.c_w2 = nn.Linear(hidden_dim * expansion, hidden_dim)
+        self.c_drop = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        r = x
+        t = self.t_norm(x).transpose(1, 2)
+        u, v = self.t_w1(t).chunk(2, dim=-1)
+        x = r + self.t_w2(self.t_drop(u * v)).transpose(1, 2)
+        r = x
+        u, v = self.c_w1(self.c_norm(x)).chunk(2, dim=-1)
+        return r + self.c_w2(self.c_drop(u * v))
+
+
+class ContextGate(nn.Module):
+    def __init__(self, dim: int):
+        super().__init__()
+        self.gate = nn.Linear(dim * 2, dim)
 
     def forward(self, x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-        attn_out, _ = self.attn(x, x, x, key_padding_mask=~mask)
-        x = self.norm1(x + attn_out)
-        return self.norm2(x + self.ffn(x))
+        m = mask.float().unsqueeze(-1)
+        ctx = (x * m).sum(1) / m.sum(1).clamp_min(1)
+        ctx = ctx.unsqueeze(1).expand(-1, x.shape[1], -1)
+        return x * torch.sigmoid(self.gate(torch.cat([x, ctx], dim=-1)))
 
 
-def make_mlp(h: int, mid: int, out: int, dropout: float) -> nn.Sequential:
-    return nn.Sequential(
-        nn.Linear(h, mid),
-        nn.LayerNorm(mid),
-        nn.GELU(),
-        nn.Dropout(dropout),
-        nn.Linear(mid, out),
-    )
-
-
-class KmerTransformer(nn.Module):
-    def __init__(self, config: KmerTransformerConfig | None = None):
+class MultiQueryEvidencePool(nn.Module):
+    def __init__(self, dim: int, n_heads: int = 1):
         super().__init__()
-        self.config = config or KmerTransformerConfig()
-        h = self.config.hidden_dim
+        self.heads = nn.ModuleList([nn.Linear(dim, 1) for _ in range(n_heads)])
+        self.mob_w = nn.Parameter(torch.zeros(n_heads))
+        self.amr_w = nn.Parameter(torch.zeros(n_heads))
+        self.exp_w = nn.Parameter(torch.zeros(n_heads))
 
-        # Setup reverse complement index map
-        if self.config.n_kmer_features == 4096:
-            self.register_buffer("rev_comp_map", self._get_rev_comp_indices())
+    def forward(self, x_mob: torch.Tensor, x_amr: torch.Tensor, x_exp: torch.Tensor, mask: torch.Tensor):
+        w = torch.softmax(self.mob_w, dim=0)
+        all_scores = torch.stack([h(x_mob).squeeze(-1) for h in self.heads], dim=0)
+        all_scores = all_scores.masked_fill(~mask, -1e9)
+        attn = torch.softmax(all_scores, dim=-1)
+        mob_ctx = (w[:, None, None] * attn[:, :, :, None] * x_mob).sum(dim=(0, 2))
+        mob_scores = all_scores[0]
+
+        w = torch.softmax(self.amr_w, dim=0)
+        all_scores = torch.stack([h(x_amr).squeeze(-1) for h in self.heads], dim=0)
+        all_scores = all_scores.masked_fill(~mask, -1e9)
+        attn = torch.softmax(all_scores, dim=-1)
+        amr_ctx = (w[:, None, None] * attn[:, :, :, None] * x_amr).sum(dim=(0, 2))
+
+        w = torch.softmax(self.exp_w, dim=0)
+        all_scores = torch.stack([h(x_exp).squeeze(-1) for h in self.heads], dim=0)
+        all_scores = all_scores.masked_fill(~mask, -1e9)
+        attn = torch.softmax(all_scores, dim=-1)
+        exp_ctx = (w[:, None, None] * attn[:, :, :, None] * x_exp).sum(dim=(0, 2))
+
+        return (mob_ctx, amr_ctx, exp_ctx), mob_scores
+
+
+class CassiopeiaEncoder(nn.Module):
+    def __init__(self, cfg: CassiopeiaConfig):
+        super().__init__()
+        h = cfg.hidden_dim
+        self.frp_scale = _FRP_SCALE
+        self.register_buffer("frp", _make_frp(cfg.n_canonical_features, cfg.frp_out_dim).float())
+
+        self.lora_rank = cfg.lora_rank
+        if self.lora_rank > 0:
+            self.frp_lora_down = nn.Parameter(
+                torch.empty(cfg.n_canonical_features, self.lora_rank).uniform_(-0.5, 0.5))
+            self.frp_lora_up = nn.Parameter(torch.zeros(self.lora_rank, cfg.frp_out_dim))
+
+        self.has_struct = cfg.n_structural_features > 0
+        if self.has_struct:
+            self.struct_proj = nn.Sequential(
+                nn.LayerNorm(cfg.n_structural_features), nn.Linear(cfg.n_structural_features, 8), nn.GELU())
+        self.bottleneck = nn.Sequential(
+            nn.LayerNorm(cfg.frp_out_dim), nn.Linear(cfg.frp_out_dim, h), nn.GELU())
+        self.struct_fuse = nn.Linear(h + 8, h) if self.has_struct else None
+        self.context_gate = ContextGate(h)
+        self.mixers = nn.ModuleList(
+            [GLUMixer(cfg.max_windows, h, dropout=cfg.dropout) for _ in range(cfg.n_layers)])
+        self.drop_path_rate = cfg.drop_path_rate
+
+    def forward(self, kmer_features, mask, struct_features=None):
+        mf = mask.unsqueeze(-1)
+        x = self.frp_scale * (kmer_features @ self.frp)
+        if self.lora_rank > 0:
+            lora = (kmer_features @ self.frp_lora_down) @ self.frp_lora_up
+            x = x + lora
+        x = self.bottleneck(x)
+        if self.has_struct and struct_features is not None:
+            xs = self.struct_proj(struct_features)
+            x = F.gelu(self.struct_fuse(torch.cat([x, xs], dim=-1)))
+        x = x * mf
+        x = self.context_gate(x, mask)
+        aux_features = []
+        keep_prob = 1.0 - self.drop_path_rate
+        for mixer in self.mixers:
+            x = mixer(x) if self.drop_path_rate == 0 or not self.training else (
+                x + (x.new_empty(x.shape[0], 1, 1).bernoulli_(keep_prob) / keep_prob) * (mixer(x) - x))
+            aux_features.append(x)
+        return x, aux_features
+
+
+class Cassiopeia(nn.Module):
+    def __init__(self, config: CassiopeiaConfig | dict | None = None):
+        super().__init__()
+        if isinstance(config, dict):
+            config = CassiopeiaConfig(**{k: v for k, v in config.items()
+                                         if k in _config_fields()})
+        cfg = config or CassiopeiaConfig()
+        self.config = cfg
+        self.has_struct = cfg.n_structural_features > 0
+        h = cfg.hidden_dim
+        self.encoder = CassiopeiaEncoder(cfg)
+
+        r = max(1, h // 16)
+        self.mob_adapter = nn.Sequential(nn.Linear(h, r), nn.GELU(), nn.Linear(r, h))
+        self.amr_adapter = nn.Sequential(nn.Linear(h, r), nn.GELU(), nn.Linear(r, h))
+        self.exp_adapter = nn.Sequential(nn.Linear(h, r), nn.GELU(), nn.Linear(r, h))
+
+        self.evidence = MultiQueryEvidencePool(h, cfg.n_evidence_heads)
+
+        self.aux_mob = nn.Linear(h, 3) if cfg.n_layers > 1 and cfg.aux_loss_weight > 0 else None
+        self.aux_amr = nn.Linear(h, 1) if cfg.n_layers > 1 and cfg.aux_loss_weight > 0 else None
+
+        ao = max(1, cfg.amr_classes)
+        eo = max(1, cfg.expansion_classes)
+        self.mob_head = nn.Linear(h, 3)
+        self.amr_head = nn.Linear(h, ao)
+        self.exp_head = nn.Linear(h + 3 + ao, eo)
+        self.log_vars = nn.Parameter(torch.zeros(3))
+        self.register_buffer("mob_t", torch.tensor(1.0))
+        self.register_buffer("amr_w", torch.full((ao,), 1.0))
+        self.register_buffer("amr_b", torch.full((ao,), 0.0))
+        self.register_buffer("exp_w", torch.full((eo,), 1.0))
+        self.register_buffer("exp_b", torch.full((eo,), 0.0))
+
+    def forward_from_encoder(self, x, mask, aux_features=None):
+        B = x.shape[0]
+        x_mob = x + self.mob_adapter(x)
+        x_amr = x + self.amr_adapter(x)
+        x_exp = x + self.exp_adapter(x)
+
+        (mob_ctx, amr_ctx, exp_ctx), mob_evidence = self.evidence(x_mob, x_amr, x_exp, mask)
+
+        mob_logits = self.mob_head(mob_ctx) / self.mob_t.clamp(0.1)
+
+        if self.config.amr_classes == 1:
+            amr_logits = self.amr_head(amr_ctx).squeeze(-1) * self.amr_w.squeeze() + self.amr_b.squeeze()
         else:
-            self.register_buffer("rev_comp_map", torch.arange(self.config.n_kmer_features, dtype=torch.long))
+            amr_logits = self.amr_head(amr_ctx) * self.amr_w + self.amr_b
 
-        # Direct flat linear projections (Preserves full-rank raw genomic resolution!)
-        self.lex_proj = nn.Sequential(
-            nn.Linear(self.config.n_kmer_features, h),
-            nn.GELU()
-        )
-        self.spec_proj = nn.Sequential(
-            nn.Linear(512, h),
-            nn.GELU()
-        )
-        self.fusion = nn.Sequential(
-            nn.Linear(h * 2, h),
-            nn.LayerNorm(h)
-        )
-        self.scale_embed = nn.Embedding(self.config.n_scales, h)
-        self.pos_embed = nn.Parameter(torch.zeros(1, self.config.max_windows, h))
-        nn.init.normal_(self.pos_embed, std=0.02)
-        self.input_norm = nn.LayerNorm(h)
-        self.local_conv = nn.Sequential(
-            nn.Conv1d(h, h, kernel_size=3, padding=1, groups=h),
-            nn.GELU(),
-            nn.Conv1d(h, h, kernel_size=1),
-            nn.Dropout(self.config.dropout),
-        )
+        exp_in = torch.cat([exp_ctx, mob_logits.detach().reshape(B, -1),
+                            amr_logits.detach().reshape(B, -1)], dim=-1)
+        exp_logits = self.exp_head(exp_in) * self.exp_w + self.exp_b
+        if self.config.expansion_classes == 1:
+            exp_logits = exp_logits.squeeze(-1)
 
-        # Pyramidal Scale Context Routing Gate
-        self.context_gate = nn.Sequential(
-            nn.Linear(h, h),
-            nn.GELU()
-        )
-        self.context_norm = nn.LayerNorm(h)
+        result = {"mobility_logits": mob_logits, "amr_logits": amr_logits,
+                  "expansion_logits": exp_logits,
+                  "mob_evidence": mob_evidence}
 
-        # Golden Peak 2-layer encoder
-        self.encoder = nn.ModuleList([
-            TransformerBlock(h, self.config.n_heads, self.config.ffn_ratio, self.config.dropout)
-            for _ in range(self.config.n_layers)
-        ])
-        self.encoder_norm = nn.LayerNorm(h)
+        if aux_features is not None and self.training:
+            m = mask.float().unsqueeze(-1)
+            if self.aux_mob is not None:
+                ap = (aux_features[0] * m).sum(1) / m.sum(1).clamp_min(1)
+                result["aux_mob_logits"] = self.aux_mob(ap)
+            if self.aux_amr is not None and len(aux_features) > 1:
+                ap = (aux_features[-1] * m).sum(1) / m.sum(1).clamp_min(1)
+                result["aux_amr_logits"] = self.aux_amr(ap).squeeze(-1)
 
-        # Minimal Sequence Attention Scorer
-        self.evidence_proj = nn.Linear(h, 1)
-        self.mob_evidence_proj = nn.Linear(h, 1)
-        self.amr_evidence_proj = nn.Linear(h, 1)
-        self.exp_evidence_proj = nn.Linear(h, 1)
+        return result
 
-        # Minimal clean multi-task projection and heads
-        self.mob_proj = nn.Sequential(nn.Linear(h, h), nn.LayerNorm(h), nn.GELU())
-        self.amr_proj = nn.Sequential(nn.Linear(h, h // 2), nn.LayerNorm(h // 2), nn.GELU())
-        self.exp_proj = nn.Sequential(nn.Linear(h, h // 2), nn.LayerNorm(h // 2), nn.GELU())
+    def forward(self, kmer_features, mask, struct_features=None):
+        x, aux_features = self.encoder(kmer_features, mask, struct_features)
+        return self.forward_from_encoder(x, mask, aux_features)
 
-        self.mobility_head = make_mlp(h, h, 3, self.config.dropout)
-        self.amr_head = make_mlp(h // 2, h // 2, 1, self.config.dropout)
-        self.expansion_head = make_mlp(h // 2, h // 2, 1, self.config.dropout)
-        self.recon_head = nn.Linear(h, h)
+    def compute_loss(self, mob_logits, amr_logits, exp_logits, mob_target,
+                     amr_target, exp_target, amr_pw=None, exp_pw=None, gamma=0.0, **kw):
+        lm = F.cross_entropy(mob_logits, mob_target, label_smoothing=self.config.label_smoothing)
+        la = _focal_bce(amr_logits, amr_target, amr_pw, gamma)
+        le = (_focal_bce(exp_logits, exp_target, exp_pw, gamma)
+              if self.config.expansion_classes == 1
+              else F.cross_entropy(exp_logits, exp_target, label_smoothing=self.config.label_smoothing))
+        lv = self.log_vars.clamp(-6, 6)
+        losses = torch.stack([lm, la, le])
+        return (0.5 * torch.exp(-lv) * losses + 0.5 * lv).sum()
 
-        self.logit_scale = nn.Parameter(torch.zeros(3))
-        self.register_buffer("amr_calib_w", torch.tensor(1.0))
-        self.register_buffer("amr_calib_b", torch.tensor(0.0))
-        self.register_buffer("exp_calib_w", torch.tensor(1.0))
-        self.register_buffer("exp_calib_b", torch.tensor(0.0))
-        self.register_buffer("mobility_calib_t", torch.tensor(1.0))
-
-    def _get_rev_comp_indices(self) -> torch.Tensor:
-        comp = {0: 3, 1: 2, 2: 1, 3: 0}
-        rev_comp_map = torch.zeros(4096, dtype=torch.long)
-        for i in range(4096):
-            val = i
-            digits = []
-            for _ in range(6):
-                digits.append(val % 4)
-                val //= 4
-            rc_val = 0
-            for d in digits:
-                rc_val = rc_val * 4 + comp[d]
-            rev_comp_map[i] = rc_val
-        return rev_comp_map
-
-    def _embed_inputs(
-        self,
-        kmer_features: torch.Tensor,
-        spec_features: torch.Tensor,
-        window_mask: torch.Tensor,
-        scale_ids: torch.Tensor,
-    ) -> torch.Tensor:
-        B, W, C = kmer_features.shape
-
-        # Zero-parameter input-level reverse-complement averaging.
-        kmer_rc = kmer_features.flip(dims=[1])
-        if C == 4096:
-            kmer_rc = kmer_rc.gather(dim=-1, index=self.rev_comp_map.view(1, 1, 4096).expand(B, W, 4096))
-        kmer_features = 0.5 * (kmer_features + kmer_rc)
-
-        spec_rc = spec_features.flip(dims=[1])
-        spec_features = 0.5 * (spec_features + spec_rc)
-
-        h_lex = self.lex_proj(kmer_features)
-        h_spec = self.spec_proj(spec_features)
-        x = self.fusion(torch.cat([h_lex, h_spec], dim=-1)) + self.scale_embed(scale_ids)
-        x = self.input_norm(x + self.pos_embed[:, :W])
-
-        mask_f = window_mask.unsqueeze(-1).to(dtype=x.dtype)
-        if self.config.scale_isolated_conv and W == 28:
-            # Scale-Isolated Convolutions to avoid resolution distortion across scale transitions
-            x_conv = torch.zeros_like(x)
-            # Scale 0: Windows 0-16
-            x0 = x[:, :16]
-            m0 = window_mask[:, :16].unsqueeze(-1).to(dtype=x.dtype)
-            x_conv[:, :16] = self.local_conv((x0 * m0).transpose(1, 2)).transpose(1, 2) * m0
-            # Scale 1: Windows 16-24
-            x1 = x[:, 16:24]
-            m1 = window_mask[:, 16:24].unsqueeze(-1).to(dtype=x.dtype)
-            x_conv[:, 16:24] = self.local_conv((x1 * m1).transpose(1, 2)).transpose(1, 2) * m1
-            # Scale 2: Windows 24-28
-            x2 = x[:, 24:]
-            m2 = window_mask[:, 24:].unsqueeze(-1).to(dtype=x.dtype)
-            x_conv[:, 24:] = self.local_conv((x2 * m2).transpose(1, 2)).transpose(1, 2) * m2
-        else:
-            x_conv = self.local_conv((x * mask_f).transpose(1, 2)).transpose(1, 2)
-            
-        return x + x_conv * mask_f
-
-    def _route_context(self, x: torch.Tensor, window_mask: torch.Tensor) -> torch.Tensor:
-        macro_start = min(24, x.shape[1])
-        if macro_start == x.shape[1]:
-            return x
-
-        x_local = x[:, :macro_start]
-        x_macro = x[:, macro_start:]
-        m_macro = window_mask[:, macro_start:]
-
-        # Aggregate macro context (representing global backbone features)
-        w_macro = m_macro.float().unsqueeze(-1)
-        macro_context = (x_macro * w_macro).sum(dim=1) / w_macro.sum(dim=1).clamp_min(1.0)
-
-        # Inject macro scale context into local and intermediate window scales
-        local_context = self.context_gate(macro_context).unsqueeze(1)
-        x_local = self.context_norm(x_local + torch.sigmoid(local_context) * local_context)
-
-        # Re-concatenate scales back
-        return torch.cat([x_local, x_macro], dim=1)
-
-    def _encode(self, x: torch.Tensor, window_mask: torch.Tensor) -> torch.Tensor:
-        for layer in self.encoder:
-            x = layer(x, window_mask)
-        return self.encoder_norm(x)
-
-    def forward(self, kmer_features, spec_features, window_mask, scale_ids):
-        # 1. Embedding Projection, Multiscale Fusion, and Local K-mer Conv Prior
-        x = self._embed_inputs(kmer_features, spec_features, window_mask, scale_ids)
-
-        # 2. Hierarchical Pyramidal Scale Routing
-        x = self._route_context(x, window_mask)
-
-        # 3. Transformer Encoder Pass
-        x = self._encode(x, window_mask)
-
-        # 4. Attention-Weighted Pooling
-        if self.config.task_specific_pooling:
-            ev_mob = self.mob_evidence_proj(x).squeeze(-1).masked_fill(~window_mask, -1e4).softmax(dim=-1)
-            ev_amr = self.amr_evidence_proj(x).squeeze(-1).masked_fill(~window_mask, -1e4).softmax(dim=-1)
-            ev_exp = self.exp_evidence_proj(x).squeeze(-1).masked_fill(~window_mask, -1e4).softmax(dim=-1)
-            
-            pooled_mob = (x * ev_mob.unsqueeze(-1)).sum(dim=1)
-            pooled_amr = (x * ev_amr.unsqueeze(-1)).sum(dim=1)
-            pooled_exp = (x * ev_exp.unsqueeze(-1)).sum(dim=1)
-            
-            evidence_weights = ev_mob  # Backwards compatible default for weight reporting
-            pooled_ret = pooled_mob
-        else:
-            ev = self.evidence_proj(x).squeeze(-1)  # (B, W)
-            evidence_weights = ev.masked_fill(~window_mask, -1e4).softmax(dim=-1)
-            pooled = (x * evidence_weights.unsqueeze(-1)).sum(dim=1)
-            pooled_mob = pooled
-            pooled_amr = pooled
-            pooled_exp = pooled
-            pooled_ret = pooled
-
-        # 5. Task Projections and Logit Heads
-        pooled_mob = self.mob_proj(pooled_mob)
-        pooled_amr = self.amr_proj(pooled_amr)
-        pooled_exp = self.exp_proj(pooled_exp)
-
-        temp = 1.0 + F.softplus(self.logit_scale)
-        return {
-            "mobility_logits": (self.mobility_head(pooled_mob) / temp[0]) / self.mobility_calib_t,
-            "amr_logits": (self.amr_head(pooled_amr).squeeze(-1) / temp[1]) * self.amr_calib_w + self.amr_calib_b,
-            "expansion_logits": (self.expansion_head(pooled_exp).squeeze(-1) / temp[2]) * self.exp_calib_w + self.exp_calib_b,
-            "evidence_weights": evidence_weights,
-            "pooled": pooled_ret,
-        }
-
-    def forward_mwr(
-        self,
-        kmer_features: torch.Tensor,
-        spec_features: torch.Tensor,
-        window_mask: torch.Tensor,
-        scale_ids: torch.Tensor,
-        mask_ratio: float = 0.15,
-        mwr_mask: torch.Tensor | None = None,
-    ) -> dict[str, torch.Tensor]:
-        x = self._embed_inputs(kmer_features, spec_features, window_mask, scale_ids)
-        target = x.detach()
-
-        if mwr_mask is None:
-            mwr_mask = (torch.rand(window_mask.shape, device=window_mask.device) < mask_ratio) & window_mask
-            active = window_mask.sum(dim=1)
-            needs_mask = (mwr_mask.sum(dim=1) == 0) & (active > 0)
-            if needs_mask.any():
-                first_active = window_mask.float().argmax(dim=1)
-                mwr_mask[needs_mask, first_active[needs_mask]] = True
-        else:
-            mwr_mask = mwr_mask.to(device=window_mask.device, dtype=torch.bool) & window_mask
-
-        x = x.masked_fill(mwr_mask.unsqueeze(-1), 0.0)
-        x = self._route_context(x, window_mask)
-        x = self._encode(x, window_mask)
-        reconstruction = self.recon_head(x)
-        if mwr_mask.any():
-            loss = F.mse_loss(reconstruction[mwr_mask], target[mwr_mask])
-        else:
-            loss = reconstruction.sum() * 0.0
-
-        return {
-            "mwr_loss": loss,
-            "reconstruction": reconstruction,
-            "target": target,
-            "mwr_mask": mwr_mask,
-        }
-
-    def save(self, path) -> None:
+    def save(self, path):
         torch.save({"state_dict": self.state_dict(), "config": self.config.to_dict()}, path)
 
     @classmethod
     def load(cls, path, device="cpu"):
-        state = torch.load(path, map_location=device, weights_only=False)
-        cfg_dict = state["config"]
-        # Backwards compatibility: legacy checkpoints won't have new flags
-        if "task_specific_pooling" not in cfg_dict:
-            cfg_dict["task_specific_pooling"] = False
-        if "scale_isolated_conv" not in cfg_dict:
-            cfg_dict["scale_isolated_conv"] = False
+        state = torch.load(path, map_location=device, weights_only=True)
+        cfg = CassiopeiaConfig(**{k: v for k, v in state["config"].items() if k in _config_fields()})
+        model = cls(cfg)
+        sd = {k: v for k, v in state["state_dict"].items() if k in model.state_dict()}
+        model.load_state_dict(sd, strict=True)
+        return model.to(device).eval()
 
-        model = cls(KmerTransformerConfig(**cfg_dict))
-        missing, unexpected = model.load_state_dict(state["state_dict"], strict=False)
-        
-        # Clone evidence_proj weights to new task-specific attention heads if loading legacy checkpoint
-        if "evidence_proj.weight" in state["state_dict"] and not any(k.startswith(("mob_evidence_proj", "amr_evidence_proj", "exp_evidence_proj")) for k in state["state_dict"]):
-            with torch.no_grad():
-                model.mob_evidence_proj.weight.copy_(model.evidence_proj.weight)
-                model.mob_evidence_proj.bias.copy_(model.evidence_proj.bias)
-                model.amr_evidence_proj.weight.copy_(model.evidence_proj.weight)
-                model.amr_evidence_proj.bias.copy_(model.evidence_proj.bias)
-                model.exp_evidence_proj.weight.copy_(model.evidence_proj.weight)
-                model.exp_evidence_proj.bias.copy_(model.evidence_proj.bias)
-                
-        allowed_missing = ("local_conv.", "recon_head.", "mob_evidence_proj.", "amr_evidence_proj.", "exp_evidence_proj.")
-        bad_missing = [key for key in missing if not key.startswith(allowed_missing)]
-        if bad_missing:
-            raise RuntimeError(f"Checkpoint is incompatible; missing checkpoint keys: {bad_missing}")
-        if unexpected:
-            raise RuntimeError(f"Checkpoint is incompatible; unexpected checkpoint keys: {unexpected}")
-        model.to(device)
-        model.eval()
-        return model
+
+def _focal_bce(logits, target, pw, gamma):
+    loss = F.binary_cross_entropy_with_logits(logits, target, pos_weight=pw, reduction="none")
+    return ((1 - torch.exp(-loss)) ** gamma * loss).mean() if gamma > 0 else loss.mean()

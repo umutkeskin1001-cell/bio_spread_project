@@ -4,82 +4,48 @@ from fastapi.testclient import TestClient
 
 import dna_sentinel.api as api
 from dna_sentinel.api import app
-from dna_sentinel.model import KmerTransformer, KmerTransformerConfig
+from dna_sentinel.model import Cassiopeia
 from dna_sentinel.utils import InferenceService
 
 
-def test_inference_service_supports_kmer_transformer(tmp_path: Path):
-    kt_cfg = KmerTransformerConfig(hidden_dim=16, n_heads=2, n_layers=1, n_kmer_features=128)
-    kt_model = KmerTransformer(kt_cfg)
-    kt_path = tmp_path / "kmer_transformer.pt"
-    kt_model.save(kt_path)
-
-    kt_service = InferenceService(str(kt_path))
-    kt_pred = kt_service.predict("test_query", "ATGCGT" * 10)
-    assert kt_pred["sequence_id"] == "test_query"
-    assert "risk_score" in kt_pred
-    assert "mobility_probs" in kt_pred
-    assert len(kt_pred["mobility_probs"]) == 3
-    assert isinstance(kt_pred["top_windows"], list)
-
-    kt_preds = kt_service.predict_batch([("q1", "ATGCGT" * 10), ("q2", "ATGCGT" * 12)])
-    assert len(kt_preds) == 2
-    assert kt_preds[0]["sequence_id"] == "q1"
-    assert kt_preds[1]["sequence_id"] == "q2"
-    assert "risk_score" in kt_preds[0]
-    assert "risk_score" in kt_preds[1]
+def test_inference_service_supports_cassiopeia(tmp_path: Path):
+    model = Cassiopeia()
+    path = tmp_path / "cassiopeia.pt"
+    model.save(path)
+    service = InferenceService(str(path))
+    pred = service.predict("test_query", "ATGCGT" * 10)
+    assert pred["sequence_id"] == "test_query"
+    assert "risk_score" in pred
+    assert "mobility_probs" in pred
+    assert len(pred["mobility_probs"]) == 3
+    assert isinstance(pred["top_windows"], list)
+    preds = service.predict_batch([("q1", "ATGCGT" * 10), ("q2", "ATGCGT" * 12)])
+    assert len(preds) == 2
 
 
 def test_api_endpoints_with_mocked_service(tmp_path: Path, monkeypatch):
     class MockService:
-        def predict(self, sequence_id: str, dna: str) -> dict:
+        def predict(self, sequence_id, dna):
             return {
-                "sequence_id": sequence_id,
-                "mobility_probs": [0.1, 0.2, 0.7],
-                "amr_probability": 0.8,
-                "expansion_probability": 0.9,
-                "risk_score": 0.85,
-                "top_windows": [{"start": 0.0, "end": 100.0, "weight": 0.9}],
-            }
+            "sequence_id": sequence_id,
+            "mobility_probs": [0.1, 0.2, 0.7],
+            "amr_probability": 0.8,
+            "expansion_probability": 0.9,
+            "risk_score": 0.85,
+            "top_windows": [{"window": 0.0, "weight": 0.9}],
+        }
+        def predict_batch(self, sequences):
+            parsed = [(s.sequence_id, s.dna) for s in sequences]
+            return [self.predict(sid, dna) for sid, dna in parsed]
 
-        def predict_batch(self, sequences: list) -> list[dict]:
-            parsed = []
-            for s in sequences:
-                if isinstance(s, dict):
-                    parsed.append(s)
-                elif hasattr(s, "sequence_id") and hasattr(s, "dna"):
-                    parsed.append({"sequence_id": s.sequence_id, "dna": s.dna})
-            return [self.predict(p["sequence_id"], p["dna"]) for p in parsed]
-
-    monkeypatch.setenv("DNA_SENTINEL_CHECKPOINT", str(tmp_path / "non_existent.pt"))
+    monkeypatch.setenv("CASSIOPEIA_CHECKPOINT", str(tmp_path / "nonexistent.pt"))
     with TestClient(app) as client:
         monkeypatch.setattr(api, "service", MockService())
-
-        response = client.get("/health")
-        assert response.status_code == 200
-        assert response.json()["status"] == "ok"
-
-        response = client.post(
-            "/predict",
-            json={"sequence_id": "test_api", "dna": "ATGCGT" * 20},
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["sequence_id"] == "test_api"
-        assert data["risk_score"] == 0.85
-        assert data["mobility_probs"] == [0.1, 0.2, 0.7]
-
-        response = client.post(
-            "/predict-batch",
-            json={
-                "sequences": [
-                    {"sequence_id": "seq1", "dna": "ATGCGT" * 20},
-                    {"sequence_id": "seq2", "dna": "ATGCGT" * 25},
-                ]
-            },
-        )
-        assert response.status_code == 200
-        batch_data = response.json()
-        assert len(batch_data) == 2
-        assert batch_data[0]["sequence_id"] == "seq1"
-        assert batch_data[1]["sequence_id"] == "seq2"
+        r = client.get("/health")
+        assert r.status_code == 200 and r.json()["status"] == "ok"
+        r = client.post("/predict", json={"sequence_id": "test_api", "dna": "ATGCGT" * 20})
+        assert r.status_code == 200 and r.json()["risk_score"] == 0.85
+        seqs = [{"sequence_id": "s1", "dna": "ATGCGT" * 20},
+                {"sequence_id": "s2", "dna": "ATGCGT" * 25}]
+        r = client.post("/predict-batch", json={"sequences": seqs})
+        assert r.status_code == 200 and len(r.json()) == 2

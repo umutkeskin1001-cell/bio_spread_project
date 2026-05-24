@@ -14,7 +14,5 @@ def test_revcomp_preserves_unknowns_and_reverses_orientation():
 def test_read_and_write_fasta_roundtrip(tmp_path: Path):
     records = [("seq1", "ACGTACGT"), ("seq2", "NNNAAA")]
     path = tmp_path / "sample.fa"
-
     write_fasta(records, path)
-
     assert list(read_fasta(path)) == records
