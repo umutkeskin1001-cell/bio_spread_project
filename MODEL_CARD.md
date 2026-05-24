@@ -9,8 +9,8 @@
 | **Parameters** | 418,000 |
 | **Input** | Raw DNA sequence (FASTA) → multi-scale canonical k-mer features (28 windows × 2728-dim) |
 | **Outputs** | Mobility class (3-class), AMR probability, expansion probability, per-window evidence scores |
-| **Inference latency** | ~4.5 ms/sequence on CPU |
-| **Checkpoint size** | ~1.4 MB (FRP matrix regenerated from seed, not stored) |
+| **Inference latency** | ~2.0 ms/sequence on Apple Silicon CPU |
+| **Checkpoint size** | ~4.3 MB (includes FRP buffer in state dict) |
 
 ## Architecture Components
 

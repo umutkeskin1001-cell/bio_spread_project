@@ -12,7 +12,7 @@ import torch.nn.functional as F
 from sklearn.linear_model import LogisticRegression
 
 from dna_sentinel.model import _focal_bce
-from dna_sentinel.utils import binary_metrics, multiclass_metrics
+from dna_sentinel.utils import WindowDropout, binary_metrics, multiclass_metrics
 
 
 def _build_optimizer(model, config):
@@ -201,6 +201,7 @@ def train_cassiopeia(model, train_data, val_data, config):
 
     best_score, patience, history = -1.0, 0, []
     optimizer.zero_grad(set_to_none=True)
+    window_drop = WindowDropout(config.get("dropout", 0.15))
 
     for epoch in range(1, config["epochs"] + 1):
         model.train()
@@ -210,6 +211,7 @@ def train_cassiopeia(model, train_data, val_data, config):
             bi = idx[step: step + bs].tolist()
             feat = dt["features"][bi].to(device)
             mask = dt["masks"][bi].to(device)
+            feat, mask = window_drop(feat, mask, training=True)
             mob_t = dt["mobility"][bi].to(device)
             amr_t = dt["amr"][bi].to(device)
             exp_t = dt["expansion"][bi].to(device)
