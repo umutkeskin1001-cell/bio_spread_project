@@ -11,6 +11,7 @@ import torch
 import torch.nn.functional as F
 from sklearn.linear_model import LogisticRegression
 
+from dna_sentinel.model import _focal_bce
 from dna_sentinel.utils import binary_metrics, multiclass_metrics
 
 
@@ -44,13 +45,15 @@ def fit_calibration(model, val_data, device):
     bs = 32
     n = len(val_data["features"])
     sf = val_data.get("struct_features", None)
+    sc = val_data.get("scale_ids", None)
     mob_l, amr_l, exp_l = [], [], []
     with torch.no_grad():
         for s in range(0, n, bs):
             e = min(s + bs, n)
             out = model(val_data["features"][s:e].to(device),
                         val_data["masks"][s:e].to(device),
-                        struct_features=sf[s:e].to(device) if sf is not None else None)
+                        struct_features=sf[s:e].to(device) if sf is not None else None,
+                        scale_ids=sc[s:e].to(device) if sc is not None else None)
             mob_l.append(out["mobility_logits"].cpu())
             amr_l.append(out["amr_logits"].cpu())
             exp_l.append(out["expansion_logits"].cpu())
@@ -100,11 +103,13 @@ def evaluate(model, data, device="cpu", batch_size=32):
     n = len(data["features"])
     mob_p, amr_p, exp_p = [], [], []
     sf = data.get("struct_features", None)
+    sc = data.get("scale_ids", None)
     for s in range(0, n, batch_size):
         e = min(s + batch_size, n)
         out = model(data["features"][s:e].to(device),
                     data["masks"][s:e].to(device),
-                    struct_features=sf[s:e].to(device) if sf is not None else None)
+                    struct_features=sf[s:e].to(device) if sf is not None else None,
+                    scale_ids=sc[s:e].to(device) if sc is not None else None)
         mob_p.append(torch.softmax(out["mobility_logits"], dim=-1).cpu())
         amr_p.append(torch.sigmoid(out["amr_logits"]).cpu())
         if model.config.expansion_classes > 1:
@@ -145,11 +150,6 @@ def evaluate(model, data, device="cpu", batch_size=32):
         m.update(binary_metrics(exp_true, exp_np, "expansion"))
 
     return m
-
-
-def _focal_loss(logits, target, pw, gamma):
-    loss = F.binary_cross_entropy_with_logits(logits, target, pos_weight=pw, reduction="none")
-    return ((1 - torch.exp(-loss)) ** gamma * loss).mean() if gamma > 0 else loss.mean()
 
 
 def _aux_loss(model, out, mob_t, amr_t):
@@ -214,33 +214,35 @@ def train_cassiopeia(model, train_data, val_data, config):
             amr_t = dt["amr"][bi].to(device)
             exp_t = dt["expansion"][bi].to(device)
             struct_b = dt["struct_features"][bi].to(device) if "struct_features" in dt else None
+            scale_b = dt["scale_ids"][bi].to(device) if "scale_ids" in dt else None
 
             B = len(bi)
             if mixup_a > 0 and B > 1 and exp_cls <= 1:
-                x, aux_features = model.encoder(feat, mask, struct_features=struct_b)
+                x, aux_features = model.encoder(feat, mask, struct_features=struct_b, scale_ids=scale_b)
                 lam = torch.rand(B, device=device).mul_(2 * mixup_a).add_(1 - mixup_a).clamp_(0, 1)
                 perm = torch.randperm(B, device=device)
                 lam_v = lam.view(B, 1, 1)
                 x_mix = lam_v * x + (1 - lam_v) * x[perm]
-                out = model.forward_from_encoder(x_mix, mask, aux_features)
+                mix_mask = mask & mask[perm]
+                out = model.forward_from_encoder(x_mix, mix_mask, aux_features)
                 lm = -(lam.unsqueeze(1) * F.one_hot(mob_t.long(), 3).float()
                        + (1 - lam.unsqueeze(1)) * F.one_hot(mob_t[perm].long(), 3).float()
                        ) * F.log_softmax(out["mobility_logits"], dim=-1)
                 lm = lm.sum(dim=-1).mean()
                 amr_mix = lam * amr_t.float() + (1 - lam) * amr_t[perm].float()
-                la = _focal_loss(out["amr_logits"], amr_mix, amr_pw, gamma)
+                la = _focal_bce(out["amr_logits"], amr_mix, amr_pw, gamma)
                 exp_mix = lam * exp_t.float() + (1 - lam) * exp_t[perm].float()
-                le = _focal_loss(out["expansion_logits"].squeeze(-1), exp_mix, exp_pw, gamma)
+                le = _focal_bce(out["expansion_logits"].squeeze(-1), exp_mix, exp_pw, gamma)
             else:
-                out = model(feat, mask, struct_features=struct_b)
+                out = model(feat, mask, struct_features=struct_b, scale_ids=scale_b)
                 lm = F.cross_entropy(out["mobility_logits"], mob_t.long(), label_smoothing=model.config.label_smoothing)
                 pw = amr_pw if exp_cls <= 1 else None
-                la = _focal_loss(out["amr_logits"], amr_t, pw, gamma)
+                la = _focal_bce(out["amr_logits"], amr_t, pw, gamma)
                 if exp_cls > 1:
                     le = F.cross_entropy(out["expansion_logits"], exp_t.long(), weight=exp_pw_mc,
                                           label_smoothing=model.config.label_smoothing)
                 else:
-                    le = _focal_loss(out["expansion_logits"].squeeze(-1), exp_t, exp_pw, gamma)
+                    le = _focal_bce(out["expansion_logits"].squeeze(-1), exp_t, exp_pw, gamma)
 
             aux_loss_val = _aux_loss(model, out, mob_t, amr_t)
             loss = _uncertainty_weighted(lm, la, le, model.log_vars) + aux_loss_val

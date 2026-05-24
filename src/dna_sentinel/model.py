@@ -10,7 +10,6 @@ import torch.nn.functional as F
 
 @dataclass(frozen=True)
 class CassiopeiaConfig:
-    variant: str = "small"
     n_canonical_features: int = 2728
     n_structural_features: int = 19
     hidden_dim: int = 128
@@ -62,9 +61,11 @@ class GLUMixer(nn.Module):
         self.c_w2 = nn.Linear(hidden_dim * expansion, hidden_dim)
         self.c_drop = nn.Dropout(dropout)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
         r = x
         t = self.t_norm(x).transpose(1, 2)
+        if mask is not None:
+            t = t * mask.unsqueeze(1).float()
         u, v = self.t_w1(t).chunk(2, dim=-1)
         x = r + self.t_w2(self.t_drop(u * v)).transpose(1, 2)
         r = x
@@ -128,6 +129,8 @@ class CassiopeiaEncoder(nn.Module):
                 torch.empty(cfg.n_canonical_features, self.lora_rank).uniform_(-0.5, 0.5))
             self.frp_lora_up = nn.Parameter(torch.zeros(self.lora_rank, cfg.frp_out_dim))
 
+        self.scale_embed = nn.Embedding(3, h)
+
         self.has_struct = cfg.n_structural_features > 0
         if self.has_struct:
             self.struct_proj = nn.Sequential(
@@ -140,7 +143,7 @@ class CassiopeiaEncoder(nn.Module):
             [GLUMixer(cfg.max_windows, h, dropout=cfg.dropout) for _ in range(cfg.n_layers)])
         self.drop_path_rate = cfg.drop_path_rate
 
-    def forward(self, kmer_features, mask, struct_features=None):
+    def forward(self, kmer_features, mask, struct_features=None, scale_ids=None):
         mf = mask.unsqueeze(-1)
         x = self.frp_scale * (kmer_features @ self.frp)
         if self.lora_rank > 0:
@@ -150,13 +153,16 @@ class CassiopeiaEncoder(nn.Module):
         if self.has_struct and struct_features is not None:
             xs = self.struct_proj(struct_features)
             x = F.gelu(self.struct_fuse(torch.cat([x, xs], dim=-1)))
+        if scale_ids is not None:
+            x = x + self.scale_embed(scale_ids)
         x = x * mf
         x = self.context_gate(x, mask)
         aux_features = []
         keep_prob = 1.0 - self.drop_path_rate
         for mixer in self.mixers:
-            x = mixer(x) if self.drop_path_rate == 0 or not self.training else (
-                x + (x.new_empty(x.shape[0], 1, 1).bernoulli_(keep_prob) / keep_prob) * (mixer(x) - x))
+            x_m = mixer(x, mask) if self.drop_path_rate == 0 or not self.training else (
+                x + (x.new_empty(x.shape[0], 1, 1).bernoulli_(keep_prob) / keep_prob) * (mixer(x, mask) - x))
+            x = x_m
             aux_features.append(x)
         return x, aux_features
 
@@ -231,8 +237,8 @@ class Cassiopeia(nn.Module):
 
         return result
 
-    def forward(self, kmer_features, mask, struct_features=None):
-        x, aux_features = self.encoder(kmer_features, mask, struct_features)
+    def forward(self, kmer_features, mask, struct_features=None, scale_ids=None):
+        x, aux_features = self.encoder(kmer_features, mask, struct_features, scale_ids)
         return self.forward_from_encoder(x, mask, aux_features)
 
     def compute_loss(self, mob_logits, amr_logits, exp_logits, mob_target,

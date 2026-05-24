@@ -24,16 +24,13 @@ from dna_sentinel.model import (
 class TestCassiopeiaConfig:
     def test_default_small(self):
         cfg = CassiopeiaConfig()
-        assert cfg.variant == "small"
         assert cfg.hidden_dim == 128
         assert cfg.expansion_classes == 1
         assert cfg.amr_classes == 1
 
     def test_from_yaml(self):
-        yaml_dict = {"model": {"variant": "large", "hidden_dim": 512, "n_heads": 12,
-                                "n_layers_transformer": 8, "expansion_classes": 50, "amr_classes": 12}}
+        yaml_dict = {"model": {"hidden_dim": 512, "expansion_classes": 50, "amr_classes": 12}}
         cfg = CassiopeiaConfig.from_yaml(yaml_dict)
-        assert cfg.variant == "large"
         assert cfg.hidden_dim == 512
         assert cfg.expansion_classes == 50
         assert cfg.amr_classes == 12
@@ -42,7 +39,7 @@ class TestCassiopeiaConfig:
         cfg = CassiopeiaConfig()
         d = cfg.to_dict()
         assert isinstance(d, dict)
-        assert d["variant"] == "small"
+        assert d["hidden_dim"] == 128
 
     def test_extra_keys_ignored(self):
         yaml_dict = {"model": {"hidden_dim": 256, "nonexistent_key": 999}}
@@ -119,9 +116,8 @@ class TestBlocks:
 class TestCassiopeiaSmall:
     @pytest.fixture
     def model(self):
-        return Cassiopeia(CassiopeiaConfig(variant="small", hidden_dim=64,
-                                             n_canonical_features=100, frp_out_dim=64,
-                                             n_layers=1, max_windows=12,
+        return Cassiopeia(CassiopeiaConfig(hidden_dim=64, n_canonical_features=100,
+                                             frp_out_dim=64, n_layers=1, max_windows=12,
                                              expansion_classes=1, amr_classes=1))
 
     @pytest.fixture
@@ -185,10 +181,8 @@ class TestCassiopeiaSmall:
 
     def test_backward(self, batch):
         model = Cassiopeia(CassiopeiaConfig(
-            variant="small", hidden_dim=64,
-            n_canonical_features=100, frp_out_dim=64,
-            n_layers=1, max_windows=12,
-            expansion_classes=1, amr_classes=1,
+            hidden_dim=64, n_canonical_features=100, frp_out_dim=64,
+            n_layers=1, max_windows=12, expansion_classes=1, amr_classes=1,
         ))
         out = model(batch["features"], batch["masks"])
         loss = model.compute_loss(
@@ -203,9 +197,8 @@ class TestCassiopeiaSmall:
 class TestCassiopeiaLarge:
     @pytest.fixture
     def model(self):
-        return Cassiopeia(CassiopeiaConfig(variant="large", hidden_dim=128,
-                                             n_canonical_features=100, frp_out_dim=64,
-                                             n_layers=2, max_windows=12,
+        return Cassiopeia(CassiopeiaConfig(hidden_dim=128, n_canonical_features=100,
+                                             frp_out_dim=64, n_layers=2, max_windows=12,
                                              expansion_classes=10, amr_classes=4))
 
     @pytest.fixture

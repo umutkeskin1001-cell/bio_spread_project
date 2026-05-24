@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import mmh3
 import polars as pl
 
 from dna_sentinel.utils import LabeledSequence, read_fasta, save_jsonl
@@ -78,7 +79,7 @@ def cluster_split(records: list[SequenceRecord], seed: int = 42,
     sketches = [_sampled_kmers(rec.dna, 15) for rec in records]
     buckets: dict[int, list[int]] = {}
     for i, sk in enumerate(sketches):
-        for h in map(hash, sorted(sk)[:12]):
+        for h in map(lambda x: mmh3.hash(x, seed=42), sorted(sk)[:12]):
             buckets.setdefault(h, []).append(i)
 
     seen_pairs: set[tuple[int, int]] = set()

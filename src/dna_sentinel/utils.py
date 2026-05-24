@@ -142,14 +142,16 @@ def predict_batch(model: Cassiopeia, sequences: list[tuple[str, str]],
     if not sequences:
         return []
     ex = CanonicalKmerExtractor(CanonicalKmerConfig())
-    feats, structs, masks = [], [], []
+    feats, structs, masks, scales = [], [], [], []
     for _, dna in sequences:
-        f, s, m, _ = ex.extract(canonical_dna(dna))
+        f, s, m, sc = ex.extract(canonical_dna(dna))
         feats.append(f)
         structs.append(s)
         masks.append(m)
+        scales.append(sc)
     out = model(torch.stack(feats).to(device), torch.stack(masks).to(device),
-                struct_features=torch.stack(structs).to(device) if model.has_struct else None)
+                struct_features=torch.stack(structs).to(device) if model.has_struct else None,
+                scale_ids=torch.stack(scales).to(device))
 
     mob = torch.softmax(out["mobility_logits"], dim=-1).cpu()
     amr = torch.sigmoid(out["amr_logits"]).cpu()
@@ -165,7 +167,7 @@ def predict_batch(model: Cassiopeia, sequences: list[tuple[str, str]],
     for idx, (seq_id, _) in enumerate(sequences):
         mobile = 1.0 - mob[idx, 0].item()
         exp_val = float(exp_prob[idx, 1]) if model.config.expansion_classes > 1 else float(exp_prob[idx])
-        risk = (mobile * float(amr[idx]) * exp_val) ** (1.0 / 3.0)
+        risk = 0.4 * mobile + 0.3 * float(amr[idx]) + 0.3 * exp_val
         top = torch.topk(ws[idx] + (~am[idx]).float() * (-1e9),
                           k=min(top_k, int(am[idx].sum().item()))).indices
         wins = [{"window": float(i), "weight": float(ws[idx, i])} for i in top.tolist() if am[idx, i]]

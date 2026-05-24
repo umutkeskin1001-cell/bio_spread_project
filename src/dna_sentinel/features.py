@@ -104,12 +104,14 @@ class CanonicalKmerExtractor:
             lengths = torch.tensor([n], dtype=torch.long, device=dev)
             N = 1
         else:
+            # Circular padding: plasmid has no start/end, wrap around
+            circ_seq = torch.cat([seq, seq[:ws - 1]])
             starts = list(range(0, n - ws + 1, st))
             if starts[-1] != n - ws:
                 starts.append(n - ws)
             N = len(starts)
             idx = torch.tensor(starts, device=dev, dtype=torch.long).unsqueeze(1) + torch.arange(ws, device=dev)
-            w = seq[idx]
+            w = circ_seq[idx]
             lengths = torch.full((N,), ws, dtype=torch.long, device=dev)
 
         struct = self._struct(w, lengths, ws)

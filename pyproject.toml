@@ -1,3 +1,13 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "dna-sentinel"
+version = "0.2.0"
+description = "DNA-only mobile genetic element risk modeling"
+requires-python = ">=3.10"
+
 [tool.pytest.ini_options]
 minversion = "7.0"
 addopts = "-v --tb=short -x"
