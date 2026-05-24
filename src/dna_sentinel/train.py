@@ -15,6 +15,39 @@ from dna_sentinel.model import _focal_bce
 from dna_sentinel.utils import WindowDropout, binary_metrics, multiclass_metrics
 
 
+def _inverse_label_frequency(labels: torch.Tensor) -> torch.Tensor:
+    y = labels.detach().cpu().long().view(-1)
+    mx = int(y.max().item()) + 1 if y.numel() else 1
+    counts = torch.bincount(y, minlength=mx).float().clamp_min(1.0)
+    return 1.0 / counts[y]
+
+
+def _balanced_sample_weights(data: dict) -> torch.Tensor:
+    mob_w = _inverse_label_frequency(data["mobility"])
+    amr_w = _inverse_label_frequency(data["amr"].long())
+    exp_w = _inverse_label_frequency(data["expansion"].long())
+    weights = mob_w + amr_w + exp_w
+    return weights / weights.mean().clamp_min(1e-6)
+
+
+def _epoch_indices(n_train: int, data: dict, config: dict, generator: torch.Generator | None = None) -> torch.Tensor:
+    if config.get("balanced_sampling", False):
+        return torch.multinomial(_balanced_sample_weights(data), n_train, replacement=True, generator=generator)
+    return torch.randperm(n_train, generator=generator)
+
+
+def _selection_score(metrics: dict[str, float], config: dict) -> float:
+    mob = float(metrics.get("mobility_balanced_accuracy", 0.0))
+    amr = float(metrics.get("amr_auroc", 0.0))
+    exp = float(metrics.get("expansion_auroc", 0.0))
+    mode = config.get("score_mode", "equal")
+    if mode == "legacy":
+        return amr + exp + 2.0 * mob
+    if mode != "equal":
+        raise ValueError(f"unknown score_mode: {mode}")
+    return (mob + amr + exp) / 3.0
+
+
 def _build_optimizer(model, config):
     backbone_lr = config.get("backbone_lr", config.get("lr", 1e-3))
     head_lr = config.get("head_lr", config.get("lr", 1e-3))
@@ -202,11 +235,13 @@ def train_cassiopeia(model, train_data, val_data, config):
     best_score, patience, history = -1.0, 0, []
     optimizer.zero_grad(set_to_none=True)
     window_drop = WindowDropout(config.get("dropout", 0.15))
+    score_mode = config.get("score_mode", "equal")
+    gen = torch.Generator().manual_seed(config.get("seed", 42))
 
     for epoch in range(1, config["epochs"] + 1):
         model.train()
         total_loss, n_steps = 0.0, 0
-        idx = torch.randperm(n_train)
+        idx = _epoch_indices(n_train, dt, config, gen)
         for step in range(0, n_train, bs):
             bi = idx[step: step + bs].tolist()
             feat = dt["features"][bi].to(device)
@@ -263,12 +298,12 @@ def train_cassiopeia(model, train_data, val_data, config):
         avg_loss = total_loss / max(1, n_steps)
         val_metrics = evaluate(model, dv, device)
 
-        score = (val_metrics.get("amr_auroc", 0.0) + val_metrics.get("expansion_auroc", 0.0)
-                 + 2.0 * val_metrics.get("mobility_balanced_accuracy", 0.0))
+        score = _selection_score(val_metrics, config)
         print(f"Epoch {epoch:02d}/{config['epochs']:02d} | Loss: {avg_loss:.4f} | "
               f"AMR: {val_metrics.get('amr_auroc', 0.0)*100:.1f}% | "
               f"Exp: {val_metrics.get('expansion_auroc', 0.0)*100:.1f}% | "
-              f"Mob BA: {val_metrics.get('mobility_balanced_accuracy', 0.0)*100:.1f}% | Score: {score:.4f}")
+              f"Mob BA: {val_metrics.get('mobility_balanced_accuracy', 0.0)*100:.1f}% | "
+              f"Score({score_mode}): {score:.4f}")
         history.append({"epoch": epoch, "train_loss": avg_loss, **val_metrics})
 
         if score > best_score:

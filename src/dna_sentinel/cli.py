@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 
 import click
@@ -14,7 +15,7 @@ from dna_sentinel.features import extract_features
 from dna_sentinel.model import Cassiopeia, CassiopeiaConfig
 from dna_sentinel.prepare import prepare_dataset
 from dna_sentinel.train import evaluate, train_cassiopeia
-from dna_sentinel.utils import predict_one, read_fasta
+from dna_sentinel.utils import predict_one, read_fasta, task_score
 
 
 def _load_data(data_dir: Path, name: str, n_struct: int = 0) -> dict:
@@ -80,6 +81,40 @@ def evaluate_cmd(checkpoint: str, data_dir: str | None) -> None:
         data_dir = str(Path(checkpoint).parent.parent / "data" / "dna_sentinel")
     data = _load_data(Path(data_dir), "test", model.config.n_structural_features)
     click.echo(json.dumps(evaluate(model, data), indent=2))
+
+
+@cli.command("benchmark")
+@click.option("--checkpoint", required=True, type=click.Path(exists=True))
+@click.option("--data-dir", default="data/dna_sentinel")
+@click.option("--out", default="artifacts/cassiopeia_prime/report.json")
+def benchmark_cmd(checkpoint: str, data_dir: str, out: str) -> None:
+    model = Cassiopeia.load(checkpoint)
+    root = Path(data_dir)
+    report = {
+        "checkpoint": checkpoint,
+        "params": sum(p.numel() for p in model.parameters() if p.requires_grad),
+        "checkpoint_mb": Path(checkpoint).stat().st_size / 1_000_000,
+        "config": model.config.to_dict(),
+        "splits": {},
+    }
+    for split in ("val", "test", "heldout_test"):
+        p = root / f"{split}_features.pt"
+        if not p.exists():
+            continue
+        data = _load_data(root, split, model.config.n_structural_features)
+        metrics = evaluate(model, data)
+        metrics["task_score"] = task_score(metrics)
+        report["splits"][split] = metrics
+    if (root / "nonplasmid_control_features.pt").exists():
+        data = _load_data(root, "nonplasmid_control", model.config.n_structural_features)
+        start = time.perf_counter()
+        metrics = evaluate(model, data)
+        elapsed = time.perf_counter() - start
+        report["splits"]["nonplasmid_control"] = metrics
+        report["latency_ms_per_cached_sequence"] = 1000.0 * elapsed / max(1, len(data["features"]))
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
+    Path(out).write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
+    click.echo(json.dumps(report, indent=2, default=str))
 
 
 @cli.command("predict")

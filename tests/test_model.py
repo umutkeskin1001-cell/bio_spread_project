@@ -12,7 +12,9 @@ import torch
 from dna_sentinel.model import (
     Cassiopeia,
     CassiopeiaConfig,
+    CircularPositionEncoding,
     GLUMixer,
+    WindowMotifConv,
     _focal_bce,
     _make_frp,
 )
@@ -46,6 +48,26 @@ class TestCassiopeiaConfig:
         cfg = CassiopeiaConfig.from_yaml(yaml_dict)
         assert cfg.hidden_dim == 256
         assert not hasattr(cfg, "nonexistent_key")
+
+    def test_prime_config_fields_are_parsed(self):
+        yaml_dict = {"model": {
+            "hidden_dim": 160, "frp_out_dim": 384, "n_layers": 3, "lora_rank": 12,
+            "adapter_rank": 16, "use_scale_embedding": False,
+            "use_cppe": True, "use_window_conv": True, "window_conv_kernel": 5,
+        }}
+        cfg = CassiopeiaConfig.from_yaml(yaml_dict)
+        assert cfg.hidden_dim == 160
+        assert cfg.adapter_rank == 16
+        assert cfg.use_cppe is True
+        assert cfg.use_window_conv is True
+        assert cfg.window_conv_kernel == 5
+
+    def test_default_config_stays_small(self):
+        cfg = CassiopeiaConfig()
+        assert cfg.use_scale_embedding is True
+        assert cfg.use_cppe is False
+        assert cfg.use_window_conv is False
+        assert cfg.adapter_rank == 0
 
 
 # ---------------------------------------------------------------------------
@@ -108,6 +130,27 @@ class TestBlocks:
         out = block(x)
         assert out.shape == (4, 28, 128)
 
+    def test_cppe_shape_and_mask_zeroing(self):
+        cppe = CircularPositionEncoding(32)
+        x = torch.zeros(2, 6, 32)
+        mask = torch.tensor([[True, True, True, False, False, False],
+                             [True, True, True, True, True, True]])
+        scale_ids = torch.tensor([[0, 0, 1, 1, 2, 2], [0, 0, 1, 1, 2, 2]])
+        out = cppe(x, mask, scale_ids)
+        assert out.shape == x.shape
+        assert torch.all(out[0, 3:] == 0)
+        assert out[1].abs().sum() > 0
+
+    def test_window_motif_conv_shape_and_mask_zeroing(self):
+        conv = WindowMotifConv(hidden_dim=32, kernel_size=5, dropout=0.0)
+        x = torch.randn(2, 8, 32)
+        mask = torch.tensor([[True, True, True, True, False, False, False, False],
+                             [True, True, True, True, True, True, True, True]])
+        out = conv(x, mask)
+        assert out.shape == x.shape
+        assert torch.all(out[0, 4:] == 0)
+        assert torch.isfinite(out).all()
+
 
 # ---------------------------------------------------------------------------
 # Model tests
@@ -167,6 +210,14 @@ class TestCassiopeiaSmall:
         count = sum(p.numel() for p in model.parameters() if p.requires_grad)
         assert count < 500_000
 
+    def test_prime_parameter_count(self):
+        model = Cassiopeia(CassiopeiaConfig(
+            hidden_dim=160, frp_out_dim=384, n_layers=3, lora_rank=12, adapter_rank=16,
+            use_scale_embedding=False, use_cppe=True, use_window_conv=True, window_conv_kernel=5,
+        ))
+        count = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        assert 700_000 < count <= 1_000_000
+
     def test_save_load_roundtrip(self, model, batch):
         with tempfile.NamedTemporaryFile(suffix=".pt", delete=False) as f:
             path = f.name
@@ -192,6 +243,28 @@ class TestCassiopeiaSmall:
         loss.backward()
         trainable = [p for n, p in model.named_parameters() if p.requires_grad]
         assert any(p.grad is not None for p in trainable)
+
+    def test_forward_returns_task_specific_evidence(self, model, batch):
+        out = model(batch["features"], batch["masks"])
+        assert out["mobility_evidence"].shape == batch["masks"].shape
+        assert out["amr_evidence"].shape == batch["masks"].shape
+        assert out["expansion_evidence"].shape == batch["masks"].shape
+        assert torch.equal(out["mob_evidence"], out["mobility_evidence"])
+
+    def test_prime_forward_with_cppe_and_window_conv(self):
+        model = Cassiopeia(CassiopeiaConfig(
+            hidden_dim=64, n_canonical_features=100, frp_out_dim=80, n_layers=2, max_windows=12,
+            lora_rank=4, adapter_rank=8,
+            use_scale_embedding=False, use_cppe=True, use_window_conv=True, window_conv_kernel=3,
+        ))
+        feat = torch.randn(3, 12, 100)
+        mask = torch.ones(3, 12, dtype=torch.bool)
+        struct = torch.randn(3, 12, 19)
+        scale_ids = torch.tensor([[0] * 4 + [1] * 4 + [2] * 4] * 3)
+        out = model(feat, mask, struct_features=struct, scale_ids=scale_ids)
+        assert out["mobility_logits"].shape == (3, 3)
+        assert out["amr_logits"].shape == (3,)
+        assert out["expansion_logits"].shape == (3,)
 
 
 class TestCassiopeiaLarge:
@@ -342,6 +415,16 @@ class TestInference:
         assert 0 <= pred.amr_probability <= 1
         assert 0 <= pred.expansion_probability <= 1
         assert 0 <= pred.risk_score <= 1
+
+    def test_predict_one_has_task_specific_windows(self):
+        from dna_sentinel.utils import predict_one
+        model = Cassiopeia(CassiopeiaConfig(hidden_dim=64, n_canonical_features=2728, frp_out_dim=256,
+                                              max_windows=28))
+        pred = predict_one(model, "test", "ACGT" * 50)
+        assert isinstance(pred.top_windows, list)
+        assert isinstance(pred.top_mobility_windows, list)
+        assert isinstance(pred.top_amr_windows, list)
+        assert isinstance(pred.top_expansion_windows, list)
 
     def test_predict_batch(self):
         from dna_sentinel.utils import predict_batch

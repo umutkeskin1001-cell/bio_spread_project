@@ -100,6 +100,29 @@ def expected_calibration_error(y: np.ndarray, p: np.ndarray, bins: int = 10) -> 
     return ece
 
 
+def task_score(metrics: dict[str, float]) -> float:
+    return float((metrics.get("mobility_balanced_accuracy", 0.0)
+                  + metrics.get("amr_auroc", 0.0)
+                  + metrics.get("expansion_auroc", 0.0)) / 3.0)
+
+
+def false_positive_summary(mobility_probs: np.ndarray, amr_probs: np.ndarray,
+                           expansion_probs: np.ndarray, risk_scores: np.ndarray,
+                           threshold: float = 0.5) -> dict[str, float]:
+    mob, amr, exp, risk = (np.asarray(p, dtype=float) for p in
+                           (mobility_probs, amr_probs, expansion_probs, risk_scores))
+    mobile_prob = 1.0 - mob[:, 0]
+    return {
+        "false_mobile_rate": float((mobile_prob >= threshold).mean()) if mobile_prob.size else 0.0,
+        "false_amr_rate": float((amr >= threshold).mean()) if amr.size else 0.0,
+        "false_expansion_rate": float((exp >= threshold).mean()) if exp.size else 0.0,
+        "risk_q05": float(np.quantile(risk, 0.05)) if risk.size else 0.0,
+        "risk_q50": float(np.quantile(risk, 0.50)) if risk.size else 0.0,
+        "risk_q95": float(np.quantile(risk, 0.95)) if risk.size else 0.0,
+        "risk_mean": float(risk.mean()) if risk.size else 0.0,
+    }
+
+
 def binary_metrics(y_true, y_prob, prefix: str) -> dict[str, float]:
     y, p = np.asarray(y_true, dtype=float), np.nan_to_num(np.asarray(y_prob, dtype=float), nan=0.5)
     out = {}
@@ -131,6 +154,17 @@ class Prediction:
     expansion_probability: float
     risk_score: float
     top_windows: list[dict[str, float]]
+    top_mobility_windows: list[dict[str, float]]
+    top_amr_windows: list[dict[str, float]]
+    top_expansion_windows: list[dict[str, float]]
+
+
+def _top_evidence(scores: torch.Tensor, mask: torch.Tensor, top_k: int) -> list[dict[str, float]]:
+    k = min(top_k, int(mask.sum().item()))
+    if k <= 0:
+        return []
+    top = torch.topk(scores + (~mask).float() * (-1e9), k=k).indices
+    return [{"window": float(i), "weight": float(scores[i])} for i in top.tolist() if bool(mask[i])]
 
 
 @torch.inference_mode()
@@ -160,7 +194,9 @@ def predict_batch(model: Cassiopeia, sequences: list[tuple[str, str]],
         exp_prob = torch.softmax(exp_raw, dim=-1)
     else:
         exp_prob = torch.sigmoid(exp_raw)
-    ws = out["mob_evidence"].cpu()
+    ws = out.get("mobility_evidence", out["mob_evidence"]).cpu()
+    amr_ev = out.get("amr_evidence", out["mob_evidence"]).cpu()
+    exp_ev = out.get("expansion_evidence", out["mob_evidence"]).cpu()
     am = torch.stack(masks).cpu()
 
     preds = []
@@ -168,11 +204,12 @@ def predict_batch(model: Cassiopeia, sequences: list[tuple[str, str]],
         mobile = 1.0 - mob[idx, 0].item()
         exp_val = float(exp_prob[idx, 1]) if model.config.expansion_classes > 1 else float(exp_prob[idx])
         risk = 0.4 * mobile + 0.3 * float(amr[idx]) + 0.3 * exp_val
-        top = torch.topk(ws[idx] + (~am[idx]).float() * (-1e9),
-                          k=min(top_k, int(am[idx].sum().item()))).indices
-        wins = [{"window": float(i), "weight": float(ws[idx, i])} for i in top.tolist() if am[idx, i]]
+        wins = _top_evidence(ws[idx], am[idx], top_k)
+        mob_wins = _top_evidence(ws[idx], am[idx], top_k)
+        amr_wins = _top_evidence(amr_ev[idx], am[idx], top_k)
+        exp_wins = _top_evidence(exp_ev[idx], am[idx], top_k)
         preds.append(Prediction(seq_id, mob[idx].tolist(), float(amr[idx]),
-                                 exp_val, risk, wins))
+                                 exp_val, risk, wins, mob_wins, amr_wins, exp_wins))
     return preds
 
 

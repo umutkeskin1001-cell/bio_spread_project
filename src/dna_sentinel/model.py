@@ -24,6 +24,11 @@ class CassiopeiaConfig:
     expansion_classes: int = 1
     amr_classes: int = 1
     label_smoothing: float = 0.1
+    adapter_rank: int = 0
+    use_scale_embedding: bool = True
+    use_cppe: bool = False
+    use_window_conv: bool = False
+    window_conv_kernel: int = 5
 
     def to_dict(self) -> dict:
         return {f.name: getattr(self, f.name) for f in fields(self)}
@@ -70,7 +75,8 @@ class GLUMixer(nn.Module):
         x = r + self.t_w2(self.t_drop(u * v)).transpose(1, 2)
         r = x
         u, v = self.c_w1(self.c_norm(x)).chunk(2, dim=-1)
-        return r + self.c_w2(self.c_drop(u * v))
+        x = r + self.c_w2(self.c_drop(u * v))
+        return x if mask is None else x * mask.unsqueeze(-1).to(dtype=x.dtype)
 
 
 class ContextGate(nn.Module):
@@ -85,6 +91,52 @@ class ContextGate(nn.Module):
         return x * torch.sigmoid(self.gate(torch.cat([x, ctx], dim=-1)))
 
 
+class CircularPositionEncoding(nn.Module):
+    def __init__(self, dim: int):
+        super().__init__()
+        self.proj = nn.Linear(3, dim)
+
+    def forward(self, x: torch.Tensor, mask: torch.Tensor, scale_ids: torch.Tensor | None = None) -> torch.Tensor:
+        b, w, _ = x.shape
+        dev, dt = x.device, x.dtype
+        if scale_ids is None:
+            pos = torch.arange(w, device=dev, dtype=dt).unsqueeze(0).expand(b, -1)
+            denom = torch.full((b, 1), max(1, w), device=dev, dtype=dt)
+            scale_norm = torch.zeros_like(pos)
+        else:
+            sid = scale_ids.to(dev)
+            pos = torch.zeros(b, w, device=dev, dtype=dt)
+            denom = torch.ones(b, w, device=dev, dtype=dt)
+            for scale in range(int(sid.max().item()) + 1 if sid.numel() else 1):
+                sm = sid == scale
+                cnt = sm.sum(dim=1, keepdim=True).clamp_min(1).to(dtype=dt)
+                ranks = sm.to(dtype=dt).cumsum(dim=1) - 1.0
+                pos = torch.where(sm, ranks, pos)
+                denom = torch.where(sm, cnt.expand_as(denom), denom)
+            phase = 2.0 * math.pi * pos / denom.clamp_min(1.0)
+            scale_norm = sid.to(dtype=dt) / max(1.0, float(int(sid.max().item()) if sid.numel() else 1))
+        coords = torch.stack([torch.sin(phase), torch.cos(phase), scale_norm], dim=-1)
+        return self.proj(coords) * mask.unsqueeze(-1).to(dtype=dt)
+
+
+class WindowMotifConv(nn.Module):
+    def __init__(self, hidden_dim: int, kernel_size: int = 5, dropout: float = 0.1):
+        super().__init__()
+        if kernel_size % 2 == 0:
+            raise ValueError("window_conv_kernel must be odd")
+        self.norm = nn.LayerNorm(hidden_dim)
+        self.depthwise = nn.Conv1d(hidden_dim, hidden_dim, kernel_size, padding=kernel_size // 2, groups=hidden_dim)
+        self.pointwise = nn.Linear(hidden_dim, hidden_dim * 2)
+        self.drop = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        mf = mask.unsqueeze(-1).to(dtype=x.dtype)
+        y = self.norm(x) * mf
+        y = self.depthwise(y.transpose(1, 2)).transpose(1, 2)
+        gate, val = self.pointwise(y).chunk(2, dim=-1)
+        return (x + self.drop(torch.sigmoid(gate) * F.gelu(val))) * mf
+
+
 class MultiQueryEvidencePool(nn.Module):
     def __init__(self, dim: int, n_heads: int = 1):
         super().__init__()
@@ -94,26 +146,19 @@ class MultiQueryEvidencePool(nn.Module):
         self.exp_w = nn.Parameter(torch.zeros(n_heads))
 
     def forward(self, x_mob: torch.Tensor, x_amr: torch.Tensor, x_exp: torch.Tensor, mask: torch.Tensor):
-        w = torch.softmax(self.mob_w, dim=0)
-        all_scores = torch.stack([h(x_mob).squeeze(-1) for h in self.heads], dim=0)
-        all_scores = all_scores.masked_fill(~mask, -1e9)
-        attn = torch.softmax(all_scores, dim=-1)
-        mob_ctx = (w[:, None, None] * attn[:, :, :, None] * x_mob).sum(dim=(0, 2))
-        mob_scores = all_scores[0]
+        def _pool(x, w_param):
+            s = torch.stack([h(x).squeeze(-1) for h in self.heads], dim=0)
+            s = s.masked_fill(~mask, -1e9)
+            a = torch.softmax(s, dim=-1)
+            ctx = (torch.softmax(w_param, dim=0)[:, None, None] * a[:, :, :, None] * x).sum(dim=(0, 2))
+            return ctx, s[0]
 
-        w = torch.softmax(self.amr_w, dim=0)
-        all_scores = torch.stack([h(x_amr).squeeze(-1) for h in self.heads], dim=0)
-        all_scores = all_scores.masked_fill(~mask, -1e9)
-        attn = torch.softmax(all_scores, dim=-1)
-        amr_ctx = (w[:, None, None] * attn[:, :, :, None] * x_amr).sum(dim=(0, 2))
-
-        w = torch.softmax(self.exp_w, dim=0)
-        all_scores = torch.stack([h(x_exp).squeeze(-1) for h in self.heads], dim=0)
-        all_scores = all_scores.masked_fill(~mask, -1e9)
-        attn = torch.softmax(all_scores, dim=-1)
-        exp_ctx = (w[:, None, None] * attn[:, :, :, None] * x_exp).sum(dim=(0, 2))
-
-        return (mob_ctx, amr_ctx, exp_ctx), mob_scores
+        mob_ctx, mob_s = _pool(x_mob, self.mob_w)
+        amr_ctx, amr_s = _pool(x_amr, self.amr_w)
+        exp_ctx, exp_s = _pool(x_exp, self.exp_w)
+        return (mob_ctx, amr_ctx, exp_ctx), {
+            "mobility_evidence": mob_s, "amr_evidence": amr_s, "expansion_evidence": exp_s,
+        }
 
 
 class CassiopeiaEncoder(nn.Module):
@@ -129,7 +174,9 @@ class CassiopeiaEncoder(nn.Module):
                 torch.empty(cfg.n_canonical_features, self.lora_rank).uniform_(-0.5, 0.5))
             self.frp_lora_up = nn.Parameter(torch.zeros(self.lora_rank, cfg.frp_out_dim))
 
-        self.scale_embed = nn.Embedding(3, h)
+        self.scale_embed = nn.Embedding(3, h) if cfg.use_scale_embedding else None
+        self.cppe = CircularPositionEncoding(h) if cfg.use_cppe else None
+        self.window_conv = WindowMotifConv(h, cfg.window_conv_kernel, cfg.dropout) if cfg.use_window_conv else None
 
         self.has_struct = cfg.n_structural_features > 0
         if self.has_struct:
@@ -153,9 +200,13 @@ class CassiopeiaEncoder(nn.Module):
         if self.has_struct and struct_features is not None:
             xs = self.struct_proj(struct_features)
             x = F.gelu(self.struct_fuse(torch.cat([x, xs], dim=-1)))
-        if scale_ids is not None:
+        if self.scale_embed is not None and scale_ids is not None:
             x = x + self.scale_embed(scale_ids)
+        if self.cppe is not None:
+            x = x + self.cppe(x, mask, scale_ids)
         x = x * mf
+        if self.window_conv is not None:
+            x = self.window_conv(x, mask)
         x = self.context_gate(x, mask)
         aux_features = []
         keep_prob = 1.0 - self.drop_path_rate
@@ -179,7 +230,7 @@ class Cassiopeia(nn.Module):
         h = cfg.hidden_dim
         self.encoder = CassiopeiaEncoder(cfg)
 
-        r = max(1, h // 16)
+        r = cfg.adapter_rank if cfg.adapter_rank > 0 else max(1, h // 16)
         self.mob_adapter = nn.Sequential(nn.Linear(h, r), nn.GELU(), nn.Linear(r, h))
         self.amr_adapter = nn.Sequential(nn.Linear(h, r), nn.GELU(), nn.Linear(r, h))
         self.exp_adapter = nn.Sequential(nn.Linear(h, r), nn.GELU(), nn.Linear(r, h))
@@ -207,7 +258,7 @@ class Cassiopeia(nn.Module):
         x_amr = x + self.amr_adapter(x)
         x_exp = x + self.exp_adapter(x)
 
-        (mob_ctx, amr_ctx, exp_ctx), mob_evidence = self.evidence(x_mob, x_amr, x_exp, mask)
+        (mob_ctx, amr_ctx, exp_ctx), evidence = self.evidence(x_mob, x_amr, x_exp, mask)
 
         mob_logits = self.mob_head(mob_ctx) / self.mob_t.clamp(0.1)
 
@@ -224,7 +275,10 @@ class Cassiopeia(nn.Module):
 
         result = {"mobility_logits": mob_logits, "amr_logits": amr_logits,
                   "expansion_logits": exp_logits,
-                  "mob_evidence": mob_evidence}
+                  "mobility_evidence": evidence["mobility_evidence"],
+                  "amr_evidence": evidence["amr_evidence"],
+                  "expansion_evidence": evidence["expansion_evidence"],
+                  "mob_evidence": evidence["mobility_evidence"]}
 
         if aux_features is not None and self.training:
             m = mask.float().unsqueeze(-1)
