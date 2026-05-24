@@ -21,9 +21,8 @@ from dna_sentinel.utils import predict_one, read_fasta, task_score
 def _load_data(data_dir: Path, name: str, n_struct: int = 0) -> dict:
     feat = torch.load(data_dir / f"{name}_features.pt", weights_only=True)
     lab = torch.load(data_dir / f"{name}_labels.pt", weights_only=True)
-    if "struct_features" not in feat and n_struct > 0:
-        B, W = feat["features"].shape[:2]
-        feat["struct_features"] = feat["features"].new_zeros(B, W, n_struct)
+    if "struct_features" not in feat and n_struct:
+        feat["struct_features"] = feat["features"].new_zeros(*feat["features"].shape[:2], n_struct)
     return {**feat, **lab}
 
 

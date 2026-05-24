@@ -10,8 +10,9 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import roc_auc_score
 
-from dna_sentinel.model import _focal_bce
+from dna_sentinel.model import Cassiopeia, _focal_bce
 from dna_sentinel.utils import WindowDropout, binary_metrics, multiclass_metrics
 
 
@@ -167,16 +168,10 @@ def evaluate(model, data, device="cpu", batch_size=32):
         m.update(binary_metrics(amr_true, amr_np, "amr"))
 
     if model.config.expansion_classes > 1:
-        from sklearn.metrics import roc_auc_score
-        aurocs = []
         n_cls = min(model.config.expansion_classes, exp_np.shape[1])
-        for i in range(n_cls):
-            yc = (exp_true == i).astype(float)
-            if len(np.unique(yc)) >= 2 and not np.isnan(exp_np[:, i]).any():
-                try:
-                    aurocs.append(float(roc_auc_score(yc, exp_np[:, i])))
-                except ValueError:
-                    pass
+        aurocs = [roc_auc_score((exp_true == i).astype(float), exp_np[:, i])
+                  for i in range(n_cls)
+                  if len(np.unique(exp_true == i)) >= 2 and not np.isnan(exp_np[:, i]).any()]
         m["expansion_auroc"] = float(np.mean(aurocs)) if aurocs else 0.5
         m["expansion_accuracy"] = float(np.mean(exp_true == exp_np.argmax(axis=1)))
     else:
@@ -315,8 +310,7 @@ def train_cassiopeia(model, train_data, val_data, config):
                 print(f"Early stopping at epoch {epoch}")
                 break
 
-    model_class = type(model)
-    model = model_class.load(artifact_dir / "cassiopeia_best.pt", device=device)
+    model = Cassiopeia.load(artifact_dir / "cassiopeia_best.pt", device=device)
     fit_calibration(model, dv, device)
     calibrated = evaluate(model, dv, device)
     print(f"\nCalibrated: Mob BA {calibrated.get('mobility_balanced_accuracy', 0.0)*100:.2f}% | "

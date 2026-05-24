@@ -67,15 +67,13 @@ class GLUMixer(nn.Module):
         self.c_drop = nn.Dropout(dropout)
 
     def forward(self, x: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
-        r = x
         t = self.t_norm(x).transpose(1, 2)
         if mask is not None:
             t = t * mask.unsqueeze(1).float()
         u, v = self.t_w1(t).chunk(2, dim=-1)
-        x = r + self.t_w2(self.t_drop(u * v)).transpose(1, 2)
-        r = x
+        x = x + self.t_w2(self.t_drop(u * v)).transpose(1, 2)
         u, v = self.c_w1(self.c_norm(x)).chunk(2, dim=-1)
-        x = r + self.c_w2(self.c_drop(u * v))
+        x = x + self.c_w2(self.c_drop(u * v))
         return x if mask is None else x * mask.unsqueeze(-1).to(dtype=x.dtype)
 
 
@@ -86,9 +84,8 @@ class ContextGate(nn.Module):
 
     def forward(self, x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         m = mask.float().unsqueeze(-1)
-        ctx = (x * m).sum(1) / m.sum(1).clamp_min(1)
-        ctx = ctx.unsqueeze(1).expand(-1, x.shape[1], -1)
-        return x * torch.sigmoid(self.gate(torch.cat([x, ctx], dim=-1)))
+        ctx = (x * m).sum(1, keepdim=True) / m.sum(1, keepdim=True).clamp_min(1)
+        return x * torch.sigmoid(self.gate(torch.cat([x, ctx.expand(-1, x.shape[1], -1)], dim=-1)))
 
 
 class CircularPositionEncoding(nn.Module):
@@ -99,22 +96,24 @@ class CircularPositionEncoding(nn.Module):
     def forward(self, x: torch.Tensor, mask: torch.Tensor, scale_ids: torch.Tensor | None = None) -> torch.Tensor:
         b, w, _ = x.shape
         dev, dt = x.device, x.dtype
-        if scale_ids is None:
-            pos = torch.arange(w, device=dev, dtype=dt).unsqueeze(0).expand(b, -1)
-            denom = torch.full((b, 1), max(1, w), device=dev, dtype=dt)
-            scale_norm = torch.zeros_like(pos)
-        else:
+        pos = torch.arange(w, device=dev, dtype=dt).unsqueeze(0).expand(b, -1)
+        denom = torch.full((b, 1), max(1, w), device=dev, dtype=dt)
+        scale_norm = torch.zeros_like(pos)
+        if scale_ids is not None:
             sid = scale_ids.to(dev)
-            pos = torch.zeros(b, w, device=dev, dtype=dt)
-            denom = torch.ones(b, w, device=dev, dtype=dt)
-            for scale in range(int(sid.max().item()) + 1 if sid.numel() else 1):
-                sm = sid == scale
-                cnt = sm.sum(dim=1, keepdim=True).clamp_min(1).to(dtype=dt)
-                ranks = sm.to(dtype=dt).cumsum(dim=1) - 1.0
-                pos = torch.where(sm, ranks, pos)
-                denom = torch.where(sm, cnt.expand_as(denom), denom)
+            n_scales = int(sid.max().item()) + 1 if sid.numel() else 1
+            positions = torch.arange(w, device=dev).unsqueeze(0).expand(b, w)
+            for scale in range(n_scales):
+                in_scale = (sid == scale).float()
+                cnt = in_scale.sum(dim=1, keepdim=True).clamp_min(1)
+                ranks = (in_scale * positions).cumsum(dim=1) * in_scale
+                mask_s = in_scale > 0
+                pos = torch.where(mask_s, (ranks - in_scale).clamp_min(0), pos)
+                denom = torch.where(mask_s, cnt.expand_as(denom), denom)
             phase = 2.0 * math.pi * pos / denom.clamp_min(1.0)
-            scale_norm = sid.to(dtype=dt) / max(1.0, float(int(sid.max().item()) if sid.numel() else 1))
+            scale_norm = sid.to(dtype=dt) / float(max(1, n_scales - 1))
+        else:
+            phase = 2.0 * math.pi * pos / denom.clamp_min(1.0)
         coords = torch.stack([torch.sin(phase), torch.cos(phase), scale_norm], dim=-1)
         return self.proj(coords) * mask.unsqueeze(-1).to(dtype=dt)
 
@@ -122,8 +121,7 @@ class CircularPositionEncoding(nn.Module):
 class WindowMotifConv(nn.Module):
     def __init__(self, hidden_dim: int, kernel_size: int = 5, dropout: float = 0.1):
         super().__init__()
-        if kernel_size % 2 == 0:
-            raise ValueError("window_conv_kernel must be odd")
+        assert kernel_size % 2 == 1, "window_conv_kernel must be odd"
         self.norm = nn.LayerNorm(hidden_dim)
         self.depthwise = nn.Conv1d(hidden_dim, hidden_dim, kernel_size, padding=kernel_size // 2, groups=hidden_dim)
         self.pointwise = nn.Linear(hidden_dim, hidden_dim * 2)
@@ -147,17 +145,17 @@ class MultiQueryEvidencePool(nn.Module):
 
     def forward(self, x_mob: torch.Tensor, x_amr: torch.Tensor, x_exp: torch.Tensor, mask: torch.Tensor):
         def _pool(x, w_param):
-            s = torch.stack([h(x).squeeze(-1) for h in self.heads], dim=0)
-            s = s.masked_fill(~mask, -1e9)
+            s = torch.stack([h(x).squeeze(-1) for h in self.heads], dim=0).masked_fill(~mask, -1e9)
             a = torch.softmax(s, dim=-1)
-            ctx = (torch.softmax(w_param, dim=0)[:, None, None] * a[:, :, :, None] * x).sum(dim=(0, 2))
+            w = torch.softmax(w_param, dim=0)[:, None, None]
+            ctx = (w * a[:, :, :, None] * x).sum(dim=(0, 2))
             return ctx, s[0]
 
-        mob_ctx, mob_s = _pool(x_mob, self.mob_w)
-        amr_ctx, amr_s = _pool(x_amr, self.amr_w)
-        exp_ctx, exp_s = _pool(x_exp, self.exp_w)
-        return (mob_ctx, amr_ctx, exp_ctx), {
-            "mobility_evidence": mob_s, "amr_evidence": amr_s, "expansion_evidence": exp_s,
+        mob = _pool(x_mob, self.mob_w)
+        amr = _pool(x_amr, self.amr_w)
+        exp = _pool(x_exp, self.exp_w)
+        return (mob[0], amr[0], exp[0]), {
+            "mobility_evidence": mob[1], "amr_evidence": amr[1], "expansion_evidence": exp[1],
         }
 
 
@@ -194,12 +192,10 @@ class CassiopeiaEncoder(nn.Module):
         mf = mask.unsqueeze(-1)
         x = self.frp_scale * (kmer_features @ self.frp)
         if self.lora_rank > 0:
-            lora = (kmer_features @ self.frp_lora_down) @ self.frp_lora_up
-            x = x + lora
+            x = x + (kmer_features @ self.frp_lora_down) @ self.frp_lora_up
         x = self.bottleneck(x)
         if self.has_struct and struct_features is not None:
-            xs = self.struct_proj(struct_features)
-            x = F.gelu(self.struct_fuse(torch.cat([x, xs], dim=-1)))
+            x = F.gelu(self.struct_fuse(torch.cat([x, self.struct_proj(struct_features)], dim=-1)))
         if self.scale_embed is not None and scale_ids is not None:
             x = x + self.scale_embed(scale_ids)
         if self.cppe is not None:
@@ -208,14 +204,18 @@ class CassiopeiaEncoder(nn.Module):
         if self.window_conv is not None:
             x = self.window_conv(x, mask)
         x = self.context_gate(x, mask)
-        aux_features = []
+        if not self.training or self.drop_path_rate == 0:
+            for mixer in self.mixers:
+                x = mixer(x, mask)
+            return x, []
         keep_prob = 1.0 - self.drop_path_rate
+        aux = []
         for mixer in self.mixers:
-            x_m = mixer(x, mask) if self.drop_path_rate == 0 or not self.training else (
-                x + (x.new_empty(x.shape[0], 1, 1).bernoulli_(keep_prob) / keep_prob) * (mixer(x, mask) - x))
-            x = x_m
-            aux_features.append(x)
-        return x, aux_features
+            res = mixer(x, mask)
+            scale = x.new_empty(x.shape[0], 1, 1).bernoulli_(keep_prob) / keep_prob
+            x = x + scale * (res - x)
+            aux.append(x)
+        return x, aux
 
 
 class Cassiopeia(nn.Module):
@@ -274,13 +274,10 @@ class Cassiopeia(nn.Module):
             exp_logits = exp_logits.squeeze(-1)
 
         result = {"mobility_logits": mob_logits, "amr_logits": amr_logits,
-                  "expansion_logits": exp_logits,
-                  "mobility_evidence": evidence["mobility_evidence"],
-                  "amr_evidence": evidence["amr_evidence"],
-                  "expansion_evidence": evidence["expansion_evidence"],
-                  "mob_evidence": evidence["mobility_evidence"]}
+                  "expansion_logits": exp_logits, "mob_evidence": evidence["mobility_evidence"],
+                  **evidence}
 
-        if aux_features is not None and self.training:
+        if self.training and aux_features:
             m = mask.float().unsqueeze(-1)
             if self.aux_mob is not None:
                 ap = (aux_features[0] * m).sum(1) / m.sum(1).clamp_min(1)

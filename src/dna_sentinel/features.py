@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import os
 from dataclasses import dataclass
 from multiprocessing import get_all_start_methods, get_context
@@ -12,6 +13,7 @@ import torch.nn.functional as F
 from dna_sentinel.utils import LabeledSequence, load_jsonl
 
 
+@functools.lru_cache(maxsize=None)
 def _canonical_vocab(k: int) -> int:
     return ((4 ** k) + (4 ** (k // 2) if k % 2 == 0 else 0)) // 2
 
@@ -28,6 +30,7 @@ class CanonicalKmerConfig:
     n_structural_features: int = 19
 
 
+@functools.lru_cache(maxsize=None)
 def _canonical_map(k: int) -> torch.Tensor:
     n = 4 ** k
     cmap = torch.zeros(n, dtype=torch.long)
@@ -131,18 +134,12 @@ class CanonicalKmerExtractor:
             raw += torch.bincount((canon + offsets)[valid], minlength=N * nf).view(N, nf).float()
 
         if N > mw:
-            out = torch.zeros(mw, nf, device=dev)
-            out_s = torch.zeros(mw, self.config.n_structural_features, device=dev)
             bs = N / mw
-            idx = ((torch.arange(mw, device=dev, dtype=torch.float32) * bs).round().long())
-            idx_end = torch.cat([idx[1:], torch.tensor([N], device=dev)])
-            cum = raw.cumsum(dim=0)
-            cum_s = struct.cumsum(dim=0)
-            for i in range(mw):
-                s, e = idx[i].item(), idx_end[i].item()
-                cnt = max(1, e - s)
-                out[i] = (cum[e - 1] - (cum[s - 1] if s > 0 else 0)) / cnt
-                out_s[i] = (cum_s[e - 1] - (cum_s[s - 1] if s > 0 else 0)) / cnt
+            bnd = (torch.arange(mw + 1, device=dev, dtype=torch.float32) * bs).round().long().clamp_max(N)
+            cum, cum_s = raw.cumsum(dim=0), struct.cumsum(dim=0)
+            cnt = (bnd[1:] - bnd[:-1]).clamp_min(1)
+            out = (cum[bnd[1:] - 1] - F.pad(cum[:-1], (0, 0, 1, 0))[bnd[:-1]]) / cnt[:, None]
+            out_s = (cum_s[bnd[1:] - 1] - F.pad(cum_s[:-1], (0, 0, 1, 0))[bnd[:-1]]) / cnt[:, None]
             out = F.normalize(out + 1e-6, p=2, dim=-1)
             mask = torch.ones(mw, dtype=torch.bool, device=dev)
         else:

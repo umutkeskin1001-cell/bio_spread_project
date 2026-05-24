@@ -109,9 +109,10 @@ def task_score(metrics: dict[str, float]) -> float:
 def false_positive_summary(mobility_probs: np.ndarray, amr_probs: np.ndarray,
                            expansion_probs: np.ndarray, risk_scores: np.ndarray,
                            threshold: float = 0.5) -> dict[str, float]:
-    mob, amr, exp, risk = (np.asarray(p, dtype=float) for p in
-                           (mobility_probs, amr_probs, expansion_probs, risk_scores))
-    mobile_prob = 1.0 - mob[:, 0]
+    mobile_prob = 1.0 - np.asarray(mobility_probs, dtype=float)[:, 0]
+    amr = np.asarray(amr_probs, dtype=float)
+    exp = np.asarray(expansion_probs, dtype=float)
+    risk = np.asarray(risk_scores, dtype=float)
     return {
         "false_mobile_rate": float((mobile_prob >= threshold).mean()) if mobile_prob.size else 0.0,
         "false_amr_rate": float((amr >= threshold).mean()) if amr.size else 0.0,
@@ -194,9 +195,9 @@ def predict_batch(model: Cassiopeia, sequences: list[tuple[str, str]],
         exp_prob = torch.softmax(exp_raw, dim=-1)
     else:
         exp_prob = torch.sigmoid(exp_raw)
-    ws = out.get("mobility_evidence", out["mob_evidence"]).cpu()
-    amr_ev = out.get("amr_evidence", out["mob_evidence"]).cpu()
-    exp_ev = out.get("expansion_evidence", out["mob_evidence"]).cpu()
+    ws = out["mobility_evidence"].cpu()
+    amr_ev = out["amr_evidence"].cpu()
+    exp_ev = out["expansion_evidence"].cpu()
     am = torch.stack(masks).cpu()
 
     preds = []
