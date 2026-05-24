@@ -29,6 +29,7 @@ class CassiopeiaConfig:
     use_cppe: bool = False
     use_window_conv: bool = False
     window_conv_kernel: int = 5
+    glu_expansion: int = 3
 
     def to_dict(self) -> dict:
         return {f.name: getattr(self, f.name) for f in fields(self)}
@@ -185,7 +186,7 @@ class CassiopeiaEncoder(nn.Module):
         self.struct_fuse = nn.Linear(h + 8, h) if self.has_struct else None
         self.context_gate = ContextGate(h)
         self.mixers = nn.ModuleList(
-            [GLUMixer(cfg.max_windows, h, dropout=cfg.dropout) for _ in range(cfg.n_layers)])
+            [GLUMixer(cfg.max_windows, h, expansion=cfg.glu_expansion, dropout=cfg.dropout) for _ in range(cfg.n_layers)])
         self.drop_path_rate = cfg.drop_path_rate
 
     def forward(self, kmer_features, mask, struct_features=None, scale_ids=None):
