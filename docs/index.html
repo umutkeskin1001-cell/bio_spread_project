@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cassiopeia Prime</title>
+  <meta name="description" content="Cassiopeia Prime — DNA dizisinden plasmid risk triage. 501K parametreli model.">
+  <meta property="og:title" content="Cassiopeia Prime">
+  <meta property="og:description" content="FASTA dizisinden mobility, AMR ve yayılım riskini anotasyonsuz tahmin eden kompakt model.">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#top" aria-label="Cassiopeia Prime">
+      <span class="brand-mark"></span>
+      <span>Cassiopeia Prime</span>
+    </a>
+    <nav aria-label="Sayfa">
+      <a href="#benchmark">Benchmark</a>
+      <a href="#model">Model</a>
+      <a href="#infer">Canlı Tahmin</a>
+      <a href="#report">Rapor</a>
+    </nav>
+  </header>
+
+  <main id="top">
+    <section class="hero">
+      <div class="hero-copy">
+        <h1>DNA'dan plasmid risk triage.</h1>
+        <p>501K parametreli Cassiopeia Prime, FASTA dizisinden mobility, AMR ve yayılım riskini anotasyonsuz tahmin eder. Deployment modu, gerçek dünya robustness için reverse-complement averaged inference kullanır.</p>
+        <div class="hero-actions">
+          <a class="button primary" href="#benchmark">Metrikleri İncele</a>
+          <a class="button secondary" href="#infer">Canlı Dene</a>
+        </div>
+      </div>
+
+      <div class="model-console" aria-label="Model durumu">
+        <div class="console-head">
+          <span>current champion</span>
+          <strong>56-window Prime + RC averaging</strong>
+        </div>
+        <div class="console-grid">
+          <div><span>Params</span><strong id="params">—</strong></div>
+          <div><span>Checkpoint</span><strong id="checkpoint">—</strong></div>
+          <div><span>Cached latency</span><strong id="latency">—</strong></div>
+          <div><span>FASTA 6 kb</span><strong id="fasta-latency">—</strong></div>
+          <div><span>Held-out score</span><strong id="task-score">—</strong></div>
+        </div>
+        <svg class="plasmid-map" viewBox="0 0 420 280" role="img" aria-label="Plasmid evidence visualization">
+          <defs>
+            <linearGradient id="ring" x1="0" x2="1">
+              <stop offset="0" stop-color="#0f9b8e"/>
+              <stop offset="0.52" stop-color="#e1a12a"/>
+              <stop offset="1" stop-color="#d95c45"/>
+            </linearGradient>
+          </defs>
+          <circle cx="210" cy="142" r="88" fill="none" stroke="#dce7e3" stroke-width="20"/>
+          <path d="M210 54a88 88 0 1 1-83 117" fill="none" stroke="url(#ring)" stroke-width="20" stroke-linecap="round"/>
+          <g fill="none" stroke="#22302c" stroke-width="2">
+            <path d="M107 74c36 18 47 39 67 75s45 54 107 48"/>
+            <path d="M135 213c35-28 50-55 74-83 25-29 47-45 82-61"/>
+          </g>
+          <g class="loci">
+            <circle cx="279" cy="72" r="8"/>
+            <circle cx="296" cy="190" r="8"/>
+            <circle cx="122" cy="174" r="8"/>
+          </g>
+          <text x="210" y="136" text-anchor="middle">Cassiopeia</text>
+          <text x="210" y="160" text-anchor="middle">evidence windows</text>
+        </svg>
+      </div>
+    </section>
+
+    <section id="benchmark" class="band">
+      <div class="section-head">
+        <h2>Audited Benchmark</h2>
+        <p>Eğitim sınırı 2,048 plasmid, mevcut train split 1,414. Validation, test ve held-out skorları deployment modundaki RC-averaged inference ile üretilir; non-plasmid kontrol ayrı bir false-positive stres seti olarak raporlanır.</p>
+      </div>
+      <div class="metrics" id="metrics"></div>
+    </section>
+
+    <section class="split audit-band">
+      <div>
+        <h2>Robustness Audit</h2>
+        <p>2026-05-25 audit’inde ilk 120 held-out plasmid üzerinde reverse-complement drift tamamen kapatıldı; circular cut-point drift ise belirgin biçimde azaltıldı.</p>
+        <div class="audit-grid">
+          <article class="audit-card">
+            <span>Revcomp drift</span>
+            <strong>0.0%</strong>
+            <p>RC-averaged deployment, aynı plasmidin ters-komplement gösteriminde mobility sınıfını değiştirmiyor.</p>
+          </article>
+          <article class="audit-card">
+            <span>Shift flip rate</span>
+            <strong>9.17%</strong>
+            <p>Tek bir circular shift altında mobility flip oranı %12.5’ten %9.17’ye indi.</p>
+          </article>
+          <article class="audit-card">
+            <span>Risk drift</span>
+            <strong>0.047</strong>
+            <p>Average absolute risk drift, aynı audit örneklerinde 0.0615’ten 0.0473’e düştü.</p>
+          </article>
+        </div>
+        <p class="audit-note">Not: Bu audit, raw sequence inference üzerinde yapıldı; evidence pencereleri ilk oryantasyon pass’inden raporlanır.</p>
+      </div>
+
+      <div class="inspector compact-panel">
+        <div class="console-head">
+          <span>Deployment Mode</span>
+          <strong>Compact + Invariant</strong>
+        </div>
+        <ul class="pipeline">
+          <li><span>01</span>Raw FASTA normalize edilir.</li>
+          <li><span>02</span>Orijinal ve reverse-complement dizi ayrı ayrı işlenir.</li>
+          <li><span>03</span>Mobility / AMR / expansion olasılıkları ortalanır.</li>
+          <li><span>04</span>Evidence windows giriş oryantasyonunda korunur.</li>
+          <li><span>05</span>Non-plasmid kontrol ayrı stres metriğiyle izlenir.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="model" class="split">
+      <div>
+        <h2>Model Stack</h2>
+        <ul class="pipeline">
+          <li><span>01</span>56 multi-scale canonical k-mer windows</li>
+          <li><span>02</span>FRP 2728 → 320 + rank-12 F-LoRA</li>
+          <li><span>03</span>Structural DNA fusion + circular plasmid position encoding</li>
+          <li><span>04</span>Window motif convolution + 3 compact GLUMixer blocks</li>
+          <li><span>05</span>Task-specific evidence pooling + calibrated heads</li>
+        </ul>
+      </div>
+
+      <div class="inspector" id="infer">
+        <div class="console-head">
+          <span>Canlı Tahmin</span>
+          <strong>FASTA gir, RC-averaged API'ye sorgula</strong>
+        </div>
+        <textarea id="fasta" spellcheck="false">>demo_plasmid
+ATGCGTATGCGTATGCGTATGCGTATGCGTATGCGTATGCGTATGCGTATGCGTATGCGTATGCGTATGCGTATGCGTATGCGTATGCGTATGCGTATGCGTATGCGTATGCGTATGCGT</textarea>
+        <div class="sequence-stats">
+          <div><span>Length</span><strong id="seq-len">0 bp</strong></div>
+          <div><span>GC</span><strong id="seq-gc">0.0%</strong></div>
+          <div><span>Ambiguous</span><strong id="seq-n">0</strong></div>
+        </div>
+        <div class="infer-bar">
+          <input id="api-url" type="text" placeholder="http://localhost:8000" value="http://localhost:8000" aria-label="API URL">
+          <button id="infer-btn" class="button primary">Tahmin Et</button>
+        </div>
+        <div id="infer-out"></div>
+      </div>
+    </section>
+
+    <section id="report" class="band report-band">
+      <div class="section-head">
+        <h2>Rapor Paketi</h2>
+        <p>Model kartı, seviye değerlendirmesi, benchmark JSON ve TÜBİTAK sunum taslağı tek bir deployment hikayesine hizalanmıştır.</p>
+      </div>
+      <div class="report-links">
+        <a href="../MODEL_CARD.md">Model Card</a>
+        <a href="CURRENT_LEVEL.md">Mevcut Seviye</a>
+        <a href="TUBITAK_2204A_REPORT.md">TÜBİTAK 2204-A</a>
+        <a href="benchmark.json">Benchmark JSON</a>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

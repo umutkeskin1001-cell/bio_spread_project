@@ -1,7 +1,0 @@
-click>=8.0
-numpy>=1.26,<3
-PyYAML>=6.0
-torch>=2.0,<3
-fastapi>=0.100
-uvicorn>=0.20
-scikit-learn

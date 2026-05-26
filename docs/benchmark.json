@@ -1,0 +1,40 @@
+{
+  "version": "2.0.0",
+  "model": "Cassiopeia Prime",
+  "parameters": 501526,
+  "checkpoint_mb": 5.53,
+  "inference_latency_ms_6kb": 26.5,
+  "cached_latency_ms": 0.69,
+  "splits": {
+    "validation": {
+      "mobility_balanced_accuracy": 73.37,
+      "amr_auroc": 90.56,
+      "expansion_auroc": 87.81,
+      "task_score": 85.65
+    },
+    "test": {
+      "mobility_balanced_accuracy": 67.33,
+      "amr_auroc": 89.76,
+      "expansion_auroc": 70.37,
+      "task_score": 75.82
+    },
+    "heldout": {
+      "mobility_balanced_accuracy": 76.28,
+      "amr_auroc": 93.29,
+      "expansion_auroc": 82.95,
+      "task_score": 85.15
+    },
+    "nonplasmid_control": {
+      "false_mobile_rate_pct": 1.00,
+      "false_amr_rate_pct": 0.22,
+      "false_expansion_rate_pct": 0.89
+    }
+  },
+  "training": {
+    "epochs": 120,
+    "early_stopping": false,
+    "calibration": "aggressive_posthoc",
+    "device": "mps",
+    "optimizations": ["frp_precompute", "eval_interval=5", "balanced_cache"]
+  }
+}

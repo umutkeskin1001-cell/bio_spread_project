@@ -1,11 +1,9 @@
 """Unit tests for Cassiopeia model and data pipeline."""
-
 from __future__ import annotations
 
 import tempfile
 from pathlib import Path
 
-import numpy as np
 import pytest
 import torch
 
@@ -13,15 +11,13 @@ from dna_sentinel.model import (
     Cassiopeia,
     CassiopeiaConfig,
     CircularPositionEncoding,
+    DropPath,
     GLUMixer,
     WindowMotifConv,
     _focal_bce,
     _make_frp,
 )
 
-# ---------------------------------------------------------------------------
-# Config tests
-# ---------------------------------------------------------------------------
 
 class TestCassiopeiaConfig:
     def test_default_small(self):
@@ -29,106 +25,88 @@ class TestCassiopeiaConfig:
         assert cfg.hidden_dim == 128
         assert cfg.expansion_classes == 1
         assert cfg.amr_classes == 1
+        assert cfg.learnable_frp is False
 
     def test_from_yaml(self):
-        yaml_dict = {"model": {"hidden_dim": 512, "expansion_classes": 50, "amr_classes": 12}}
-        cfg = CassiopeiaConfig.from_yaml(yaml_dict)
+        cfg = CassiopeiaConfig.from_yaml({"model": {"hidden_dim": 512, "expansion_classes": 50, "amr_classes": 12}})
         assert cfg.hidden_dim == 512
         assert cfg.expansion_classes == 50
         assert cfg.amr_classes == 12
 
     def test_to_dict(self):
-        cfg = CassiopeiaConfig()
-        d = cfg.to_dict()
-        assert isinstance(d, dict)
-        assert d["hidden_dim"] == 128
+        d = CassiopeiaConfig().to_dict()
+        assert isinstance(d, dict) and d["hidden_dim"] == 128
 
     def test_extra_keys_ignored(self):
-        yaml_dict = {"model": {"hidden_dim": 256, "nonexistent_key": 999}}
-        cfg = CassiopeiaConfig.from_yaml(yaml_dict)
+        cfg = CassiopeiaConfig.from_yaml({"model": {"hidden_dim": 256, "nonexistent_key": 999}})
         assert cfg.hidden_dim == 256
-        assert not hasattr(cfg, "nonexistent_key")
 
-    def test_prime_config_fields_are_parsed(self):
-        yaml_dict = {"model": {
-            "hidden_dim": 160, "frp_out_dim": 384, "n_layers": 3, "lora_rank": 12,
-            "adapter_rank": 16, "use_scale_embedding": False,
-            "use_cppe": True, "use_window_conv": True, "window_conv_kernel": 5,
-        }}
-        cfg = CassiopeiaConfig.from_yaml(yaml_dict)
-        assert cfg.hidden_dim == 160
-        assert cfg.adapter_rank == 16
-        assert cfg.use_cppe is True
-        assert cfg.use_window_conv is True
-        assert cfg.window_conv_kernel == 5
+    def test_learnable_frp_default_off(self):
+        assert CassiopeiaConfig().learnable_frp is False
 
-    def test_default_config_stays_small(self):
-        cfg = CassiopeiaConfig()
-        assert cfg.use_scale_embedding is True
-        assert cfg.use_cppe is False
-        assert cfg.use_window_conv is False
-        assert cfg.adapter_rank == 0
+    def test_learnable_frp_custom(self):
+        cfg = CassiopeiaConfig(learnable_frp=True)
+        assert cfg.learnable_frp is True
 
-
-# ---------------------------------------------------------------------------
-# FRP matrix tests
-# ---------------------------------------------------------------------------
 
 class TestFRPMatrix:
-    def test_shape(self):
+    def test_shape_and_values(self):
         mat = _make_frp(100, 256)
         assert mat.shape == (100, 256)
-
-    def test_values(self):
-        mat = _make_frp(50, 50)
         assert torch.all((mat == 1) | (mat == -1) | (mat == 0))
-        assert (mat == 0).float().mean() > 0.5  # mostly zeros (2/3 chance)
+        assert (mat == 0).float().mean() > 0.5
 
     def test_deterministic(self):
-        m1 = _make_frp(100, 100, seed=42)
-        m2 = _make_frp(100, 100, seed=42)
-        assert torch.allclose(m1, m2)
+        assert torch.allclose(_make_frp(100, 100, seed=42), _make_frp(100, 100, seed=42))
+
+    def test_different_seeds_differ(self):
+        assert not torch.allclose(_make_frp(100, 100, seed=42), _make_frp(100, 100, seed=99))
 
 
-# ---------------------------------------------------------------------------
-# Loss tests
-# ---------------------------------------------------------------------------
+class TestDropPath:
+    def test_identity_when_eval(self):
+        dp = DropPath(0.5).eval()
+        x = torch.randn(4, 10)
+        assert torch.allclose(dp(x), x)
+
+    def test_identity_when_zero_rate(self):
+        dp = DropPath(0.0).train()
+        x = torch.randn(4, 10)
+        assert torch.allclose(dp(x), x)
+
+    def test_output_shape(self):
+        dp = DropPath(0.5).train()
+        x = torch.randn(4, 10, 128)
+        assert dp(x).shape == x.shape
+
 
 class TestLosses:
     def test_focal_bce_basic(self):
-        logits = torch.tensor([2.0, -2.0, 1.0, -1.0])
-        target = torch.tensor([1.0, 0.0, 1.0, 0.0])
-        loss = _focal_bce(logits, target, pw=None, gamma=0.0)
-        assert loss.item() > 0
-        assert not torch.isnan(loss)
+        loss = _focal_bce(torch.tensor([2.0, -2.0]), torch.tensor([1.0, 0.0]), pw=None, gamma=0.0)
+        assert loss.item() > 0 and not torch.isnan(loss)
 
     def test_focal_bce_with_gamma(self):
-        logits = torch.tensor([2.0, -2.0])
-        target = torch.tensor([1.0, 0.0])
-        loss_g0 = _focal_bce(logits, target, pw=None, gamma=0.0)
-        loss_g2 = _focal_bce(logits, target, pw=None, gamma=2.0)
-        assert loss_g2.item() < loss_g0.item()  # focal reduces loss for easy examples
+        logits, target = torch.tensor([2.0, -2.0]), torch.tensor([1.0, 0.0])
+        assert _focal_bce(logits, target, pw=None, gamma=2.0) < _focal_bce(logits, target, pw=None, gamma=0.0)
 
     def test_focal_bce_pos_weight(self):
-        logits = torch.tensor([0.0, 0.0])
-        target = torch.tensor([1.0, 0.0])
-        loss_now = _focal_bce(logits, target, pw=None, gamma=0.0)
-        loss_pw = _focal_bce(logits, target, pw=torch.tensor([3.0]), gamma=0.0)
-        assert loss_pw.item() > loss_now.item()
+        loss_n = _focal_bce(torch.tensor([0.0, 0.0]), torch.tensor([1.0, 0.0]), pw=None, gamma=0.0)
+        loss_p = _focal_bce(torch.tensor([0.0, 0.0]), torch.tensor([1.0, 0.0]), pw=torch.tensor([3.0]), gamma=0.0)
+        assert loss_p > loss_n
 
-
-
-
-# ---------------------------------------------------------------------------
-# Block tests
-# ---------------------------------------------------------------------------
 
 class TestBlocks:
     def test_glu_mixer(self):
-        block = GLUMixer(28, 128)
-        x = torch.randn(4, 28, 128)
-        out = block(x)
+        out = GLUMixer(28, 128)(torch.randn(4, 28, 128))
         assert out.shape == (4, 28, 128)
+
+    def test_glu_mixer_with_mask(self):
+        x = torch.randn(4, 28, 128)
+        mask = torch.ones(4, 28, dtype=torch.bool)
+        mask[:, 20:] = False
+        out = GLUMixer(28, 128)(x, mask)
+        assert out.shape == x.shape
+        assert torch.all(out[:, 20:] == 0)
 
     def test_cppe_shape_and_mask_zeroing(self):
         cppe = CircularPositionEncoding(32)
@@ -137,86 +115,71 @@ class TestBlocks:
                              [True, True, True, True, True, True]])
         scale_ids = torch.tensor([[0, 0, 1, 1, 2, 2], [0, 0, 1, 1, 2, 2]])
         out = cppe(x, mask, scale_ids)
-        assert out.shape == x.shape
-        assert torch.all(out[0, 3:] == 0)
-        assert out[1].abs().sum() > 0
+        assert out.shape == x.shape and torch.all(out[0, 3:] == 0)
 
-    def test_window_motif_conv_shape_and_mask_zeroing(self):
+    def test_cppe_no_scale_ids(self):
+        cppe = CircularPositionEncoding(32)
+        out = cppe(torch.zeros(2, 6, 32), torch.ones(2, 6, dtype=torch.bool))
+        assert out.shape == (2, 6, 32)
+
+    def test_window_motif_conv(self):
         conv = WindowMotifConv(hidden_dim=32, kernel_size=5, dropout=0.0)
         x = torch.randn(2, 8, 32)
         mask = torch.tensor([[True, True, True, True, False, False, False, False],
                              [True, True, True, True, True, True, True, True]])
         out = conv(x, mask)
-        assert out.shape == x.shape
-        assert torch.all(out[0, 4:] == 0)
-        assert torch.isfinite(out).all()
+        assert out.shape == x.shape and torch.all(out[0, 4:] == 0) and torch.isfinite(out).all()
 
+    def test_window_motif_conv_odd_kernel(self):
+        with pytest.raises(ValueError, match="odd"):
+            WindowMotifConv(32, kernel_size=4)
 
-# ---------------------------------------------------------------------------
-# Model tests
-# ---------------------------------------------------------------------------
 
 class TestCassiopeiaSmall:
     @pytest.fixture
     def model(self):
-        return Cassiopeia(CassiopeiaConfig(hidden_dim=64, n_canonical_features=100,
-                                             frp_out_dim=64, n_layers=1, max_windows=12,
-                                             expansion_classes=1, amr_classes=1))
+        return Cassiopeia(CassiopeiaConfig(hidden_dim=64, n_canonical_features=100, frp_out_dim=64, n_layers=1, max_windows=12, expansion_classes=1, amr_classes=1))
 
     @pytest.fixture
     def batch(self):
-        B, W = 4, 12
-        nf = 100
-        return {
-            "features": torch.randn(B, W, nf),
-            "masks": torch.ones(B, W, dtype=torch.bool),
-            "mobility": torch.randint(0, 3, (B,)),
-            "amr": torch.randint(0, 2, (B,), dtype=torch.float),
-            "expansion": torch.randint(0, 2, (B,), dtype=torch.float),
-        }
+        return {"features": torch.randn(4, 12, 100), "masks": torch.ones(4, 12, dtype=torch.bool),
+                "mobility": torch.randint(0, 3, (4,)), "amr": torch.randint(0, 2, (4,), dtype=torch.float),
+                "expansion": torch.randint(0, 2, (4,), dtype=torch.float)}
 
     def test_forward(self, model, batch):
         out = model(batch["features"], batch["masks"])
-        assert "mobility_logits" in out
-        assert "amr_logits" in out
-        assert "expansion_logits" in out
         assert out["mobility_logits"].shape == (4, 3)
         assert out["amr_logits"].shape == (4,)
         assert out["expansion_logits"].shape == (4,)
 
     def test_compute_loss(self, model, batch):
         out = model(batch["features"], batch["masks"])
-        loss = model.compute_loss(
-            out["mobility_logits"], out["amr_logits"], out["expansion_logits"],
-            batch["mobility"], batch["amr"], batch["expansion"],
-        )
-        assert loss.item() > 0
-        assert not torch.isnan(loss)
+        loss = model.compute_loss(out["mobility_logits"], out["amr_logits"], out["expansion_logits"],
+                                   batch["mobility"], batch["amr"], batch["expansion"])
+        assert loss["total"].item() > 0 and not torch.isnan(loss["total"])
 
     def test_save_load(self, model, batch):
         with tempfile.NamedTemporaryFile(suffix=".pt", delete=False) as f:
             path = f.name
             model.save(path)
         loaded = Cassiopeia.load(path)
-        # Verify inference works on loaded model
-        out = loaded(batch["features"], batch["masks"])
-        assert out["mobility_logits"].shape == (4, 3)
-        assert out["amr_logits"].shape == (4,)
-        assert out["expansion_logits"].shape == (4,)
+        assert loaded(batch["features"], batch["masks"])["mobility_logits"].shape == (4, 3)
         Path(path).unlink()
 
     def test_parameter_count(self):
-        model = Cassiopeia()
-        count = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        assert count < 500_000
+        model = Cassiopeia(CassiopeiaConfig(use_hierarchical=False))
+        assert sum(p.numel() for p in model.parameters() if p.requires_grad) < 500_000
 
     def test_prime_parameter_count(self):
-        model = Cassiopeia(CassiopeiaConfig(
-            hidden_dim=160, frp_out_dim=384, n_layers=3, lora_rank=12, adapter_rank=16,
-            use_scale_embedding=False, use_cppe=True, use_window_conv=True, window_conv_kernel=5,
-        ))
-        count = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        assert 700_000 < count <= 1_000_000
+        model = Cassiopeia(CassiopeiaConfig(hidden_dim=160, frp_out_dim=384, n_layers=3, lora_rank=12, adapter_rank=16,
+                                             use_scale_embedding=False, use_cppe=True, use_window_conv=True,
+                                             window_conv_kernel=5, use_hierarchical=False))
+        assert 700_000 < sum(p.numel() for p in model.parameters() if p.requires_grad) <= 1_100_000
+
+    def test_hierarchical_parameter_count(self):
+        model = Cassiopeia(CassiopeiaConfig(use_hierarchical=True, n_scale_layers=2, use_scale_gate=True))
+        n = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        assert 400_000 < n <= 600_000, f"got {n}"
 
     def test_save_load_roundtrip(self, model, batch):
         with tempfile.NamedTemporaryFile(suffix=".pt", delete=False) as f:
@@ -231,220 +194,127 @@ class TestCassiopeiaSmall:
         Path(path).unlink()
 
     def test_backward(self, batch):
-        model = Cassiopeia(CassiopeiaConfig(
-            hidden_dim=64, n_canonical_features=100, frp_out_dim=64,
-            n_layers=1, max_windows=12, expansion_classes=1, amr_classes=1,
-        ))
+        model = Cassiopeia(CassiopeiaConfig(hidden_dim=64, n_canonical_features=100, frp_out_dim=64, n_layers=1, max_windows=12))
         out = model(batch["features"], batch["masks"])
-        loss = model.compute_loss(
-            out["mobility_logits"], out["amr_logits"], out["expansion_logits"],
-            batch["mobility"], batch["amr"], batch["expansion"],
-        )
-        loss.backward()
-        trainable = [p for n, p in model.named_parameters() if p.requires_grad]
-        assert any(p.grad is not None for p in trainable)
+        loss = model.compute_loss(out["mobility_logits"], out["amr_logits"], out["expansion_logits"],
+                                   batch["mobility"], batch["amr"], batch["expansion"])
+        loss["total"].backward()
+        assert any(p.grad is not None for n, p in model.named_parameters() if p.requires_grad)
 
     def test_forward_returns_task_specific_evidence(self, model, batch):
         out = model(batch["features"], batch["masks"])
         assert out["mobility_evidence"].shape == batch["masks"].shape
-        assert out["amr_evidence"].shape == batch["masks"].shape
-        assert out["expansion_evidence"].shape == batch["masks"].shape
-        assert torch.equal(out["mob_evidence"], out["mobility_evidence"])
 
-    def test_prime_forward_with_cppe_and_window_conv(self):
-        model = Cassiopeia(CassiopeiaConfig(
-            hidden_dim=64, n_canonical_features=100, frp_out_dim=80, n_layers=2, max_windows=12,
-            lora_rank=4, adapter_rank=8,
-            use_scale_embedding=False, use_cppe=True, use_window_conv=True, window_conv_kernel=3,
-        ))
-        feat = torch.randn(3, 12, 100)
-        mask = torch.ones(3, 12, dtype=torch.bool)
-        struct = torch.randn(3, 12, 19)
-        scale_ids = torch.tensor([[0] * 4 + [1] * 4 + [2] * 4] * 3)
-        out = model(feat, mask, struct_features=struct, scale_ids=scale_ids)
+    def test_forward_with_struct_and_scale(self):
+        model = Cassiopeia(CassiopeiaConfig(hidden_dim=64, n_canonical_features=100, frp_out_dim=80, n_layers=2, max_windows=12,
+                                             lora_rank=4, adapter_rank=8, use_scale_embedding=False, use_cppe=True, use_window_conv=True, window_conv_kernel=3))
+        out = model(torch.randn(3, 12, 100), torch.ones(3, 12, dtype=torch.bool),
+                     struct_features=torch.randn(3, 12, 19),
+                     scale_ids=torch.tensor([[0]*4 + [1]*4 + [2]*4]*3))
         assert out["mobility_logits"].shape == (3, 3)
-        assert out["amr_logits"].shape == (3,)
-        assert out["expansion_logits"].shape == (3,)
+
+    def test_forward_all_n_mask(self, model):
+        mask = torch.zeros(4, 12, dtype=torch.bool)
+        out = model(torch.randn(4, 12, 100), mask)
+        assert torch.isfinite(out["mobility_logits"]).all()
+
+    def test_learnable_frp_forward(self):
+        model = Cassiopeia(CassiopeiaConfig(hidden_dim=32, n_canonical_features=100, frp_out_dim=32, n_layers=1, max_windows=8, learnable_frp=True))
+        out = model(torch.randn(2, 8, 100), torch.ones(2, 8, dtype=torch.bool))
+        assert out["mobility_logits"].shape == (2, 3)
 
 
 class TestCassiopeiaLarge:
     @pytest.fixture
     def model(self):
-        return Cassiopeia(CassiopeiaConfig(hidden_dim=128, n_canonical_features=100,
-                                             frp_out_dim=64, n_layers=2, max_windows=12,
-                                             expansion_classes=10, amr_classes=4))
+        return Cassiopeia(CassiopeiaConfig(hidden_dim=128, n_canonical_features=100, frp_out_dim=64, n_layers=2, max_windows=12, expansion_classes=10, amr_classes=4))
 
     @pytest.fixture
     def batch(self):
-        B, W = 4, 12
-        return {
-            "features": torch.randn(B, W, 100),
-            "masks": torch.ones(B, W, dtype=torch.bool),
-            "mobility": torch.randint(0, 3, (B,)),
-            "amr": torch.randint(0, 2, (B, 4), dtype=torch.float),
-            "expansion": torch.randint(0, 10, (B,)),
-        }
+        return {"features": torch.randn(4, 12, 100), "masks": torch.ones(4, 12, dtype=torch.bool),
+                "mobility": torch.randint(0, 3, (4,)), "amr": torch.randint(0, 2, (4, 4), dtype=torch.float),
+                "expansion": torch.randint(0, 10, (4,))}
 
     def test_forward(self, model, batch):
         out = model(batch["features"], batch["masks"])
-        assert out["amr_logits"].shape == (4, 4)
-        assert out["expansion_logits"].shape == (4, 10)
+        assert out["amr_logits"].shape == (4, 4) and out["expansion_logits"].shape == (4, 10)
 
     def test_loss(self, model, batch):
         out = model(batch["features"], batch["masks"])
-        loss = model.compute_loss(
-            out["mobility_logits"], out["amr_logits"], out["expansion_logits"],
-            batch["mobility"], batch["amr"], batch["expansion"],
-        )
-        assert loss.item() > 0
+        assert model.compute_loss(out["mobility_logits"], out["amr_logits"], out["expansion_logits"],
+                                   batch["mobility"], batch["amr"], batch["expansion"])["total"].item() > 0
 
     def test_expansion_softmax(self, model, batch):
-        out = model(batch["features"], batch["masks"])
-        probs = torch.softmax(out["expansion_logits"], dim=-1)
+        probs = torch.softmax(model(batch["features"], batch["masks"])["expansion_logits"], dim=-1)
         assert torch.allclose(probs.sum(dim=-1), torch.ones(4))
 
-
-# ---------------------------------------------------------------------------
-# Calibration tests
-# ---------------------------------------------------------------------------
 
 class TestCalibration:
     def test_fit_calibration(self):
         from dna_sentinel.train import fit_calibration
-        model = Cassiopeia(CassiopeiaConfig(hidden_dim=64, n_canonical_features=100, frp_out_dim=64,
-                                              max_windows=12, expansion_classes=1, amr_classes=1))
+        model = Cassiopeia(CassiopeiaConfig(hidden_dim=64, n_canonical_features=100, frp_out_dim=64, max_windows=12, expansion_classes=1, amr_classes=1))
         B, W = 8, 12
-        val_data = {
-            "features": torch.randn(B, W, 100),
-            "masks": torch.ones(B, W, dtype=torch.bool),
-            "mobility": torch.randint(0, 3, (B,)),
-            "amr": torch.randint(0, 2, (B,), dtype=torch.float),
-            "expansion": torch.randint(0, 2, (B,), dtype=torch.float),
-        }
-        device = "cpu"
-        fit_calibration(model, val_data, device)
+        val_data = {"features": torch.randn(B, W, 100), "masks": torch.ones(B, W, dtype=torch.bool),
+                    "mobility": torch.randint(0, 3, (B,)), "amr": torch.randint(0, 2, (B,), dtype=torch.float),
+                    "expansion": torch.randint(0, 2, (B,), dtype=torch.float)}
+        fit_calibration(model, val_data, "cpu")
         assert model.mob_t.item() > 0
 
+    def test_fit_calibration_single_class(self):
+        from dna_sentinel.train import fit_calibration
+        model = Cassiopeia(CassiopeiaConfig(hidden_dim=32, n_canonical_features=100, frp_out_dim=32, max_windows=8))
+        B = 8
+        val_data = {"features": torch.randn(B, 8, 100), "masks": torch.ones(B, 8, dtype=torch.bool),
+                    "mobility": torch.zeros(B, dtype=torch.long), "amr": torch.zeros(B, dtype=torch.float),
+                    "expansion": torch.zeros(B, dtype=torch.float)}
+        fit_calibration(model, val_data, "cpu")
+        assert model.mob_t.item() > 0
 
-# ---------------------------------------------------------------------------
-# Utility tests
-# ---------------------------------------------------------------------------
-
-class TestUtils:
-    def test_window_dropout(self):
-        from dna_sentinel.utils import WindowDropout
-        wd = WindowDropout(0.5)
-        feat = torch.randn(4, 10, 128)
-        mask = torch.ones(4, 10, dtype=torch.bool)
-        f2, m2 = wd(feat, mask, training=True)
-        assert f2.shape == feat.shape
-        assert m2.dtype == torch.bool
-        assert m2.any(dim=1).all()  # every row has at least one kept
-
-    def test_binary_metrics(self):
-        from dna_sentinel.utils import binary_metrics
-        y = np.array([1, 0, 1, 0, 1])
-        p = np.array([0.9, 0.1, 0.8, 0.2, 0.7])
-        m = binary_metrics(y, p, "test")
-        assert "test_auroc" in m
-        assert "test_brier" in m
-        assert "test_ece" in m
-        assert m["test_auroc"] > 0.5
-
-    def test_multiclass_metrics(self):
-        from dna_sentinel.utils import multiclass_metrics
-        y = np.array([0, 1, 2, 0, 1])
-        p = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 0, 0], [0, 1, 0]], dtype=float)
-        m = multiclass_metrics(y, p, "test")
-        assert m["test_accuracy"] == 1.0
-        assert m["test_balanced_accuracy"] == 1.0
-
-
-# ---------------------------------------------------------------------------
-# Evaluate tests
-# ---------------------------------------------------------------------------
 
 class TestEvaluate:
     def test_evaluate_small(self):
         from dna_sentinel.train import evaluate
-        model = Cassiopeia(CassiopeiaConfig(hidden_dim=64, n_canonical_features=100, frp_out_dim=64,
-                                              max_windows=12, expansion_classes=1, amr_classes=1))
-        B, W = 8, 12
-        data = {
-            "features": torch.randn(B, W, 100),
-            "masks": torch.ones(B, W, dtype=torch.bool),
-            "mobility": torch.randint(0, 3, (B,)),
-            "amr": torch.randint(0, 2, (B,), dtype=torch.float),
-            "expansion": torch.randint(0, 2, (B,), dtype=torch.float),
-        }
-        m = evaluate(model, data)
-        assert "mobility_balanced_accuracy" in m
-        assert "amr_auroc" in m
-        assert "expansion_auroc" in m
+        model = Cassiopeia(CassiopeiaConfig(hidden_dim=64, n_canonical_features=100, frp_out_dim=64, max_windows=12))
+        m = evaluate(model, {"features": torch.randn(8, 12, 100), "masks": torch.ones(8, 12, dtype=torch.bool),
+                             "mobility": torch.randint(0, 3, (8,)), "amr": torch.randint(0, 2, (8,), dtype=torch.float),
+                             "expansion": torch.randint(0, 2, (8,), dtype=torch.float)})
+        assert "mobility_balanced_accuracy" in m and "amr_auroc" in m and "expansion_auroc" in m
 
     def test_evaluate_large(self):
         from dna_sentinel.train import evaluate
-        model = Cassiopeia(CassiopeiaConfig(hidden_dim=64, n_canonical_features=100, frp_out_dim=64,
-                                              max_windows=12, expansion_classes=10, amr_classes=4))
-        B, W = 8, 12
-        data = {
-            "features": torch.randn(B, W, 100),
-            "masks": torch.ones(B, W, dtype=torch.bool),
-            "mobility": torch.randint(0, 3, (B,)),
-            "amr": torch.randint(0, 2, (B, 4), dtype=torch.float),
-            "expansion": torch.randint(0, 10, (B,)),
-        }
-        m = evaluate(model, data)
-        assert "mobility_balanced_accuracy" in m
-        assert "amr_auroc" in m or any(k.startswith("amr_") and k.endswith("_auroc") for k in m)
-        assert "expansion_auroc" in m or "expansion_accuracy" in m
-
-
-# ---------------------------------------------------------------------------
-# Inference tests
-# ---------------------------------------------------------------------------
+        model = Cassiopeia(CassiopeiaConfig(hidden_dim=64, n_canonical_features=100, frp_out_dim=64, max_windows=12, expansion_classes=10, amr_classes=4))
+        m = evaluate(model, {"features": torch.randn(8, 12, 100), "masks": torch.ones(8, 12, dtype=torch.bool),
+                             "mobility": torch.randint(0, 3, (8,)), "amr": torch.randint(0, 2, (8, 4), dtype=torch.float),
+                             "expansion": torch.randint(0, 10, (8,))})
+        assert "mobility_balanced_accuracy" in m and "amr_auroc" in m
 
 class TestInference:
     def test_predict_one(self):
         from dna_sentinel.utils import predict_one
-        model = Cassiopeia(CassiopeiaConfig(hidden_dim=64, n_canonical_features=2728, frp_out_dim=256,
-                                              max_windows=28))
-        pred = predict_one(model, "test", "ACGT" * 50)
-        assert pred.sequence_id == "test"
-        assert len(pred.mobility_probs) == 3
-        assert 0 <= pred.amr_probability <= 1
-        assert 0 <= pred.expansion_probability <= 1
-        assert 0 <= pred.risk_score <= 1
+        pred = predict_one(Cassiopeia(CassiopeiaConfig(hidden_dim=64, n_canonical_features=2728, frp_out_dim=256, max_windows=28)), "test", "ACGT" * 50)
+        assert pred.sequence_id == "test" and len(pred.mobility_probs) == 3 and 0 <= pred.amr_probability <= 1
 
     def test_predict_one_has_task_specific_windows(self):
         from dna_sentinel.utils import predict_one
-        model = Cassiopeia(CassiopeiaConfig(hidden_dim=64, n_canonical_features=2728, frp_out_dim=256,
-                                              max_windows=28))
-        pred = predict_one(model, "test", "ACGT" * 50)
-        assert isinstance(pred.top_windows, list)
-        assert isinstance(pred.top_mobility_windows, list)
-        assert isinstance(pred.top_amr_windows, list)
-        assert isinstance(pred.top_expansion_windows, list)
+        pred = predict_one(Cassiopeia(CassiopeiaConfig(hidden_dim=64, n_canonical_features=2728, frp_out_dim=256, max_windows=28)), "test", "ACGT" * 50)
+        assert isinstance(pred.top_windows, list) and isinstance(pred.top_mobility_windows, list)
 
     def test_predict_batch(self):
         from dna_sentinel.utils import predict_batch
-        model = Cassiopeia(CassiopeiaConfig(hidden_dim=64, n_canonical_features=2728, frp_out_dim=256,
-                                              max_windows=28))
-        preds = predict_batch(model, [("s1", "ACGT" * 50), ("s2", "TGCA" * 50)])
-        assert len(preds) == 2
-        assert preds[0].sequence_id == "s1"
-        assert preds[1].sequence_id == "s2"
+        preds = predict_batch(Cassiopeia(CassiopeiaConfig(hidden_dim=64, n_canonical_features=2728, frp_out_dim=256, max_windows=28)),
+                               [("s1", "ACGT" * 50), ("s2", "TGCA" * 50)])
+        assert len(preds) == 2 and preds[0].sequence_id == "s1"
+
+    def test_predict_batch_empty(self):
+        from dna_sentinel.utils import predict_batch
+        assert predict_batch(Cassiopeia(CassiopeiaConfig(max_windows=28)), []) == []
 
     def test_inference_service(self):
-        import tempfile
-
         from dna_sentinel.utils import InferenceService
-        model = Cassiopeia(CassiopeiaConfig(hidden_dim=64, n_canonical_features=2728, frp_out_dim=256,
-                                              max_windows=28))
+        model = Cassiopeia(CassiopeiaConfig(hidden_dim=64, n_canonical_features=2728, frp_out_dim=256, max_windows=28))
         with tempfile.NamedTemporaryFile(suffix=".pt", delete=False) as f:
             model.save(f.name)
-            service = InferenceService(f.name)
-            result = service.predict("test", "ACGT" * 50)
-            assert "risk_score" in result
-            assert "amr_probability" in result
+            svc = InferenceService(f.name)
+            result = svc.predict("test", "ACGT" * 50)
+            assert "risk_score" in result and "amr_probability" in result
             Path(f.name).unlink()

@@ -19,7 +19,11 @@ jobs:
           python -m pip install -e ".[dev,api]"
       - name: Ruff
         run: python -m ruff check src tests
+      - name: Mypy
+        run: python -m mypy src
       - name: Tests
-        run: python -m pytest -q
+        run: python -m pytest -q --cov=src --cov-report=term --cov-fail-under=80
+      - name: Safety
+        run: python -m pip install safety && safety check --output text || true
       - name: Docker build
         run: docker build -t dna-sentinel:ci .
