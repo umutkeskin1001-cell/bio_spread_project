@@ -13,7 +13,7 @@ from sklearn.metrics import roc_auc_score
 from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 
 from dna_sentinel.model import Cassiopeia, _focal_bce
-from dna_sentinel.utils import WindowDropout, binary_metrics, expected_calibration_error, logger, multiclass_metrics, set_seed
+from dna_sentinel.utils import WindowDropout, binary_metrics, logger, multiclass_metrics, set_seed
 
 
 def _inverse_label_frequency(labels: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
@@ -97,7 +97,7 @@ def _consistency_loss(out_ref: dict, out_aug: dict, temperature: float = 1.0) ->
 
 
 @torch.inference_mode()
-def evaluate(model, data, device="cpu", batch_size=32):
+def evaluate(model, data, device="cpu", batch_size=32, return_probs=False):
     model.eval()
     n = len(data["features"])
     mob_p, amr_p, exp_p = [], [], []
@@ -145,7 +145,7 @@ def evaluate(model, data, device="cpu", batch_size=32):
         m["expansion_accuracy"] = float(np.mean(exp_true == exp_np.argmax(axis=1)))
     else:
         m.update(binary_metrics(exp_true, exp_np, "expansion"))
-    return m
+    return (m, mob_np, amr_np, exp_np) if return_probs else m
 
 
 def _compute_batch_loss(model, out, mob_t, amr_t, exp_t, amr_pw, exp_pw, exp_pw_mc, gamma):

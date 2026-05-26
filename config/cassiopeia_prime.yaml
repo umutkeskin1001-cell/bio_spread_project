@@ -24,7 +24,7 @@ model:
   max_windows: 56
   expansion_classes: 1
   amr_classes: 1
-  label_smoothing: 0.10
+  label_smoothing: 0.08
   use_scale_embedding: false
   use_cppe: true
   use_window_conv: true
@@ -61,7 +61,7 @@ training:
   dropout: 0.12
   balanced_sampling: true
   score_mode: equal
-  artifact_dir: artifacts/cassiopeia_prime_v6
+  artifact_dir: artifacts/cassiopeia_prime_v7
   use_pcgrad: false
   use_swa: true
   swa_start_epoch: 60

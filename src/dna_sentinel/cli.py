@@ -218,24 +218,23 @@ def benchmark_cmd(checkpoint, data_dir, out):
         p = root / f"{split}_features.pt"
         if p.exists():
             data = _load_data(root, split, model.config.n_structural_features)
-            metrics = evaluate(model, data)
+            metrics, mob, amr, exp = evaluate(model, data, return_probs=True)
             metrics["task_score"] = task_score(metrics)
-            mob, amr, exp = _predict_probabilities(model, data)
             y_mob_true = data["mobility"].cpu().numpy()
             y_amr_true = data["amr"].cpu().numpy().ravel()
             y_exp_true = data["expansion"].cpu().numpy().ravel()
             ci_metrics = {}
             for k, (yt, yp) in {
-                "mobility_balanced_accuracy": (y_mob_true, mob.numpy()),
-                "amr_auroc": (y_amr_true, amr.numpy()),
-                "expansion_auroc": (y_exp_true, exp.numpy()),
+                "mobility_balanced_accuracy": (y_mob_true, mob),
+                "amr_auroc": (y_amr_true, amr),
+                "expansion_auroc": (y_exp_true, exp),
                 "task_score": (None, None),
             }.items():
                 try:
                     if k == "task_score":
                         lo, pt, hi = bootstrap_ci(
-                            y_mob_true, mob.numpy(),
-                            lambda t, p: (balanced_accuracy_score(t, p.argmax(-1)) + roc_auc_score(y_amr_true, amr.numpy()) + roc_auc_score(y_exp_true, exp.numpy())) / 3,
+                            y_mob_true, mob,
+                            lambda t, p: (balanced_accuracy_score(t, p.argmax(-1)) + roc_auc_score(y_amr_true, amr) + roc_auc_score(y_exp_true, exp)) / 3,
                             n_resamples=500)
                     elif k == "mobility_balanced_accuracy":
                         lo, pt, hi = bootstrap_ci(yt, yp, lambda t, p: balanced_accuracy_score(t, p.argmax(-1)), n_resamples=500)

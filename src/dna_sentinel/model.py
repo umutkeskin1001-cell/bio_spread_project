@@ -437,6 +437,7 @@ class Cassiopeia(nn.Module):
         mob_target, amr_target, exp_target,
         amr_pw=None, exp_pw=None, exp_pw_mc=None, gamma=0.0, **kw,
     ):
+        aux = 0.0
         if self.config.use_ordinal_mobility:
             lm = _ordinal_ce(mob_logits, mob_target, label_smoothing=self.config.label_smoothing)
         elif self.config.focal_loss_gamma > 0:
