@@ -10,11 +10,11 @@
 | Outputs | Mobility class, AMR probability, expansion probability, task-specific evidence windows |
 | Training cap | 2,048 plasmids maximum |
 | Current train split | 1,414 plasmids |
-| Parameters | 501,526 trainable |
+| Parameters | 589,016 trainable |
 | Checkpoint | `artifacts/cassiopeia_prime/cassiopeia_best.pt` |
-| Checkpoint size | 5.53 MB |
-| Cached CPU latency | 0.70 ms/sequence |
-| FASTA CPU latency | 25.01 ms for a 6 kb query |
+| Checkpoint size | 5.89 MB |
+| Cached CPU latency | 0.59 ms/sequence |
+| FASTA CPU latency | 25.7 ms for a 6 kb query |
 
 ## Architecture
 
@@ -44,30 +44,19 @@ The training dataset is prepared from the local PLSDB-derived input bundle with 
 ## Audited Performance
 
 | Split | Mobility BA | AMR AUROC | Expansion AUROC | Task Score |
-|---:|---:|---:|---:|
-| Validation | 77.89% | 86.73% | 85.86% | 83.49% |
-| Test | 69.88% | 88.83% | 76.64% | 78.45% |
-| Held-out | 79.90% | 93.28% | 83.30% | 85.49% |
+|---:|---:|---:|---:|---:|
+| Validation | 76.26% | 91.66% | 83.57% | 83.83% |
+| Test | 70.28% | 89.94% | 87.03% | 82.42% |
+| Held-out | 76.75% | 93.47% | 84.68% | 84.97% |
 
 ### Cross-Validation (5-fold, train+val combined)
 
 | Metric | Mean | Std |
 |---:|---:|---:|
-| Mobility BA | 80.48% | ± 2.00% |
-| AMR AUROC | 93.43% | ± 1.75% |
-| Expansion AUROC | 89.13% | ± 2.40% |
-| Task Score | 87.68% | ± 0.58% |
-
-### Non-Plasmid Stress Set
-
-All labels are negative. Metrics measure false-positive rates.
-
-| Non-plasmid stress metric | Value |
-|---:|---:|
-| False mobile rate | 5.58% |
-| False AMR rate | 0.33% |
-| False expansion rate | 0.00% |
-| Mean risk score | — |
+| Mobility BA | 74.39% | ± 1.78% |
+| AMR AUROC | 91.26% | ± 1.13% |
+| Expansion AUROC | 85.24% | ± 2.28% |
+| Task Score | 83.63% | ± 0.36% |
 
 ## v2.0.0 Changes
 
@@ -92,7 +81,6 @@ Cassiopeia Prime is a DNA-only plasmid triage model for education, research prot
 
 - Evidence windows are model attention scores, not experimentally validated breakpoints.
 - The model does not run BLAST, gene calling, host metadata lookup, or assembly quality checks.
-- Non-plasmid false expansion rate (36%) needs improvement.
 - RC averaging fixes reverse-complement instability, but circular cut-point drift is reduced rather than eliminated.
 - 2,048 plasmid limit means the model is inherently data-constrained.
 

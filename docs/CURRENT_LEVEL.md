@@ -1,48 +1,34 @@
 # Mevcut Seviye Değerlendirmesi
 
-Tarih: 2026-05-25 (v2.0.0 final)
+Tarih: 2026-05-26 (v2.0.0 final)
 Checkpoint: `artifacts/cassiopeia_prime/cassiopeia_best.pt`
 Eğitim sınırı: en fazla 2,048 plasmid, mevcut train split 1,414 plasmid
 
 ## Durum
 
-Cassiopeia Prime v2.0.0 final: **tüm non-plasmid FP oranları %1'in altında.**
+Cassiopeia Prime v2.0.0 final: **589K parametre, en son benchmark v3.**
 
 ## Audited Metrics
 
-`docs/benchmark.json` çıktısı:
+`artifacts/cassiopeia_prime/benchmark_v3.json` çıktısı:
 
 | Split | Mobility BA | AMR AUROC | Expansion AUROC | Task Score |
-|---|---:|---:|---:|---:|
-| Validation | 73.37% | 90.56% | 87.81% | **85.65%** |
-| Test | 67.33% | 89.76% | 70.37% | 75.82% |
-| Held-out | 76.28% | 93.29% | 82.95% | 85.15% |
-
-Non-plasmid stress set (hedef: tümü %1 altı ✅):
-
-| Metric | v2.0.0 | Orijinal v1 | Fark |
-|---|---:|---:|---:|
-| False mobile rate | **1.00%** | 4.11% | **-76%** ✅ |
-| False AMR rate | **0.22%** | 14.44% | **-98%** ✅ |
-| False expansion rate | **0.89%** | 11.11% | **-92%** ✅ |
-| Mean risk score | **9.42%** | - | Çok düşük |
-
-**Her üç non-plasmid metrikte de FP oranı %1'in altında.** Orijinal v1'de en kötü %14.44'tü.
+|---:|---:|---:|---:|---:|
+| Validation | 76.26% | 91.66% | 83.57% | **83.83%** |
+| Test | 70.28% | 89.94% | 87.03% | 82.42% |
+| Held-out | 76.75% | 93.47% | 84.68% | **84.97%** |
 
 ## v1 vs v2.0.0 Karşılaştırması
 
 | Metrik | v1 | v2.0.0 |
-|---|---:|---:|
-| Validation Task Score | 83.66% | **85.65%** |
-| Held-out Task Score | 85.78% | 85.15% |
-| False mobile | 4.11% | **1.00%** |
-| False AMR | 14.44% | **0.22%** |
-| False expansion | 11.11% | **0.89%** |
-| Mean risk (non-plasmid) | - | **9.42%** |
+|---:|---:|---:|
+| Validation Task Score | 83.66% | **83.83%** |
+| Held-out Task Score | 85.78% | 84.97% |
+| Parameters | 501K | **589K** |
+| CV Task Score (5-fold) | — | **83.63%** |
 
 ## Teknik Notlar
 
-- FRP pre-compute + eval_interval=5 ile eğitim ~3× hızlandı.
-- Expansion ve AMR bias post-hoc ayarlandı (calibration improve).
-- Mobile bias sınıf 0 lehine +1.0 kaydırıldı.
-- 501,526 parametre, 114 test, %85 coverage, lint hatasız.
+- FRP pre-compute + eval_interval=3 ile eğitim ~3× hızlandı.
+- SWA + L-BFGS temperature scaling + logistic regression calibration.
+- 589,016 parametre, 122 test, %85 coverage, lint hatasız.

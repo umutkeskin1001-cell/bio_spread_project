@@ -21,19 +21,19 @@ Input: 56 multi-scale windows x 2,728 canonical k-mer features
 
 | Property | Value |
 |---:|---:|
-| Trainable parameters | 580,694 |
-| Checkpoint size | 5.59 MB |
-| Cached CPU latency | 0.66 ms/sequence |
-| FASTA CPU latency, 6 kb query | 24.16 ms/sequence |
-| Held-out task score | 85.49% |
+| Trainable parameters | 589,016 |
+| Checkpoint size | 5.89 MB |
+| Cached CPU latency | 0.59 ms/sequence |
+| FASTA CPU latency, 6 kb query | 25.7 ms/sequence |
+| Held-out task score | 84.97% |
 
 Held-out audit for `artifacts/cassiopeia_prime/cassiopeia_best.pt`:
 
 | Task | Metric | Value |
-|---:|---:|---:|
-| Mobility | Balanced accuracy | 79.90% |
-| AMR | AUROC | 93.28% |
-| Expansion | AUROC | 83.30% |
+|:---|---:|---:|
+| Mobility | Balanced accuracy | 76.75% |
+| AMR | AUROC | 93.47% |
+| Expansion | AUROC | 84.68% |
 
 ## Quick Start
 
@@ -60,10 +60,10 @@ dna-sentinel predict \
 
 ## Static Demo
 
-The GitHub Pages site is pure static HTML/CSS/JS:
+The GitHub Pages site is pure static HTML/CSS/JS served from `web/`:
 
 ```bash
-python3 -m http.server 4173 --directory docs
+python3 -m http.server 4173 --directory web
 ```
 
 Then open `http://127.0.0.1:4173`.
@@ -85,7 +85,7 @@ src/dna_sentinel/model.py     # Cassiopeia model and checkpoint loading
 src/dna_sentinel/features.py  # canonical k-mer and structural features
 src/dna_sentinel/train.py     # training, evaluation, calibration
 src/dna_sentinel/cli.py       # prepare/train/evaluate/benchmark/predict/serve
-docs/                         # GitHub Pages static demo and reports
+docs/                         # reports, model card, documentation
 tests/                        # unit and integration tests
 ```
 

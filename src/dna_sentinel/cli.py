@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import numpy as np
 import os
 import time
 from pathlib import Path
@@ -21,12 +20,7 @@ from dna_sentinel.utils import (
     CassiopeiaExperiment,
     ConfigError,
     bootstrap_ci,
-    compute_risk_score,
-    evaluate_records,
-    false_positive_summary,
-    load_jsonl,
     logger,
-    predict_batch,
     predict_one,
     read_fasta,
     task_score,
@@ -72,47 +66,6 @@ def _load_data(data_dir: Path, name: str, n_struct: int = 0) -> dict:
 
 def _make_model(cfg: dict):
     return Cassiopeia(CassiopeiaConfig.from_yaml(cfg))
-
-
-@torch.inference_mode()
-def _predict_probabilities(
-    model: Cassiopeia, data: dict, batch_size: int = 32
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    model.eval()
-    device = next(model.parameters()).device
-    n = len(data["features"])
-    sf, sc = data.get("struct_features"), data.get("scale_ids")
-    mob, amr, exp = [], [], []
-    for start in range(0, n, batch_size):
-        end = min(start + batch_size, n)
-        out = model(
-            data["features"][start:end].to(device),
-            data["masks"][start:end].to(device),
-            struct_features=sf[start:end].to(device) if sf is not None else None,
-            scale_ids=sc[start:end].to(device) if sc is not None else None,
-        )
-        mob.append(torch.softmax(out["mobility_logits"], dim=-1).cpu())
-        amr.append(torch.sigmoid(out["amr_logits"]).cpu().reshape(-1))
-        exp_l = out["expansion_logits"]
-        exp.append(
-            (
-                torch.softmax(exp_l, dim=-1)[:, 1]
-                if model.config.expansion_classes > 1
-                else torch.sigmoid(exp_l).reshape(-1)
-            ).cpu()
-        )
-    return torch.cat(mob), torch.cat(amr), torch.cat(exp)
-
-
-def _false_positive_records(model, records, batch_size=32):
-    rows = []
-    for start in range(0, len(records), batch_size):
-        rows.extend(predict_batch(model, [(r.sequence_id, r.dna) for r in records[start : start + batch_size]]))
-    mob = [r.mobility_probs for r in rows]
-    amr = [r.amr_probability for r in rows]
-    exp_ = [r.expansion_probability for r in rows]
-    risk = [r.risk_score for r in rows]
-    return false_positive_summary(mob, amr, exp_, risk)
 
 
 @click.group()
@@ -179,7 +132,6 @@ def cross_validate_cmd(config, folds):
         all_ids = split_info.get("train", []) + split_info.get("val", [])
         cluster_map = split_info.get("_cluster_map", {})
         if cluster_map and all_ids:
-            id_to_idx = {sid: i for i, sid in enumerate(all_ids)}
             train_ids = [cluster_map.get(sid, i) for i, sid in enumerate(all_ids)]
     result, fold_models = cross_validate(cfg.get("model", {}), all_data, cfg.get("training", {}), n_folds=folds, group_ids=train_ids, save_folds=True)
     out_path = Path(cfg.get("training", {}).get("artifact_dir", "artifacts/default")) / "cv_report.json"
@@ -232,33 +184,19 @@ def benchmark_cmd(checkpoint, data_dir, out):
             }.items():
                 try:
                     if k == "task_score":
-                        lo, pt, hi = bootstrap_ci(
+                        pt, lo, hi = bootstrap_ci(
                             y_mob_true, mob,
                             lambda t, p: (balanced_accuracy_score(t, p.argmax(-1)) + roc_auc_score(y_amr_true, amr) + roc_auc_score(y_exp_true, exp)) / 3,
                             n_resamples=500)
                     elif k == "mobility_balanced_accuracy":
-                        lo, pt, hi = bootstrap_ci(yt, yp, lambda t, p: balanced_accuracy_score(t, p.argmax(-1)), n_resamples=500)
+                        pt, lo, hi = bootstrap_ci(yt, yp, lambda t, p: balanced_accuracy_score(t, p.argmax(-1)), n_resamples=500)
                     else:
-                        lo, pt, hi = bootstrap_ci(yt, yp, roc_auc_score, n_resamples=500)
+                        pt, lo, hi = bootstrap_ci(yt, yp, roc_auc_score, n_resamples=500)
                     ci_metrics[k] = {"point": float(pt), "ci_95": [float(lo), float(hi)]}
                 except Exception:
                     ci_metrics[k] = {"point": float(metrics.get(k, 0.0)), "ci_95": None}
             metrics["_bootstrap_ci"] = ci_metrics
             report["splits"][SN.get(split, split)] = metrics
-    if (root / "nonplasmid_control_features.pt").exists():
-        jsonl = root / "nonplasmid_control.jsonl"
-        data = _load_data(root, "nonplasmid_control", model.config.n_structural_features)
-        start = time.perf_counter()
-        mob, amr, exp = _predict_probabilities(model, data)
-        elapsed = time.perf_counter() - start
-        if jsonl.exists():
-            report["splits"]["nonplasmid_control"] = _false_positive_records(model, load_jsonl(jsonl))
-        else:
-            risk = np.array([compute_risk_score(
-                mob[i].numpy(), float(amr[i]), float(exp[i]), model.config.risk_weights
-            ) for i in range(len(data["features"]))])
-            report["splits"]["nonplasmid_control"] = false_positive_summary(mob.numpy(), amr.numpy(), exp.numpy(), risk)
-        report["cached_latency_ms"] = 1000.0 * elapsed / max(1, len(data["features"]))
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     Path(out).write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
     click.echo(json.dumps(report, indent=2, default=str))

@@ -325,7 +325,7 @@ def binary_metrics(y_true, y_prob, prefix: str) -> dict[str, float]:
 
 
 def multiclass_metrics(y_true, probs: np.ndarray, prefix: str) -> dict[str, float]:
-    from sklearn.metrics import accuracy_score, balanced_accuracy_score, classification_report, confusion_matrix
+    from sklearn.metrics import accuracy_score, balanced_accuracy_score, confusion_matrix
 
     y = np.asarray(y_true, dtype=int)
     pred = probs.argmax(axis=1)
@@ -373,12 +373,20 @@ def _top_evidence(scores: torch.Tensor, mask: torch.Tensor, top_k: int) -> list[
     return [{"window": float(i), "weight": float(scores[i])} for i in top.tolist() if bool(mask[i])]
 
 
+_PREDICT_EXTRACTORS: dict[tuple[int, ...], Any] = {}
+
+
 @torch.inference_mode()
 def _predict_pass(model: Cassiopeia, sequences: list[tuple[str, str]], device: str = "cpu") -> dict[str, torch.Tensor]:
     from dna_sentinel.features import CanonicalKmerConfig, CanonicalKmerExtractor, _resolve_max_windows
 
     model.to(device).eval()
-    ex = CanonicalKmerExtractor(CanonicalKmerConfig(max_windows=_resolve_max_windows(model.config.max_windows)))
+    mw = _resolve_max_windows(model.config.max_windows)
+    ns = model.config.n_structural_features
+    cache_key = (mw, ns)
+    if cache_key not in _PREDICT_EXTRACTORS:
+        _PREDICT_EXTRACTORS[cache_key] = CanonicalKmerExtractor(CanonicalKmerConfig(max_windows=mw, n_structural_features=ns))
+    ex = _PREDICT_EXTRACTORS[cache_key]
     feats, structs, masks, scales = [], [], [], []
     for _, dna in sequences:
         f, s, m, sc = ex.extract(canonical_dna(dna))

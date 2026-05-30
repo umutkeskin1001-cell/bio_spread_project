@@ -143,8 +143,14 @@ class CanonicalKmerExtractor:
             w = torch.cat([seq, seq[: ws - 1]])[idx]
             lengths = torch.full((N,), ws, dtype=torch.long, device=dev)
         struct = self._struct(w, lengths, ws)
-        motifs = self._motif_counts(w)
-        struct = torch.cat([struct, motifs], dim=-1)
+        if self._n_motifs > 0:
+            motifs = self._motif_counts(w)
+            struct = torch.cat([struct, motifs], dim=-1)
+        ns = self.config.n_structural_features
+        if struct.shape[1] > ns:
+            struct = struct[:, :ns]
+        elif struct.shape[1] < ns:
+            struct = F.pad(struct, (0, ns - struct.shape[1]))
         nf = self.n_features
         raw = torch.zeros(N, nf, device=dev)
         mult_d = {k: v.to(dev) for k, v in self._mult.items()}
@@ -173,7 +179,7 @@ class CanonicalKmerExtractor:
             mask = torch.ones(mw, dtype=torch.bool, device=dev)
         else:
             out = torch.zeros(mw, nf, device=dev)
-            out_s = torch.zeros(mw, self.config.n_structural_features, device=dev)
+            out_s = torch.zeros(mw, ns, device=dev)
             out[:N] = F.normalize(raw + 1e-6, p=2, dim=-1)
             out_s[:N] = struct
             mask = torch.zeros(mw, dtype=torch.bool, device=dev)

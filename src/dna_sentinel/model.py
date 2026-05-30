@@ -389,7 +389,6 @@ class Cassiopeia(nn.Module):
         self.register_buffer("exp_t", torch.tensor(1.0))
 
     def forward_from_encoder(self, x, mask, aux_features=None):
-        B = x.shape[0]
         x_mob = x + self.mob_adapter(x)
         x_amr = x + self.amr_adapter(x)
         x_exp = x + self.exp_adapter(x)
@@ -437,7 +436,6 @@ class Cassiopeia(nn.Module):
         mob_target, amr_target, exp_target,
         amr_pw=None, exp_pw=None, exp_pw_mc=None, gamma=0.0, **kw,
     ):
-        aux = 0.0
         if self.config.use_ordinal_mobility:
             lm = _ordinal_ce(mob_logits, mob_target, label_smoothing=self.config.label_smoothing)
         elif self.config.focal_loss_gamma > 0:
@@ -473,12 +471,6 @@ class Cassiopeia(nn.Module):
 
     def save(self, path):
         torch.save({"state_dict": self.state_dict(), "config": self.config.to_dict()}, path)
-
-    @torch.no_grad()
-    def decouple_expansion(self):
-        self.exp_w.data.fill_(1.0)
-        self.exp_b.data.fill_(0.0)
-        self.exp_t.data.fill_(1.0)
 
     @classmethod
     @torch.no_grad()

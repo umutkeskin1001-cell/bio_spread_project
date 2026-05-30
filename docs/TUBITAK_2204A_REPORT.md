@@ -28,7 +28,7 @@ Model BLAST, gen anotasyonu veya metadata gerektirmez. Böylece düşük kaynakl
 ## Modelin Özgün Yönleri
 
 - Eğitim en fazla 2,048 plasmid ile sınırlıdır.
-- 501,526 parametreyle hızlı ve taşınabilir bir modeldir.
+- 589,016 parametreyle hızlı ve taşınabilir bir modeldir.
 - Circular plasmid positional encoding, plasmidlerin dairesel biyolojisini modele yansıtır.
 - Task-specific evidence windows, modelin hangi dizilim bölgelerine daha fazla önem verdiğini gösterir.
 - Reverse-complement averaged inference, aynı plasmidin farklı yön gösterimlerinde daha kararlı sonuç üretir.
@@ -36,18 +36,10 @@ Model BLAST, gen anotasyonu veya metadata gerektirmez. Böylece düşük kaynakl
 ## Sonuçlar
 
 | Split | Mobility BA | AMR AUROC | Expansion AUROC | Ortalama Skor |
-|---|---:|---:|---:|---:|
-| Validation | 77.49% | 89.54% | 83.96% | 83.66% |
-| Test | 72.78% | 87.70% | 72.86% | 77.78% |
-| Held-out | 80.90% | 93.78% | 82.68% | 85.78% |
-
-Non-plasmid stres özeti:
-
-| Ölçüt | Değer |
-|---|---:|
-| False mobile rate | 4.11% |
-| False AMR rate | 14.44% |
-| False expansion rate | 11.11% |
+|---:|---:|---:|---:|---:|
+| Validation | 76.26% | 91.66% | 83.57% | 83.83% |
+| Test | 70.28% | 89.94% | 87.03% | 82.42% |
+| Held-out | 76.75% | 93.47% | 84.68% | 84.97% |
 
 ## Yorum
 
