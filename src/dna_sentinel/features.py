@@ -30,13 +30,11 @@ class CanonicalKmerConfig:
     ngram_max: int = 6
     rc_consensus: bool = False
     n_features: int | None = None
-    n_structural_features: int = 19
+    n_structural_features: int = 49
 
 
-from functools import lru_cache
 
-
-@lru_cache(maxsize=8)
+@functools.lru_cache(maxsize=8)
 def _resolve_max_windows(max_windows: int | tuple[int, ...] | list[int]) -> tuple[int, ...]:
     if not isinstance(max_windows, int):
         return tuple(max_windows)
@@ -89,6 +87,15 @@ class CanonicalKmerExtractor:
         self._cmap = {k: _canonical_map(k) for k in self._km_range}
         self._offsets = _vocab_offsets(self.config.ngram_min, self.config.ngram_max)
         self.n_features = sum(_canonical_vocab(k) for k in self._km_range)
+        self._motif_kmers = {
+            "CGATCG": 0, "CGCATG": 1, "CTGCAG": 2, "GATATC": 3, "GAATTC": 4,
+            "TACCGG": 5, "TTCCGG": 6, "CCGGTA": 7, "CCGGGA": 8, "CCGGAT": 9,
+            "TCCCTG": 10, "CAGGGA": 11, "CATGCC": 12, "CTCGAG": 13, "AGATCT": 14,
+            "GGGCCC": 15, "CCTCGG": 16, "CCGAGG": 17, "CCGCGG": 18, "CTCGAG": 19,
+            "CGAGGG": 20, "CCTCGA": 21, "GCCCTC": 22, "CGACCC": 23, "GAGGGC": 24,
+            "CGGGCC": 25, "GCGAGG": 26, "TCGACG": 27, "GGCGCC": 28, "CCCCCG": 29,
+        }
+        self._n_motifs = 30
 
     def _struct(self, w: torch.Tensor, lengths: torch.Tensor, ws: int) -> torch.Tensor:
         dev = w.device
@@ -104,6 +111,21 @@ class CanonicalKmerExtractor:
         di = (F.one_hot((wc[:, :-1] * 4 + wc[:, 1:]).long().clamp_max(15), 16).float() * pv.unsqueeze(-1)).sum(dim=1)
         di = di / di.sum(dim=-1, keepdim=True).clamp_min(1)
         return torch.cat([gc.unsqueeze(-1), gs.unsqueeze(-1), at_s.unsqueeze(-1), di], dim=-1)
+
+    def _motif_counts(self, w: torch.Tensor) -> torch.Tensor:
+        N, ws = w.shape
+        out = torch.zeros(N, self._n_motifs, device=w.device)
+        bs = self.char_map
+        for kmer_str, idx in self._motif_kmers.items():
+            k = len(kmer_str)
+            if ws < k:
+                continue
+            pattern = torch.tensor([bs[ord(ch)] for ch in kmer_str], device=w.device, dtype=torch.long)
+            for i in range(N):
+                windows = w[i].unfold(0, k, 1)
+                matches = (windows == pattern).all(dim=-1)
+                out[i, idx] = matches.sum().float() / max(1, ws - k + 1)
+        return out
 
     def _extract(self, seq: torch.Tensor, ws: int, st: int, mw: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         dev, n = seq.device, seq.shape[0]
@@ -121,6 +143,8 @@ class CanonicalKmerExtractor:
             w = torch.cat([seq, seq[: ws - 1]])[idx]
             lengths = torch.full((N,), ws, dtype=torch.long, device=dev)
         struct = self._struct(w, lengths, ws)
+        motifs = self._motif_counts(w)
+        struct = torch.cat([struct, motifs], dim=-1)
         nf = self.n_features
         raw = torch.zeros(N, nf, device=dev)
         mult_d = {k: v.to(dev) for k, v in self._mult.items()}
@@ -164,10 +188,7 @@ class CanonicalKmerExtractor:
         n_count = (seq < 0).sum().item()
         if n_count:
             _logger.warning("extract: %d non-ACGT base(s) found (mapping to A, recording N ratio)", n_count)
-            n_frac = n_count / max(1, seq.numel())
             seq = seq.clamp_min(0)
-        else:
-            n_frac = 0.0
         rc_seq = (3 - torch.flip(seq, dims=[0])).clamp(0, 3) if self.config.rc_consensus else None
         feat_l, struct_l, mask_l, sid_l = [], [], [], []
         for idx, (ws, st, mw) in enumerate(zip(self.config.window_sizes, self.config.strides, self.config.max_windows)):
@@ -268,7 +289,7 @@ def extract_features(data_dir: str | Path, config: dict | None = None) -> None:
         rc_consensus=kt.get("rc_consensus", False),
     )
     expansion_n = kt.get("expansion_classes", 1)
-    for name in ("train", "val", "test", "heldout_test", "nonplasmid_control"):
+    for name in ("train", "val", "test", "heldout_test"):
         jsonl_path = data_dir / f"{name}.jsonl"
         if not jsonl_path.exists():
             continue

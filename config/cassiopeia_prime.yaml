@@ -11,7 +11,7 @@ data:
 
 model:
   n_canonical_features: 2728
-  n_structural_features: 19
+  n_structural_features: 49
   hidden_dim: 128
   frp_out_dim: 320
   n_layers: 3
