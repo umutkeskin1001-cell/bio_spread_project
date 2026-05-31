@@ -44,17 +44,15 @@ class CassiopeiaConfig:
 
     @classmethod
     def from_yaml(cls, cfg: dict) -> CassiopeiaConfig:
+        valid = {f.name for f in fields(cls)}
         model_cfg = cfg.get("model", cfg)
-        kwargs = {k: v for k, v in model_cfg.items() if k in {f.name for f in fields(cls)}}
-        ignored = {k for k in ("aux_loss_weight", "use_gradient_checkpointing") if k in model_cfg}
-        if ignored:
-            logger.warning("Config keys ignored: %s", sorted(ignored))
+        kwargs = {k: v for k, v in model_cfg.items() if k in valid}
         if "risk_weights" in kwargs and isinstance(kwargs["risk_weights"], list):
             kwargs["risk_weights"] = tuple(kwargs["risk_weights"])
         return cls(**kwargs)
 
 
-_FRP_SCALE = math.sqrt(3.0)
+
 
 
 @torch.no_grad()
@@ -135,11 +133,11 @@ class RingSSMBlock(nn.Module):
         acc_b = d * x
         stride = 1
         while stride < W:
-            pad = min(stride, W)
-            src_a = torch.cat([torch.ones(B, pad, D, device=x.device, dtype=x.dtype),
-                               acc_a[:, :W - stride]], dim=1)
-            src_b = torch.cat([torch.zeros(B, pad, D, device=x.device, dtype=x.dtype),
-                               acc_b[:, :W - stride]], dim=1)
+            n = W - stride
+            src_a = torch.ones(B, stride, D, device=x.device, dtype=x.dtype)
+            src_a = torch.cat([src_a, acc_a[:, :n]], dim=1)
+            src_b = torch.cat([torch.zeros(B, stride, D, device=x.device, dtype=x.dtype),
+                               acc_b[:, :n]], dim=1)
             acc_a = src_a * acc_a
             acc_b.mul_(src_a).add_(src_b)
             stride *= 2
@@ -157,10 +155,10 @@ class RingSSMBlock(nn.Module):
         else:
             xf = xb = xn
         g1, g2 = self.gate_fwd(xn).sigmoid(), self.gate_bwd(xn).sigmoid()
-        xf_xb = torch.cat([xf, xb], dim=0)
-        ema_both = self._ema(xf_xb, a)
-        of = g1 * ema_both[:B] + (1 - g1) * x
-        ob = g2 * ema_both[B:].flip(1) + (1 - g2) * x
+        ema_fwd = self._ema(xf, a)
+        ema_bwd = self._ema(xb.flip(1), a).flip(1)
+        of = g1 * ema_fwd + (1 - g1) * x
+        ob = g2 * ema_bwd + (1 - g2) * x
         out = self.out_proj(torch.cat([of, ob], -1))
         return (x + self.out_drop(out + self.glu(out))) * mf
 
@@ -200,7 +198,7 @@ class CassiopeiaEncoder(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         h = cfg.hidden_dim
-        self.frp_scale = _FRP_SCALE
+        self.frp_scale = math.sqrt(3.0)
         frp = _make_frp(cfg.n_canonical_features, cfg.frp_out_dim).float()
         if cfg.learnable_frp:
             self.frp_raw = nn.Parameter(frp)
@@ -288,7 +286,7 @@ class Cassiopeia(nn.Module):
     def __init__(self, config=None):
         super().__init__()
         if isinstance(config, dict):
-            config = CassiopeiaConfig(**{k: v for k, v in config.items() if k in {f.name for f in fields(CassiopeiaConfig)}})
+            config = CassiopeiaConfig.from_yaml({"model": config})
         cfg = config or CassiopeiaConfig()
         self.config = cfg
         self.has_struct = cfg.n_structural_features > 0
@@ -398,10 +396,11 @@ _ORDINAL_COST = torch.tensor([[0, 1, 2], [1, 0, 1], [2, 1, 0]], dtype=torch.floa
 def _ordinal_ce(logits, target, ls=0.0):
     p = F.softmax(logits, -1)
     c = _ORDINAL_COST.to(device=logits.device, dtype=logits.dtype)
-    pc = (p * c[target]).sum(-1)
+    cost_row = c[target]
+    pc = (p * cost_row).sum(-1)
     if ls > 0:
         n = p.shape[-1]
-        pc = (1 - ls) * pc + (ls / (n - 1)) * c[target].sum(-1)
+        pc = (1 - ls) * pc + (ls / (n - 1)) * cost_row.sum(-1)
     return pc.mean()
 
 
@@ -431,11 +430,11 @@ def load_compressed(path, device="cpu"):
     state = torch.load(path, map_location=device, weights_only=True)
     sd = state["state_dict"]
     if state.get("_compression") == "int8":
-        for k in [k for k in list(sd) if k.endswith("._scale")]:
+        scales = {k: sd.pop(k) for k in list(sd) if k.endswith("._scale")}
+        for k, s in scales.items():
             base = k[:-7]
             if base in sd:
-                s = sd.pop(k).float()
-                sd[base] = s * sd.pop(base).float()
+                sd[base] = s.float() * sd.pop(base).float()
     cfg = CassiopeiaConfig(**{k: v for k, v in state["config"].items() if k in {f.name for f in fields(CassiopeiaConfig)}})
     m = Cassiopeia(cfg)
     m.load_state_dict(sd, strict=False)

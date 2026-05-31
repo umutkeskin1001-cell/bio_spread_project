@@ -177,13 +177,14 @@ class WindowDropout:
         self.drop_rate = drop_rate
 
     def __call__(self, feat: torch.Tensor, mask: torch.Tensor, training: bool = True):
-        if not training:
+        if not training or self.drop_rate <= 0:
             return feat, mask
         keep = torch.rand(mask.shape[0], mask.shape[1], device=mask.device) >= self.drop_rate
-        all_dropped = ~keep.any(dim=1, keepdim=True)
-        if all_dropped.any():
-            first_true = keep.long().argmax(dim=1, keepdim=True)
-            keep = keep | (all_dropped & (torch.arange(keep.shape[1], device=keep.device).unsqueeze(0) == first_true))
+        keep[mask == False] = True  # noqa: E712 — never drop padded positions
+        has_valid = keep.any(dim=1)
+        if not has_valid.all():
+            fallback = mask.long().argmax(dim=1)
+            keep[~has_valid, fallback[~has_valid]] = True
         return feat * keep.unsqueeze(-1), mask & keep
 
 
@@ -252,12 +253,12 @@ def multiclass_metrics(y_true, probs: np.ndarray, prefix: str) -> dict[str, floa
 
     y = np.asarray(y_true, dtype=int)
     pred = probs.argmax(axis=1)
+    n_cls = probs.shape[1]
+    cm = confusion_matrix(y, pred, labels=list(range(n_cls)))
     out = {
         f"{prefix}_accuracy": float(accuracy_score(y, pred)),
         f"{prefix}_balanced_accuracy": float(balanced_accuracy_score(y, pred)),
     }
-    n_cls = probs.shape[1]
-    cm = confusion_matrix(y, pred, labels=list(range(n_cls)))
     for c in range(n_cls):
         tp = cm[c, c]
         fp = cm[:, c].sum() - tp
@@ -269,8 +270,7 @@ def multiclass_metrics(y_true, probs: np.ndarray, prefix: str) -> dict[str, floa
         out[f"{prefix}_class{c}_f1"] = float(2 * p * r / max(1e-8, p + r))
     out[f"{prefix}_confusion_matrix"] = cm.tolist()
     conf = probs.max(axis=1)
-    acc_mask = (y == pred).astype(float)
-    out[f"{prefix}_ece"] = float(expected_calibration_error(acc_mask, conf, bins=10))
+    out[f"{prefix}_ece"] = float(expected_calibration_error((y == pred).astype(float), conf, bins=10))
     out[f"{prefix}_brier"] = float(((probs - np.eye(n_cls)[y]) ** 2).sum(axis=1).mean())
     return out
 
@@ -430,11 +430,15 @@ def evaluate_records(model: Cassiopeia, records: list[LabeledSequence], device: 
 
 
 def false_positive_summary(mob_probs: np.ndarray, amr_probs: np.ndarray,
-                           exp_probs: np.ndarray, risk_scores: np.ndarray) -> dict[str, float]:
+                           exp_probs: np.ndarray, risk_scores: np.ndarray,
+                           mob_true: np.ndarray | None = None) -> dict[str, float]:
     if mob_probs.size == 0:
         return {"false_mobile_rate": 0.0, "risk_q50": 0.0}
     mobile_pred = mob_probs.argmax(axis=1) if mob_probs.ndim > 1 else (mob_probs > 0.5).astype(int)
-    true_immobile = np.zeros(len(mob_probs), dtype=int) == 0
+    if mob_true is not None:
+        true_immobile = mob_true == 0
+    else:
+        true_immobile = np.ones(len(mob_probs), dtype=bool)
     false_mobile = (mobile_pred == 1) & true_immobile
     return {
         "false_mobile_rate": float(false_mobile.mean()) if len(false_mobile) else 0.0,
@@ -477,12 +481,12 @@ class InferenceService:
         return asdict(predict_one(self.model, sequence_id, dna, device=self.device))
 
     def predict_batch(self, sequences: list[Any]) -> list[dict]:
-        parsed = [
-            (s["sequence_id"], s["dna"])
-            if isinstance(s, dict)
-            else s
-            if isinstance(s, tuple)
-            else (s.sequence_id, s.dna)
-            for s in sequences
-        ]
+        parsed = []
+        for s in sequences:
+            if isinstance(s, dict):
+                parsed.append((s["sequence_id"], s["dna"]))
+            elif isinstance(s, tuple):
+                parsed.append(s)
+            else:
+                parsed.append((s.sequence_id, s.dna))
         return [asdict(p) for p in predict_batch(self.model, parsed, device=self.device)]

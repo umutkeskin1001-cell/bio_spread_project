@@ -27,13 +27,14 @@ class SequenceRecord:
 
 
 def _sampled_kmers(seq: str, k: int = _KMER_K, n: int = _KMER_N) -> set[str]:
-    if len(seq) < k:
+    slen = len(seq)
+    if slen < k:
         return {seq}
-    total = len(seq) - k + 1
+    total = slen - k + 1
     if total <= n:
-        return {seq[i : i + k] for i in range(total)}
+        return {seq[i:i + k] for i in range(total)}
     step = total / n
-    return {seq[int(i * step) : int(i * step) + k] for i in range(n)}
+    return {seq[int(i * step):int(i * step) + k] for i in range(n)}
 
 
 def _jaccard(a: set[str], b: set[str]) -> float:
@@ -64,7 +65,8 @@ class _DSU:
 
 
 def _report_similarity(
-    records: list[SequenceRecord], split: dict[str, list[str]], sketches: list[set[str]] | None = None
+    records: list[SequenceRecord], split: dict[str, list[str]], sketches: list[set[str]] | None = None,
+    threshold: float = _JACCARD_THRESHOLD,
 ) -> dict:
     rid_to_idx = {r.sequence_id: i for i, r in enumerate(records)}
     if sketches is None:
@@ -85,7 +87,7 @@ def _report_similarity(
                 sim = _jaccard(sketches[i], sketches[j])
                 if sim > max_sim:
                     max_sim = sim
-                if sim >= 0.5:
+                if sim >= threshold:
                     pairs.append({"test": sid, "train": train_sid, "jaccard": round(sim, 4)})
     pairs = sorted(pairs, key=lambda x: -x["jaccard"])[:10]
     return {"max_train_test_jaccard": round(max_sim, 4), "top_similar_pairs": pairs}

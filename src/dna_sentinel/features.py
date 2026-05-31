@@ -138,33 +138,18 @@ class CanonicalKmerExtractor:
         batch_idx = torch.arange(N, device=dev).unsqueeze(1).expand_as(run_ids).reshape(-1)
         global_idx = batch_idx * max_id_global + flat_run
         rc_cnt = torch.zeros(N * max_id_global, device=dev)
-        ones_per_run = torch.ones_like(flat_run, dtype=rc_cnt.dtype)
-        rc_cnt.scatter_add_(0, global_idx, ones_per_run)
+        rc_cnt.scatter_add_(0, global_idx, torch.ones_like(flat_run, dtype=rc_cnt.dtype))
         rc_cnt = rc_cnt.view(N, max_id_global)
         valid_mask = rc_cnt > 0
-        run_lengths = rc_cnt
-        masked = run_lengths.masked_fill(~valid_mask, -1)
-        max_run = torch.where(
-            valid_mask.any(dim=1), masked.max(dim=1).values, torch.zeros(N, device=dev))
-        sum_run = torch.where(valid_mask, run_lengths, 0.0).sum(dim=1)
-        mean_run = torch.where(
-            valid_mask.any(dim=1),
-            sum_run / valid_mask.sum(dim=1).clamp_min(1),
-            torch.zeros(N, device=dev))
+        masked = rc_cnt.masked_fill(~valid_mask, -1)
+        max_run = torch.where(valid_mask.any(dim=1), masked.max(dim=1).values, torch.zeros(N, device=dev))
+        sum_run = torch.where(valid_mask, rc_cnt, 0.0).sum(dim=1)
+        mean_run = torch.where(valid_mask.any(dim=1), sum_run / valid_mask.sum(dim=1).clamp_min(1), torch.zeros(N, device=dev))
 
-        base_counts = torch.stack([
-            (a * vf).sum(dim=1) / lf,
-            (c * vf).sum(dim=1) / lf,
-            (g * vf).sum(dim=1) / lf,
-            (t * vf).sum(dim=1) / lf,
-        ], dim=-1)
+        base_counts = torch.stack([(ch * vf).sum(dim=1) / lf for ch in (a, c, g, t)], dim=-1)
         freq = base_counts.clamp_min(1e-8)
         entropy = -(freq * freq.log()).sum(dim=-1)
-
-        mono_p = torch.cat([a.unsqueeze(-1), c.unsqueeze(-1), g.unsqueeze(-1), t.unsqueeze(-1)], dim=-1) * vf.unsqueeze(-1)
-        mono_freq = mono_p.sum(dim=1) / lf.unsqueeze(-1).clamp_min(1)
-        low_complexity = mono_freq.max(dim=-1).values - 0.25
-
+        low_complexity = freq.max(dim=-1).values - 0.25
         len_bucket = (lengths.float() / 1000.0).clamp(0, 5) / 5.0
 
         return torch.cat([

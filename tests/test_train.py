@@ -1,6 +1,7 @@
+from copy import deepcopy
+
 import torch
 import torch.nn.functional as F
-from copy import deepcopy
 
 from dna_sentinel.model import Cassiopeia, CassiopeiaConfig, _focal_bce
 from dna_sentinel.train import (
@@ -129,8 +130,9 @@ def test_cross_validate_group_aware():
 
 
 def test_multiclass_metrics_per_class():
-    from dna_sentinel.utils import multiclass_metrics
     import numpy as np
+
+    from dna_sentinel.utils import multiclass_metrics
     y = np.array([0, 0, 1, 1, 2, 2])
     p = np.eye(3)[y] * 0.9 + np.ones((6, 3)) * 0.033
     m = multiclass_metrics(y, p, "mob")

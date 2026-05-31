@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import random
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -162,8 +163,6 @@ def _compute_batch_loss(model, out, mob_t, amr_t, exp_t, amr_pw, exp_pw, exp_pw_
     return model.compute_loss(
         out["mobility_logits"], out["amr_logits"], out["expansion_logits"],
         mob_t.long(), amr_t, exp_t, amr_pw, exp_pw, exp_pw_mc, gamma,
-        aux_mob_logits=out.get("aux_mob_logits"),
-        aux_amr_logits=out.get("aux_amr_logits"),
         exp_proxy_logits=out.get("exp_proxy_logits"),
     )
 
@@ -325,63 +324,50 @@ def _run_model(data, model, device, bs=128):
     mob_logits, amr_logits, exp_logits = [], [], []
     with torch.no_grad():
         for s in range(0, n, bs):
-            i = min(s + bs, n)
-            o = model(data["features"][s:i].to(dev, non_blocking=non_blocking),
-                      data["masks"][s:i].to(dev, non_blocking=non_blocking),
-                      struct_features=sf[s:i].to(dev, non_blocking=non_blocking) if sf is not None else None,
-                      scale_ids=sc[s:i].to(dev, non_blocking=non_blocking) if sc is not None else None)
+            e = min(s + bs, n)
+            o = model(data["features"][s:e].to(dev, non_blocking=non_blocking),
+                      data["masks"][s:e].to(dev, non_blocking=non_blocking),
+                      struct_features=sf[s:e].to(dev, non_blocking=non_blocking) if sf is not None else None,
+                      scale_ids=sc[s:e].to(dev, non_blocking=non_blocking) if sc is not None else None)
             mob_logits.append(o["mobility_logits"].cpu())
             amr_logits.append(o["amr_logits"].cpu())
             exp_logits.append(o["expansion_logits"].cpu())
-    return (torch.cat(mob_logits).to(dev), torch.cat(amr_logits).to(dev), torch.cat(exp_logits).to(dev))
+    return torch.cat(mob_logits).to(dev), torch.cat(amr_logits).to(dev), torch.cat(exp_logits).to(dev)
 
+
+def _fit_temperature(logits, targets, loss_fn, device):
+    if len(torch.unique(targets)) < 2:
+        return 1.0
+    t = torch.tensor(1.0, requires_grad=True, device=device)
+    opt = torch.optim.LBFGS([t], lr=0.01, max_iter=50)
+    def closure():
+        opt.zero_grad()
+        return loss_fn(logits / t, targets)
+    opt.step(closure)
+    return float(t.clamp(min=0.1).item())
 
 
 def fit_calibration(model, val_data, device, run_model_fn=None):
     model.eval()
-    run_model_fn = run_model_fn or _run_model
-    mob_l, amr_l, exp_l = run_model_fn(val_data, model, device)
-    mt = val_data["mobility"].to(device)
+    dev = device if isinstance(device, torch.device) else torch.device(device)
+    mob_l, amr_l, exp_l = _run_model(val_data, model, dev) if run_model_fn is None else run_model_fn(val_data, model, dev)
 
-    # Temperature scaling for mobility
-    if len(torch.unique(mt)) >= 2:
-        t = torch.tensor(1.0, requires_grad=True, device=device)
-        opt = torch.optim.LBFGS([t], lr=0.01, max_iter=50)
-        def _closure():
-            opt.zero_grad()
-            return F.cross_entropy(mob_l / t, mt.long())
-        opt.step(_closure)
-        model.mob_t.data.copy_(t.clamp(min=0.1))
+    model.mob_t.data.fill_(_fit_temperature(mob_l, val_data["mobility"].to(dev).long(), F.cross_entropy, dev))
 
-    # Temperature scaling for AMR
-    at = val_data["amr"].to(device)
-    if at.dim() == 1 and len(torch.unique(at)) >= 2:
-        t_a = torch.tensor(1.0, requires_grad=True, device=device)
-        opt_a = torch.optim.LBFGS([t_a], lr=0.01, max_iter=50)
-        def _closure_a():
-            opt_a.zero_grad()
-            return F.binary_cross_entropy_with_logits(amr_l / t_a, at)
-        opt_a.step(_closure_a)
-        model.amr_t.data.copy_(t_a.clamp(min=0.1))
+    at = val_data["amr"].to(dev)
+    if at.dim() == 1:
+        model.amr_t.data.fill_(_fit_temperature(amr_l, at, F.binary_cross_entropy_with_logits, dev))
 
-    # Temperature scaling for expansion
     if model.config.expansion_classes == 1:
-        et = val_data["expansion"].to(device)
-        t_e = torch.tensor(1.0, requires_grad=True, device=device)
-        opt_e = torch.optim.LBFGS([t_e], lr=0.01, max_iter=50)
-        def _closure_e():
-            opt_e.zero_grad()
-            return F.binary_cross_entropy_with_logits(exp_l / t_e, et)
-        opt_e.step(_closure_e)
-        model.exp_t.data.copy_(t_e.clamp(min=0.1))
+        et = val_data["expansion"].to(dev)
+        model.exp_t.data.fill_(_fit_temperature(exp_l, et, F.binary_cross_entropy_with_logits, dev))
 
-    # Return calibration data for analysis
-    cal_mob = torch.softmax(mob_l, dim=-1).cpu().numpy()
-    cal_amr = torch.sigmoid(amr_l).cpu().numpy()
-    cal_exp = (torch.softmax(exp_l, dim=-1) if model.config.expansion_classes > 1
-               else torch.sigmoid(exp_l)).cpu().numpy()
+    mob_probs = torch.softmax(mob_l, dim=-1).cpu().numpy()
+    amr_probs = torch.sigmoid(amr_l).cpu().numpy()
+    exp_probs = (torch.softmax(exp_l, dim=-1) if model.config.expansion_classes > 1
+                 else torch.sigmoid(exp_l)).cpu().numpy()
     return {
-        "cal_mob_probs": cal_mob, "cal_amr_probs": cal_amr, "cal_exp_probs": cal_exp,
+        "cal_mob_probs": mob_probs, "cal_amr_probs": amr_probs, "cal_exp_probs": exp_probs,
         "cal_mob_true": val_data["mobility"].numpy(),
         "cal_amr_true": val_data["amr"].numpy(),
         "cal_exp_true": val_data["expansion"].numpy(),
@@ -437,8 +423,6 @@ def _do_train(model, train_data, val_data, config, experiment=None):
     if (hasattr(model.encoder, "frp") and isinstance(model.encoder.frp, torch.Tensor)
             and not getattr(model.encoder, "lora_rank", 0)):
         frp_pre = (dt["features"] @ model.encoder.frp.to(dt["features"].device)).contiguous()
-        if not has_cons:
-            del dt["features"]
     use_compile = config.get("use_compile", False) and torch.cuda.is_available()
     if use_compile and hasattr(torch, "compile"):
         try:
@@ -509,7 +493,8 @@ def _do_train(model, train_data, val_data, config, experiment=None):
     if use_swa and swa_model is not None:
         from torch.optim.swa_utils import update_bn
         update_bn(dt, swa_model, device=device)
-        torch.save({"state_dict": swa_model.state_dict(), "config": model.config.to_dict()},
+        swa_sd = {k.replace("module.", ""): v for k, v in swa_model.state_dict().items()}
+        torch.save({"state_dict": swa_sd, "config": model.config.to_dict()},
                     artifact_dir / "cassiopeia_swa.pt")
         swa_m = Cassiopeia.load(artifact_dir / "cassiopeia_swa.pt", device=device)
         swa_metrics = evaluate(swa_m, dv, device)
@@ -519,7 +504,6 @@ def _do_train(model, train_data, val_data, config, experiment=None):
                      f"Exp {swa_metrics.get('expansion_auroc', 0.0) * 100:.2f}% | "
                      f"Score {swa_score:.4f}")
         if swa_score > best_score:
-            import shutil
             shutil.copy2(str(artifact_dir / "cassiopeia_swa.pt"),
                          str(artifact_dir / "cassiopeia_best.pt"))
     model = Cassiopeia.load(artifact_dir / "cassiopeia_best.pt", device=device)
@@ -542,7 +526,7 @@ def _run_fold(train_data, val_data, model_cfg, train_cfg, fold):
     set_seed(cfg.get("seed", 42) + fold)
     model = Cassiopeia(model_cfg)
     ckpt, _ = _do_train(model, train_data, val_data, cfg)
-    model = Cassiopeia.load(ckpt)
+    model = Cassiopeia.load(ckpt, device=next(model.parameters()).device)
     return evaluate(model, val_data) | {"fold": fold}
 
 

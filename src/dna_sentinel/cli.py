@@ -189,41 +189,36 @@ def benchmark_cmd(checkpoint, data_dir, out):
 
     for split in ("val", "test", "heldout_test"):
         p = root / f"{split}_features.pt"
-        if p.exists():
-            data = _load_data(root, split, model.config.n_structural_features)
-            metrics, mob, amr, exp = evaluate(model, data, return_probs=True)
-            metrics["task_score"] = task_score(metrics)
-            y_mob_true = data["mobility"].cpu().numpy()
-            y_amr_true = data["amr"].cpu().numpy().ravel()
-            y_exp_true = data["expansion"].cpu().numpy().ravel()
-            ci_metrics = {}
-            for k, (yt, yp) in {
-                "mobility_balanced_accuracy": (y_mob_true, mob),
-                "amr_auroc": (y_amr_true, amr),
-                "expansion_auroc": (y_exp_true, exp),
-                "task_score": (None, None),
-            }.items():
-                try:
-                    if k == "task_score":
-                        def _task_fn(t, p):
-                            ba = balanced_accuracy_score(t, p.argmax(-1))
-                            amr_roc = roc_auc_score(y_amr_true, amr)
-                            exp_roc = roc_auc_score(y_exp_true, exp)
-                            return (ba + amr_roc + exp_roc) / 3
-                        pt, lo, hi = bootstrap_ci(y_mob_true, mob, _task_fn, n_resamples=500)
-                    elif k == "mobility_balanced_accuracy":
-                        pt, lo, hi = bootstrap_ci(
-                            yt, yp,
-                            lambda t, p: balanced_accuracy_score(t, p.argmax(-1)),
-                            n_resamples=500,
-                        )
-                    else:
-                        pt, lo, hi = bootstrap_ci(yt, yp, roc_auc_score, n_resamples=500)
-                    ci_metrics[k] = {"point": float(pt), "ci_95": [float(lo), float(hi)]}
-                except Exception:
-                    ci_metrics[k] = {"point": float(metrics.get(k, 0.0)), "ci_95": None}
-            metrics["_bootstrap_ci"] = ci_metrics
-            report["splits"][SN.get(split, split)] = metrics
+        if not p.exists():
+            continue
+        data = _load_data(root, split, model.config.n_structural_features)
+        metrics, mob, amr, exp = evaluate(model, data, return_probs=True)
+        metrics["task_score"] = task_score(metrics)
+        y_mob = data["mobility"].cpu().numpy()
+        y_amr = data["amr"].cpu().numpy().ravel()
+        y_exp = data["expansion"].cpu().numpy().ravel()
+
+        def _mob_fn(t, p):
+            return balanced_accuracy_score(t, p.argmax(-1))
+
+        def _task_fn(t, p):
+            return (balanced_accuracy_score(t, p.argmax(-1)) + roc_auc_score(y_amr, amr) + roc_auc_score(y_exp, exp)) / 3
+
+        ci_specs = {
+            "mobility_balanced_accuracy": (y_mob, mob, _mob_fn),
+            "amr_auroc": (y_amr, amr, roc_auc_score),
+            "expansion_auroc": (y_exp, exp, roc_auc_score),
+            "task_score": (y_mob, mob, _task_fn),
+        }
+        ci_metrics = {}
+        for k, (yt, yp, fn) in ci_specs.items():
+            try:
+                pt, lo, hi = bootstrap_ci(yt, yp, fn, n_resamples=500)
+                ci_metrics[k] = {"point": float(pt), "ci_95": [float(lo), float(hi)]}
+            except Exception:
+                ci_metrics[k] = {"point": float(metrics.get(k, 0.0)), "ci_95": None}
+        metrics["_bootstrap_ci"] = ci_metrics
+        report["splits"][SN.get(split, split)] = metrics
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     Path(out).write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")
     click.echo(json.dumps(report, indent=2, default=str))
