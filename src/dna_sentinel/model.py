@@ -120,7 +120,7 @@ class RingSSMBlock(nn.Module):
         self.gate_fwd = nn.Linear(dim, dim)
         self.gate_bwd = nn.Linear(dim, dim)
         self.alpha = nn.Parameter(torch.zeros(dim))
-        self.glu = nn.Sequential(nn.Linear(dim, dim * 4), nn.GELU(), nn.Linear(dim * 4, dim))
+        self.glu = nn.Sequential(nn.Linear(dim, dim * 2), nn.GELU(), nn.Linear(dim * 2, dim))
         self.out_proj = nn.Linear(dim * 2, dim)
         self.out_drop = nn.Dropout(dropout)
 
@@ -307,19 +307,21 @@ class Cassiopeia(nn.Module):
         self.log_vars = nn.Parameter(torch.zeros(3))
         self.register_buffer("mob_t", torch.tensor(1.0))
         self.register_buffer("amr_t", torch.tensor(1.0))
+        self.register_buffer("amr_b", torch.tensor(0.0))
         self.register_buffer("exp_t", torch.tensor(1.0))
+        self.register_buffer("exp_b", torch.tensor(0.0))
 
     def forward_from_encoder(self, x, mask):
         xm, xa, xe = x + self.mob_ad(x), x + self.amr_ad(x), x + self.exp_ad(x)
         (mc, ac, ec), ev = self.evidence(xm, xa, xe, mask)
         mob = self.mob_head(mc) / self.mob_t.clamp(0.1)
-        amr = self.amr_head(ac) / self.amr_t.clamp(0.1)
+        amr = self.amr_head(ac) * self.amr_t + self.amr_b
         if self.config.amr_classes == 1:
             amr = amr.squeeze(-1)
         gm, ga = self.exp_gate_m(ec).sigmoid(), self.exp_gate_a(ec).sigmoid()
         exp = self.exp_head(torch.cat([ec, gm * mc.detach(), ga * ac.detach()], -1))
         if self.config.expansion_classes == 1:
-            exp = exp.squeeze(-1) / self.exp_t.clamp(0.1)
+            exp = (exp.squeeze(-1) * self.exp_t + self.exp_b)
         r = {"mobility_logits": mob, "amr_logits": amr, "expansion_logits": exp, **ev}
         if self.training and self.config.consistency_alpha > 0:
             r["exp_proxy_logits"] = self.exp_proxy(torch.cat([mc.detach(), ac.detach()], -1))

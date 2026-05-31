@@ -337,12 +337,25 @@ def _run_model(data, model, device, bs=128):
 
 def _fit_temperature(logits, targets, loss_fn, device):
     if len(torch.unique(targets)) < 2:
-        return 1.0
+        return 1.0, 0.0
     t = torch.tensor(1.0, requires_grad=True, device=device)
-    opt = torch.optim.LBFGS([t], lr=0.01, max_iter=50)
+    b = torch.tensor(0.0, requires_grad=True, device=device)
+    opt = torch.optim.LBFGS([t, b], lr=0.01, max_iter=100)
     def closure():
         opt.zero_grad()
-        return loss_fn(logits / t, targets)
+        return loss_fn(logits * t + b, targets)
+    opt.step(closure)
+    return float(t.clamp(min=0.1).item()), float(b.item())
+
+
+def _fit_temperature_class(logits, targets, device):
+    if len(torch.unique(targets)) < 2:
+        return 1.0
+    t = torch.tensor(1.0, requires_grad=True, device=device)
+    opt = torch.optim.LBFGS([t], lr=0.01, max_iter=100)
+    def closure():
+        opt.zero_grad()
+        return F.cross_entropy(logits / t, targets.long())
     opt.step(closure)
     return float(t.clamp(min=0.1).item())
 
@@ -352,15 +365,19 @@ def fit_calibration(model, val_data, device, run_model_fn=None):
     dev = device if isinstance(device, torch.device) else torch.device(device)
     mob_l, amr_l, exp_l = _run_model(val_data, model, dev) if run_model_fn is None else run_model_fn(val_data, model, dev)
 
-    model.mob_t.data.fill_(_fit_temperature(mob_l, val_data["mobility"].to(dev).long(), F.cross_entropy, dev))
+    model.mob_t.data.fill_(_fit_temperature_class(mob_l, val_data["mobility"].to(dev), dev))
 
     at = val_data["amr"].to(dev)
     if at.dim() == 1:
-        model.amr_t.data.fill_(_fit_temperature(amr_l, at, F.binary_cross_entropy_with_logits, dev))
+        t_a, b_a = _fit_temperature(amr_l, at, F.binary_cross_entropy_with_logits, dev)
+        model.amr_t.data.fill_(t_a)
+        model.amr_b.data.fill_(b_a)
 
     if model.config.expansion_classes == 1:
         et = val_data["expansion"].to(dev)
-        model.exp_t.data.fill_(_fit_temperature(exp_l, et, F.binary_cross_entropy_with_logits, dev))
+        t_e, b_e = _fit_temperature(exp_l, et, F.binary_cross_entropy_with_logits, dev)
+        model.exp_t.data.fill_(t_e)
+        model.exp_b.data.fill_(b_e)
 
     mob_probs = torch.softmax(mob_l, dim=-1).cpu().numpy()
     amr_probs = torch.sigmoid(amr_l).cpu().numpy()
@@ -493,7 +510,8 @@ def _do_train(model, train_data, val_data, config, experiment=None):
     if use_swa and swa_model is not None:
         from torch.optim.swa_utils import update_bn
         update_bn(dt, swa_model, device=device)
-        swa_sd = {k.replace("module.", ""): v for k, v in swa_model.state_dict().items()}
+        swa_sd = {k.replace("module.", ""): v for k, v in swa_model.state_dict().items()
+                  if k not in ("n_averaged", "module.n_averaged")}
         torch.save({"state_dict": swa_sd, "config": model.config.to_dict()},
                     artifact_dir / "cassiopeia_swa.pt")
         swa_m = Cassiopeia.load(artifact_dir / "cassiopeia_swa.pt", device=device)
