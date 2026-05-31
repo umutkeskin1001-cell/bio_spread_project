@@ -12,8 +12,6 @@ from dna_sentinel.model import (
     CassiopeiaConfig,
     CircularPositionEncoding,
     DropPath,
-    GLUMixer,
-    WindowMotifConv,
     _focal_bce,
     _make_frp,
 )
@@ -96,18 +94,6 @@ class TestLosses:
 
 
 class TestBlocks:
-    def test_glu_mixer(self):
-        out = GLUMixer(28, 128)(torch.randn(4, 28, 128))
-        assert out.shape == (4, 28, 128)
-
-    def test_glu_mixer_with_mask(self):
-        x = torch.randn(4, 28, 128)
-        mask = torch.ones(4, 28, dtype=torch.bool)
-        mask[:, 20:] = False
-        out = GLUMixer(28, 128)(x, mask)
-        assert out.shape == x.shape
-        assert torch.all(out[:, 20:] == 0)
-
     def test_cppe_shape_and_mask_zeroing(self):
         cppe = CircularPositionEncoding(32)
         x = torch.zeros(2, 6, 32)
@@ -121,18 +107,6 @@ class TestBlocks:
         cppe = CircularPositionEncoding(32)
         out = cppe(torch.zeros(2, 6, 32), torch.ones(2, 6, dtype=torch.bool))
         assert out.shape == (2, 6, 32)
-
-    def test_window_motif_conv(self):
-        conv = WindowMotifConv(hidden_dim=32, kernel_size=5, dropout=0.0)
-        x = torch.randn(2, 8, 32)
-        mask = torch.tensor([[True, True, True, True, False, False, False, False],
-                             [True, True, True, True, True, True, True, True]])
-        out = conv(x, mask)
-        assert out.shape == x.shape and torch.all(out[0, 4:] == 0) and torch.isfinite(out).all()
-
-    def test_window_motif_conv_odd_kernel(self):
-        with pytest.raises(ValueError, match="odd"):
-            WindowMotifConv(32, kernel_size=4)
 
 
 class TestCassiopeiaSmall:
@@ -167,19 +141,28 @@ class TestCassiopeiaSmall:
         Path(path).unlink()
 
     def test_parameter_count(self):
-        model = Cassiopeia(CassiopeiaConfig(use_hierarchical=False))
-        assert sum(p.numel() for p in model.parameters() if p.requires_grad) < 500_000
+        model = Cassiopeia(CassiopeiaConfig(use_hierarchical=False, n_structural_features=49))
+        assert sum(p.numel() for p in model.parameters() if p.requires_grad) < 700_000
 
     def test_prime_parameter_count(self):
         model = Cassiopeia(CassiopeiaConfig(hidden_dim=160, frp_out_dim=384, n_layers=3, lora_rank=12, adapter_rank=16,
-                                             use_scale_embedding=False, use_cppe=True, use_window_conv=True,
-                                             window_conv_kernel=5, use_hierarchical=False))
-        assert 700_000 < sum(p.numel() for p in model.parameters() if p.requires_grad) <= 1_100_000
+                                             use_cppe=True, use_hierarchical=False, n_structural_features=49))
+        n = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        assert 500_000 < n <= 1_300_000, f"got {n}"
 
     def test_hierarchical_parameter_count(self):
-        model = Cassiopeia(CassiopeiaConfig(use_hierarchical=True, n_scale_layers=2, use_scale_gate=True))
+        model = Cassiopeia(CassiopeiaConfig(use_hierarchical=True, n_scale_layers=2, n_structural_features=49))
         n = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        assert 400_000 < n <= 600_000, f"got {n}"
+        assert 300_000 < n <= 800_000, f"got {n}"
+
+    def test_v9_ring_ssm_parameter_count(self):
+        model = Cassiopeia(CassiopeiaConfig(
+            n_structural_features=49, hidden_dim=128, frp_out_dim=320, n_layers=3,
+            ring_ssm_kernel=7, use_hierarchical=True,
+            n_scale_layers=2, use_cppe=True, max_windows=56,
+        ))
+        n = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        assert 300_000 < n <= 900_000, f"got {n}"
 
     def test_save_load_roundtrip(self, model, batch):
         with tempfile.NamedTemporaryFile(suffix=".pt", delete=False) as f:
@@ -206,10 +189,10 @@ class TestCassiopeiaSmall:
         assert out["mobility_evidence"].shape == batch["masks"].shape
 
     def test_forward_with_struct_and_scale(self):
-        model = Cassiopeia(CassiopeiaConfig(hidden_dim=64, n_canonical_features=100, frp_out_dim=80, n_layers=2, max_windows=12,
-                                             lora_rank=4, adapter_rank=8, use_scale_embedding=False, use_cppe=True, use_window_conv=True, window_conv_kernel=3))
+        model = Cassiopeia(CassiopeiaConfig(n_structural_features=49, hidden_dim=64, n_canonical_features=100, frp_out_dim=80, n_layers=2, max_windows=12,
+                                             lora_rank=4, adapter_rank=8, use_cppe=True))
         out = model(torch.randn(3, 12, 100), torch.ones(3, 12, dtype=torch.bool),
-                     struct_features=torch.randn(3, 12, 19),
+                     struct_features=torch.randn(3, 12, 49),
                      scale_ids=torch.tensor([[0]*4 + [1]*4 + [2]*4]*3))
         assert out["mobility_logits"].shape == (3, 3)
 
@@ -252,23 +235,25 @@ class TestCassiopeiaLarge:
 class TestCalibration:
     def test_fit_calibration(self):
         from dna_sentinel.train import fit_calibration
-        model = Cassiopeia(CassiopeiaConfig(hidden_dim=64, n_canonical_features=100, frp_out_dim=64, max_windows=12, expansion_classes=1, amr_classes=1))
+        model = Cassiopeia(CassiopeiaConfig(hidden_dim=64, n_canonical_features=100, frp_out_dim=64, max_windows=12, n_structural_features=49))
         B, W = 8, 12
         val_data = {"features": torch.randn(B, W, 100), "masks": torch.ones(B, W, dtype=torch.bool),
                     "mobility": torch.randint(0, 3, (B,)), "amr": torch.randint(0, 2, (B,), dtype=torch.float),
-                    "expansion": torch.randint(0, 2, (B,), dtype=torch.float)}
-        fit_calibration(model, val_data, "cpu")
-        assert model.mob_t.item() > 0
+                    "expansion": torch.randint(0, 2, (B,), dtype=torch.float),
+                    "struct_features": torch.randn(B, W, 49)}
+        result = fit_calibration(model, val_data, "cpu")
+        assert "cal_mob_probs" in result
 
     def test_fit_calibration_single_class(self):
         from dna_sentinel.train import fit_calibration
-        model = Cassiopeia(CassiopeiaConfig(hidden_dim=32, n_canonical_features=100, frp_out_dim=32, max_windows=8))
+        model = Cassiopeia(CassiopeiaConfig(hidden_dim=32, n_canonical_features=100, frp_out_dim=32, max_windows=8, n_structural_features=49))
         B = 8
         val_data = {"features": torch.randn(B, 8, 100), "masks": torch.ones(B, 8, dtype=torch.bool),
                     "mobility": torch.zeros(B, dtype=torch.long), "amr": torch.zeros(B, dtype=torch.float),
-                    "expansion": torch.zeros(B, dtype=torch.float)}
-        fit_calibration(model, val_data, "cpu")
-        assert model.mob_t.item() > 0
+                    "expansion": torch.zeros(B, dtype=torch.float),
+                    "struct_features": torch.randn(B, 8, 49)}
+        result = fit_calibration(model, val_data, "cpu")
+        assert "cal_mob_probs" in result
 
 
 class TestEvaluate:
@@ -318,3 +303,121 @@ class TestInference:
             result = svc.predict("test", "ACGT" * 50)
             assert "risk_score" in result and "amr_probability" in result
             Path(f.name).unlink()
+
+
+class TestV9RingSSM:
+    def test_ring_ssm_block_output_shape(self):
+        from dna_sentinel.model import RingSSMBlock
+        block = RingSSMBlock(64, kernel=7, dropout=0.0)
+        x = torch.randn(2, 10, 64)
+        mask = torch.ones(2, 10, dtype=torch.bool)
+        out = block(x, mask)
+        assert out.shape == (2, 10, 64)
+
+    def test_ring_ssm_mask_zeroing(self):
+        from dna_sentinel.model import RingSSMBlock
+        block = RingSSMBlock(64, kernel=5, dropout=0.0)
+        x = torch.randn(2, 10, 64)
+        mask = torch.tensor([[True]*6 + [False]*4, [True]*10])
+        out = block(x, mask)
+        assert torch.all(out[0, 6:] == 0)
+        assert torch.isfinite(out).all()
+
+    def test_ring_ssm_backward(self):
+        from dna_sentinel.model import RingSSMBlock
+        block = RingSSMBlock(32, kernel=5, dropout=0.0)
+        x = torch.randn(2, 8, 32, requires_grad=True)
+        mask = torch.ones(2, 8, dtype=torch.bool)
+        out = block(x, mask)
+        out.sum().backward()
+        assert x.grad is not None and torch.isfinite(x.grad).all()
+
+
+class TestArchitecture:
+    def test_forward_eval(self):
+        cfg = CassiopeiaConfig(
+            hidden_dim=64, n_canonical_features=100, frp_out_dim=64,
+            n_layers=1, max_windows=8, n_structural_features=49,
+        )
+        model = Cassiopeia(cfg)
+        model.eval()
+        out = model(torch.randn(2, 8, 100), torch.ones(2, 8, dtype=torch.bool),
+                     struct_features=torch.randn(2, 8, 49))
+        assert out["mobility_logits"].shape == (2, 3)
+
+    def test_flat_vs_hierarchical(self):
+        flat = Cassiopeia(CassiopeiaConfig(use_hierarchical=False, n_structural_features=49, max_windows=8))
+        hier = Cassiopeia(CassiopeiaConfig(use_hierarchical=True, n_structural_features=49, max_windows=8))
+        x = torch.randn(2, 8, 2728)
+        m = torch.ones(2, 8, dtype=torch.bool)
+        s = torch.randn(2, 8, 49)
+        flat.eval(); hier.eval()
+        of = flat(x, m, struct_features=s)["mobility_logits"]
+        oh = hier(x, m, struct_features=s)["mobility_logits"]
+        assert of.shape == oh.shape == (2, 3)
+
+
+class TestConsistencyGradient:
+    def test_consistency_loss_has_gradient(self):
+        model = Cassiopeia(CassiopeiaConfig(
+            hidden_dim=32, n_canonical_features=100, frp_out_dim=32,
+            n_layers=1, max_windows=8, consistency_alpha=0.1,
+        ))
+        model.train()
+        feat = torch.randn(4, 8, 100)
+        mask = torch.ones(4, 8, dtype=torch.bool)
+        out = model(feat, mask)
+        mob_target = torch.randint(0, 3, (4,))
+        amr_target = torch.rand(4)
+        exp_target = torch.rand(4)
+        loss = model.compute_loss(
+            out["mobility_logits"], out["amr_logits"], out["expansion_logits"],
+            mob_target, amr_target, exp_target,
+            exp_proxy_logits=out.get("exp_proxy_logits"),
+        )
+        loss["total"].backward()
+        for n, p in model.named_parameters():
+            if p.requires_grad and p.grad is not None:
+                assert torch.isfinite(p.grad).any(), f"NaN grad in {n}"
+
+
+class TestCompression:
+    def test_compress_fp16_roundtrip(self):
+        from dna_sentinel.model import compress_checkpoint, load_compressed
+        model = Cassiopeia(CassiopeiaConfig(
+            hidden_dim=32, n_canonical_features=100, frp_out_dim=32,
+            n_layers=1, max_windows=8,
+        ))
+        with tempfile.NamedTemporaryFile(suffix=".pt", delete=False) as src:
+            model.save(src.name)
+            src_path = src.name
+        dst_path = src_path + ".fp16"
+        info = compress_checkpoint(src_path, dst_path, fmt="fp16")
+        loaded = load_compressed(dst_path)
+        feat = torch.randn(2, 8, 100)
+        mask = torch.ones(2, 8, dtype=torch.bool)
+        model.eval()
+        loaded.eval()
+        with torch.no_grad():
+            a = model(feat, mask)["mobility_logits"]
+            b = loaded(feat, mask)["mobility_logits"]
+        assert torch.allclose(a, b, atol=1e-2)
+        assert info["dst_bytes"] < info["src_bytes"]
+        Path(src_path).unlink()
+        Path(dst_path).unlink()
+
+
+class TestFeatureSchema:
+    def test_schema_version_in_cache(self):
+        from dna_sentinel.features import CanonicalKmerConfig, preprocess_all_features
+        from dna_sentinel.utils import LabeledSequence
+        records = [LabeledSequence("a", "ACGT" * 100, 1, 0, 1)]
+        cfg = CanonicalKmerConfig(window_sizes=(32,), strides=(16,), max_windows=(4,))
+        with tempfile.NamedTemporaryFile(suffix=".pt", delete=False) as f:
+            out = Path(f.name)
+        preprocess_all_features(records, cfg, out, num_workers=1)
+        saved = torch.load(out, weights_only=True)
+        assert saved["_schema_version"] is not None
+        assert saved["_n_structural_features"] == cfg.n_structural_features
+        assert "_manifest_hash" in saved
+        out.unlink()

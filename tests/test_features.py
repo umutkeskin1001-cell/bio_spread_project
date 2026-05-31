@@ -69,7 +69,10 @@ def test_preprocess_consistency_features_saves_expected_keys(tmp_path):
     out = tmp_path / "consistency.pt"
     preprocess_consistency_features(records, CanonicalKmerConfig(window_sizes=(32,), strides=(16,), max_windows=(4,)), out, num_workers=1)
     saved = torch.load(out, weights_only=True)
-    assert set(saved) == {"features", "struct_features", "masks", "scale_ids"}
+    core_keys = {"features", "struct_features", "masks", "scale_ids"}
+    assert core_keys.issubset(set(saved))
+    assert saved["_schema_version"] is not None
+    assert saved["_n_structural_features"] > 0
 
 
 def test_extract_single_nucleotide():

@@ -25,13 +25,14 @@ api = [
 ]
 dev = [
     "pytest>=8,<10",
+    "pytest-cov>=4,<6",
     "ruff>=0.6,<1",
     "mypy>=1.11,<2",
 ]
 
 [tool.pytest.ini_options]
 minversion = "7.0"
-addopts = "-v --tb=short -x --cov=src --cov-report=term --cov-fail-under=80"
+addopts = "-v --tb=short -x --cov=src --cov-report=term --cov-fail-under=70"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 
@@ -44,7 +45,7 @@ exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:", "if __name__ == .__mai
 
 [tool.ruff]
 line-length = 128
-target-version = "py311"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W"]

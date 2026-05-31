@@ -16,7 +16,7 @@ def test_pyproject_defines_ci_extras():
 
 def test_prime_config_odd_kernel():
     cfg = yaml.safe_load(Path("config/cassiopeia_prime.yaml").read_text())
-    assert cfg["model"]["window_conv_kernel"] % 2 == 1
+    assert cfg["model"]["ring_ssm_kernel"] % 2 == 1
 
 
 def test_config_feature_strides_match_windows():

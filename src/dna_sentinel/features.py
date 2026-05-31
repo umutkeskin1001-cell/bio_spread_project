@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import functools
+import hashlib
+import json
 import logging
 import os
 from dataclasses import dataclass
@@ -14,6 +16,8 @@ import torch.nn.functional as F
 from dna_sentinel.utils import LabeledSequence, ValidationError, circular_shift, load_jsonl, revcomp
 
 _logger = logging.getLogger(__name__)
+
+FEATURE_SCHEMA_VERSION = "v9.0"
 
 
 @functools.lru_cache(maxsize=None)
@@ -34,16 +38,20 @@ class CanonicalKmerConfig:
 
 
 
-@functools.lru_cache(maxsize=8)
 def _resolve_max_windows(max_windows: int | tuple[int, ...] | list[int]) -> tuple[int, ...]:
     if not isinstance(max_windows, int):
         return tuple(max_windows)
     base = (16, 8, 4)
-    total = max_windows
+    total = max(3, max_windows)
     out = [max(1, round(total * b / sum(base))) for b in base]
     while sum(out) != total:
         i = max(range(len(base)), key=lambda j: base[j] if sum(out) < total else out[j])
-        out[i] += 1 if sum(out) < total else -1
+        if sum(out) < total:
+            out[i] += 1
+        elif out[i] > 1:
+            out[i] -= 1
+        else:
+            break
     return tuple(out)
 
 
@@ -91,7 +99,7 @@ class CanonicalKmerExtractor:
             "CGATCG": 0, "CGCATG": 1, "CTGCAG": 2, "GATATC": 3, "GAATTC": 4,
             "TACCGG": 5, "TTCCGG": 6, "CCGGTA": 7, "CCGGGA": 8, "CCGGAT": 9,
             "TCCCTG": 10, "CAGGGA": 11, "CATGCC": 12, "CTCGAG": 13, "AGATCT": 14,
-            "GGGCCC": 15, "CCTCGG": 16, "CCGAGG": 17, "CCGCGG": 18, "CTCGAG": 19,
+            "GGGCCC": 15, "CCTCGG": 16, "CCGAGG": 17, "CCGCGG": 18, "GGATCC": 19,
             "CGAGGG": 20, "CCTCGA": 21, "GCCCTC": 22, "CGACCC": 23, "GAGGGC": 24,
             "CGGGCC": 25, "GCGAGG": 26, "TCGACG": 27, "GGCGCC": 28, "CCCCCG": 29,
         }
@@ -102,15 +110,72 @@ class CanonicalKmerExtractor:
         v = (torch.arange(ws, device=dev).unsqueeze(0) < lengths.unsqueeze(1)) & (w >= 0)
         wc = w.clamp_min(0)
         g, c, a, t = (wc == 2).float(), (wc == 1).float(), (wc == 0).float(), (wc == 3).float()
+        n_base = (wc == 4).float() if (wc == 4).any() else torch.zeros_like(g)
         vf = v.float()
+        lf = lengths.float().clamp_min(1)
+
         gc_sum = ((g + c) * vf).sum(dim=1)
-        gc = gc_sum / lengths.float().clamp_min(1)
+        gc = gc_sum / lf
         gs = ((g - c) * vf).sum(dim=1) / gc_sum.clamp_min(1)
         at_s = ((a - t) * vf).sum(dim=1) / ((a + t) * vf).sum(dim=1).clamp_min(1)
+
         pv = v[:, :-1] & v[:, 1:]
         di = (F.one_hot((wc[:, :-1] * 4 + wc[:, 1:]).long().clamp_max(15), 16).float() * pv.unsqueeze(-1)).sum(dim=1)
         di = di / di.sum(dim=-1, keepdim=True).clamp_min(1)
-        return torch.cat([gc.unsqueeze(-1), gs.unsqueeze(-1), at_s.unsqueeze(-1), di], dim=-1)
+
+        n_ratio = (n_base * vf).sum(dim=1) / lf
+
+        N, W = w.shape
+        bases_valid = wc * vf.long()
+        changes = torch.ones(N, W, dtype=torch.bool, device=dev)
+        changes[:, 1:] = bases_valid[:, 1:] != bases_valid[:, :-1]
+        changes = changes & v
+        run_ids = changes.long().cumsum(dim=1) - 1
+        run_ids = run_ids * v.long()
+        max_id_per_seq = run_ids.max(dim=1).values
+        max_id_global = int(max_id_per_seq.max().item()) + 1 if max_id_per_seq.numel() else 1
+        flat_run = run_ids.view(-1)
+        batch_idx = torch.arange(N, device=dev).unsqueeze(1).expand_as(run_ids).reshape(-1)
+        global_idx = batch_idx * max_id_global + flat_run
+        rc_cnt = torch.zeros(N * max_id_global, device=dev)
+        ones_per_run = torch.ones_like(flat_run, dtype=rc_cnt.dtype)
+        rc_cnt.scatter_add_(0, global_idx, ones_per_run)
+        rc_cnt = rc_cnt.view(N, max_id_global)
+        valid_mask = rc_cnt > 0
+        run_lengths = rc_cnt
+        masked = run_lengths.masked_fill(~valid_mask, -1)
+        max_run = torch.where(
+            valid_mask.any(dim=1), masked.max(dim=1).values, torch.zeros(N, device=dev))
+        sum_run = torch.where(valid_mask, run_lengths, 0.0).sum(dim=1)
+        mean_run = torch.where(
+            valid_mask.any(dim=1),
+            sum_run / valid_mask.sum(dim=1).clamp_min(1),
+            torch.zeros(N, device=dev))
+
+        base_counts = torch.stack([
+            (a * vf).sum(dim=1) / lf,
+            (c * vf).sum(dim=1) / lf,
+            (g * vf).sum(dim=1) / lf,
+            (t * vf).sum(dim=1) / lf,
+        ], dim=-1)
+        freq = base_counts.clamp_min(1e-8)
+        entropy = -(freq * freq.log()).sum(dim=-1)
+
+        mono_p = torch.cat([a.unsqueeze(-1), c.unsqueeze(-1), g.unsqueeze(-1), t.unsqueeze(-1)], dim=-1) * vf.unsqueeze(-1)
+        mono_freq = mono_p.sum(dim=1) / lf.unsqueeze(-1).clamp_min(1)
+        low_complexity = mono_freq.max(dim=-1).values - 0.25
+
+        len_bucket = (lengths.float() / 1000.0).clamp(0, 5) / 5.0
+
+        return torch.cat([
+            gc.unsqueeze(-1), gs.unsqueeze(-1), at_s.unsqueeze(-1),
+            di,
+            n_ratio.unsqueeze(-1),
+            max_run.unsqueeze(-1) / ws, mean_run.unsqueeze(-1) / ws,
+            entropy.unsqueeze(-1), low_complexity.unsqueeze(-1),
+            len_bucket.unsqueeze(-1),
+            base_counts,
+        ], dim=-1)
 
     def _motif_counts(self, w: torch.Tensor) -> torch.Tensor:
         N, ws = w.shape
@@ -121,10 +186,9 @@ class CanonicalKmerExtractor:
             if ws < k:
                 continue
             pattern = torch.tensor([bs[ord(ch)] for ch in kmer_str], device=w.device, dtype=torch.long)
-            for i in range(N):
-                windows = w[i].unfold(0, k, 1)
-                matches = (windows == pattern).all(dim=-1)
-                out[i, idx] = matches.sum().float() / max(1, ws - k + 1)
+            windows = w.unfold(1, k, 1)
+            matches = (windows == pattern).all(dim=-1).float()
+            out[:, idx] = matches.sum(dim=1) / max(1, ws - k + 1)
         return out
 
     def _extract(self, seq: torch.Tensor, ws: int, st: int, mw: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -155,6 +219,7 @@ class CanonicalKmerExtractor:
         raw = torch.zeros(N, nf, device=dev)
         mult_d = {k: v.to(dev) for k, v in self._mult.items()}
         cmap_d = {k: v.to(dev) for k, v in self._cmap.items()}
+        batch_offset = (torch.arange(N, device=dev).unsqueeze(1) * nf)
         for k in self._km_range:
             m = ws - k + 1
             kmers = w.unfold(-1, k, 1)
@@ -164,7 +229,7 @@ class CanonicalKmerExtractor:
             if not valid.any():
                 continue
             raw += (
-                torch.bincount((canon + torch.arange(N, device=dev).unsqueeze(1) * nf)[valid], minlength=N * nf)
+                torch.bincount((canon + batch_offset)[valid], minlength=N * nf)
                 .view(N, nf)
                 .float()
             )
@@ -252,12 +317,21 @@ def preprocess_all_features(
     feats, structs, masks, sids = zip(*extracted)
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    split_ids = sorted([r.sequence_id for r in records])
+    manifest_hash = hashlib.sha256(json.dumps(split_ids).encode()).hexdigest()[:16]
     torch.save(
         {
             "features": torch.stack(feats),
             "struct_features": torch.stack(structs),
             "masks": torch.stack(masks),
             "scale_ids": torch.stack(sids),
+            "_schema_version": FEATURE_SCHEMA_VERSION,
+            "_n_structural_features": config.n_structural_features,
+            "_window_sizes": list(config.window_sizes),
+            "_strides": list(config.strides),
+            "_max_windows": list(config.max_windows),
+            "_n_samples": len(records),
+            "_manifest_hash": manifest_hash,
         },
         out_path,
     )
@@ -291,7 +365,7 @@ def extract_features(data_dir: str | Path, config: dict | None = None) -> None:
         max_windows=_resolve_max_windows(kt.get("max_windows", (16, 8, 4))),
         ngram_min=kt.get("ngram_min", 4),
         ngram_max=kt.get("ngram_max", 6),
-        n_structural_features=kt.get("n_structural_features", 19),
+        n_structural_features=kt.get("n_structural_features", 49),
         rc_consensus=kt.get("rc_consensus", False),
     )
     expansion_n = kt.get("expansion_classes", 1)

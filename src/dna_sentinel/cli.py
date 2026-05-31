@@ -12,7 +12,7 @@ import torch
 import yaml
 from sklearn.metrics import balanced_accuracy_score, roc_auc_score
 
-from dna_sentinel.features import extract_features
+from dna_sentinel.features import FEATURE_SCHEMA_VERSION, extract_features
 from dna_sentinel.model import Cassiopeia, CassiopeiaConfig
 from dna_sentinel.prepare import prepare_dataset
 from dna_sentinel.train import cross_validate, evaluate, train_cassiopeia
@@ -39,8 +39,6 @@ def _validate_config(cfg: dict) -> None:
         fw = sum(f["max_windows"])
         if mw != fw:
             raise ConfigError(f"feature max_windows sum ({fw}) != model max_windows ({mw})")
-    if m.get("window_conv_kernel", 5) % 2 == 0:
-        raise ConfigError(f"window_conv_kernel must be odd, got {m['window_conv_kernel']}")
     if f.get("window_sizes") and f.get("strides"):
         if len(f["window_sizes"]) != len(f["strides"]):
             raise ConfigError(f"window_sizes ({len(f['window_sizes'])}) != strides ({len(f['strides'])})")
@@ -49,11 +47,31 @@ def _validate_config(cfg: dict) -> None:
 def _load_data(data_dir: Path, name: str, n_struct: int = 0) -> dict:
     feat = torch.load(data_dir / f"{name}_features.pt", weights_only=True)
     lab = torch.load(data_dir / f"{name}_labels.pt", weights_only=True)
+    cached_schema = feat.get("_schema_version")
+    cached_ns = feat.get("_n_structural_features")
+    if cached_schema and cached_schema != FEATURE_SCHEMA_VERSION:
+        raise ConfigError(
+            f"Feature cache schema mismatch: cached={cached_schema!r}, expected={FEATURE_SCHEMA_VERSION!r}. "
+            f"Re-run `prepare-features` to regenerate the cache."
+        )
+    if cached_ns is not None and n_struct and cached_ns != n_struct:
+        raise ConfigError(
+            f"Feature cache n_structural_features mismatch: cached={cached_ns}, model expects={n_struct}. "
+            f"Re-run `prepare-features` to regenerate the cache."
+        )
     if "struct_features" not in feat and n_struct:
         feat["struct_features"] = feat["features"].new_zeros(*feat["features"].shape[:2], n_struct)
     cons = data_dir / f"{name}_consistency_features.pt"
     if cons.exists():
         cached = torch.load(cons, weights_only=True)
+        cs_schema = cached.get("_schema_version")
+        cs_ns = cached.get("_n_structural_features")
+        if cs_schema and cs_schema != FEATURE_SCHEMA_VERSION:
+            logger.warning("Consistency cache schema mismatch: cached=%s, expected=%s. Re-run prepare-features.",
+                           cs_schema, FEATURE_SCHEMA_VERSION)
+        if cs_ns is not None and n_struct and cs_ns != n_struct:
+            logger.warning("Consistency cache n_structural_features mismatch: cached=%d, expected=%d.",
+                           cs_ns, n_struct)
         for k in ("features", "masks", "scale_ids"):
             if k in cached:
                 feat[f"consistency_{k}"] = cached[k]
@@ -76,14 +94,14 @@ def cli():
 @cli.command()
 @click.option("--config", default="config/cassiopeia_prime.yaml", type=click.Path(exists=True))
 def prepare(config):
-    cfg = yaml.safe_load(Path(config).read_text())
+    cfg = _load_config(config)
     click.echo(json.dumps(prepare_dataset(**cfg.get("data", cfg)), indent=2))
 
 
 @cli.command("prepare-features")
 @click.option("--config", default="config/cassiopeia_prime.yaml", type=click.Path(exists=True))
 def prepare_features(config):
-    cfg = yaml.safe_load(Path(config).read_text())
+    cfg = _load_config(config)
     _validate_config(cfg)
     extract_features(cfg["data"]["out_dir"], {**cfg.get("features", {}), **cfg.get("model", {})})
 
@@ -92,13 +110,13 @@ def prepare_features(config):
 @click.option("--config", default="config/cassiopeia_prime.yaml", type=click.Path(exists=True))
 @click.option("--experiment", default=None, help="Experiment name for tracking")
 def train_cmd(config, experiment):
-    cfg = yaml.safe_load(Path(config).read_text())
+    cfg = _load_config(config)
     _validate_config(cfg)
     data_dir = Path(cfg["data"]["out_dir"])
     mc = cfg.get("model", {})
     tc = cfg.get("training", {})
     model = _make_model(cfg)
-    ns = mc.get("n_structural_features", 19)
+    ns = mc.get("n_structural_features", 49)
     train_data = _load_data(data_dir, "train", ns)
     val_data = _load_data(data_dir, "val", ns)
     exp = None
@@ -117,11 +135,11 @@ def train_cmd(config, experiment):
 @click.option("--config", default="config/cassiopeia_prime.yaml", type=click.Path(exists=True))
 @click.option("--folds", default=5, type=int)
 def cross_validate_cmd(config, folds):
-    cfg = yaml.safe_load(Path(config).read_text())
+    cfg = _load_config(config)
     _validate_config(cfg)
     data_dir = Path(cfg["data"]["out_dir"])
-    all_data = _load_data(data_dir, "train", cfg.get("model", {}).get("n_structural_features", 19))
-    val_data = _load_data(data_dir, "val", cfg.get("model", {}).get("n_structural_features", 19))
+    all_data = _load_data(data_dir, "train", cfg.get("model", {}).get("n_structural_features", 49))
+    val_data = _load_data(data_dir, "val", cfg.get("model", {}).get("n_structural_features", 49))
     for k, v in val_data.items():
         if isinstance(v, torch.Tensor) and k in all_data:
             all_data[k] = torch.cat([all_data[k], v])
@@ -133,7 +151,10 @@ def cross_validate_cmd(config, folds):
         cluster_map = split_info.get("_cluster_map", {})
         if cluster_map and all_ids:
             train_ids = [cluster_map.get(sid, i) for i, sid in enumerate(all_ids)]
-    result, fold_models = cross_validate(cfg.get("model", {}), all_data, cfg.get("training", {}), n_folds=folds, group_ids=train_ids, save_folds=True)
+    result, fold_models = cross_validate(
+        cfg.get("model", {}), all_data, cfg.get("training", {}),
+        n_folds=folds, group_ids=train_ids, save_folds=True,
+    )
     out_path = Path(cfg.get("training", {}).get("artifact_dir", "artifacts/default")) / "cv_report.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(result, indent=2, default=str))
@@ -184,12 +205,18 @@ def benchmark_cmd(checkpoint, data_dir, out):
             }.items():
                 try:
                     if k == "task_score":
-                        pt, lo, hi = bootstrap_ci(
-                            y_mob_true, mob,
-                            lambda t, p: (balanced_accuracy_score(t, p.argmax(-1)) + roc_auc_score(y_amr_true, amr) + roc_auc_score(y_exp_true, exp)) / 3,
-                            n_resamples=500)
+                        def _task_fn(t, p):
+                            ba = balanced_accuracy_score(t, p.argmax(-1))
+                            amr_roc = roc_auc_score(y_amr_true, amr)
+                            exp_roc = roc_auc_score(y_exp_true, exp)
+                            return (ba + amr_roc + exp_roc) / 3
+                        pt, lo, hi = bootstrap_ci(y_mob_true, mob, _task_fn, n_resamples=500)
                     elif k == "mobility_balanced_accuracy":
-                        pt, lo, hi = bootstrap_ci(yt, yp, lambda t, p: balanced_accuracy_score(t, p.argmax(-1)), n_resamples=500)
+                        pt, lo, hi = bootstrap_ci(
+                            yt, yp,
+                            lambda t, p: balanced_accuracy_score(t, p.argmax(-1)),
+                            n_resamples=500,
+                        )
                     else:
                         pt, lo, hi = bootstrap_ci(yt, yp, roc_auc_score, n_resamples=500)
                     ci_metrics[k] = {"point": float(pt), "ci_95": [float(lo), float(hi)]}
@@ -234,6 +261,9 @@ def serve(checkpoint, port, host):
 @cli.command("experiment-list")
 def experiment_list():
     base = Path("experiments")
+    if not base.exists():
+        click.echo("No experiments directory found.")
+        return
     dirs = sorted([d.name for d in base.iterdir() if d.is_dir()], reverse=True)
     for d in dirs[:20]:
         click.echo(d)

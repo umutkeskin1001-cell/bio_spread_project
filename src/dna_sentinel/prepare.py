@@ -44,6 +44,7 @@ def _jaccard(a: set[str], b: set[str]) -> float:
 class _DSU:
     def __init__(self, n: int):
         self.parent = list(range(n))
+        self.rank = [0] * n
 
     def find(self, x: int) -> int:
         while self.parent[x] != x:
@@ -53,8 +54,13 @@ class _DSU:
 
     def union(self, a: int, b: int) -> None:
         ra, rb = self.find(a), self.find(b)
-        if ra != rb:
-            self.parent[rb] = ra
+        if ra == rb:
+            return
+        if self.rank[ra] < self.rank[rb]:
+            ra, rb = rb, ra
+        self.parent[rb] = ra
+        if self.rank[ra] == self.rank[rb]:
+            self.rank[ra] += 1
 
 
 def _report_similarity(
@@ -235,11 +241,24 @@ def prepare_dataset(
     id_to_record = {r.sequence_id: r for r in records}
     for name, ids in split.items():
         save_jsonl([id_to_record[i] for i in ids], out / f"{name}.jsonl")
+    total_split = sum(len(ids) for ids in split.values())
+    if total_split > 2048:
+        raise ValueError(
+            f"Data boundary violation: split total {total_split} > 2048. "
+            f"Train={len(split.get('train', []))}, Val={len(split.get('val', []))}, Test={len(split.get('test', []))}"
+        )
     cluster_map = {}
     for gid, ids in clusters.items():
         for sid in ids:
             cluster_map[sid] = gid
-    (out / "split.json").write_text(json.dumps({**split, "_similarity_report": similarity, "_cluster_map": cluster_map}, indent=2), encoding="utf-8")
+    report_data = {
+        **split,
+        "_similarity_report": similarity,
+        "_cluster_map": cluster_map,
+    }
+    (out / "split.json").write_text(
+        json.dumps(report_data, indent=2), encoding="utf-8"
+    )
     return {f"{k}_n": len(v) for k, v in split.items()} | {
         "total_n": len(records),
         "max_similarity": similarity["max_train_test_jaccard"],

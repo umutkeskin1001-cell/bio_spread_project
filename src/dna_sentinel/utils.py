@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import random
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterable, Iterator
+from typing import TYPE_CHECKING, Any, Iterator
 
 import numpy as np
 import torch
@@ -133,25 +134,6 @@ def circular_shift(seq: str, offset: int) -> str:
     return dna[step:] + dna[:step]
 
 
-def dinuc_shuffle(seq: str, seed: int = 42) -> str:
-    """Preserves GC content and dinucleotide frequencies via block shuffling."""
-    dna = canonical_dna(seq)
-    if len(dna) < 4:
-        return dna
-    bases = np.array(list(dna))
-    rng = np.random.default_rng(seed)
-    for _ in range(3):
-        pairs = [(bases[i], bases[i + 1]) for i in range(0, len(bases) - 1, 2)]
-        rng.shuffle(pairs)
-        flat = np.empty(len(bases), dtype='<U1')
-        flat[::2] = [p[0] for p in pairs]
-        flat[1::2] = [p[1] for p in pairs]
-        if len(bases) % 2:
-            flat[-1] = bases[-1]
-        bases = flat
-    return "".join(bases)
-
-
 def read_fasta(path: str | Path) -> Iterator[tuple[str, str]]:
     sid, chunks = None, []
     with Path(path).open("rt", encoding="utf-8", errors="replace") as f:
@@ -165,17 +147,6 @@ def read_fasta(path: str | Path) -> Iterator[tuple[str, str]]:
                 chunks.append(raw.rstrip("\n\r"))
     if sid is not None:
         yield sid, canonical_dna("".join(chunks))
-
-
-def write_fasta(records: Iterable[tuple[str, str]], path: str | Path, width: int = 80) -> None:
-    with Path(path).open("wt", encoding="utf-8") as f:
-        for sid, seq in records:
-            dna = canonical_dna(seq)
-            if not dna:
-                continue
-            f.write(f">{sid}\n")
-            for i in range(0, len(dna), width):
-                f.write(f"{dna[i : i + width]}\n")
 
 
 @dataclass(frozen=True)
@@ -209,34 +180,11 @@ class WindowDropout:
         if not training:
             return feat, mask
         keep = torch.rand(mask.shape[0], mask.shape[1], device=mask.device) >= self.drop_rate
-        keep = keep | (~keep.any(dim=1, keepdim=True))
+        all_dropped = ~keep.any(dim=1, keepdim=True)
+        if all_dropped.any():
+            first_true = keep.long().argmax(dim=1, keepdim=True)
+            keep = keep | (all_dropped & (torch.arange(keep.shape[1], device=keep.device).unsqueeze(0) == first_true))
         return feat * keep.unsqueeze(-1), mask & keep
-
-
-class DNASequenceAugmentation:
-    def __init__(self, mutation_rate: float = 0.0, truncation_rate: float = 0.0):
-        self.mutation_rate = mutation_rate
-        self.truncation_rate = truncation_rate
-
-    def __call__(self, records: list[LabeledSequence], training: bool = True):
-        if not training or (self.mutation_rate == 0 and self.truncation_rate == 0):
-            return records
-        result = []
-        for r in records:
-            dna = r.dna
-            if self.mutation_rate > 0 and random.random() < 0.5:
-                chars = list(dna)
-                n_mut = max(1, int(len(chars) * self.mutation_rate))
-                for _ in range(n_mut):
-                    idx = random.randrange(len(chars))
-                    if chars[idx] in _A:
-                        chars[idx] = random.choice([b for b in "ACGT" if b != chars[idx]])
-                dna = "".join(chars)
-            if self.truncation_rate > 0 and random.random() < self.truncation_rate:
-                keep = random.uniform(0.5, 1.0)
-                dna = dna[: max(100, int(len(dna) * keep))]
-            result.append(LabeledSequence(r.sequence_id, dna, r.mobility, r.amr, r.expansion))
-        return result
 
 
 def expected_calibration_error(y: np.ndarray, p: np.ndarray, bins: int = 10) -> float:
@@ -262,37 +210,12 @@ def task_score(metrics: dict[str, float]) -> float:
     )
 
 
-def false_positive_summary(
-    mobility_probs: np.ndarray | list,
-    amr_probs: np.ndarray | list,
-    expansion_probs: np.ndarray | list,
-    risk_scores: np.ndarray | list,
-    threshold: float = 0.5,
-) -> dict[str, float]:
-    mob = np.asarray(mobility_probs, dtype=float)
-    mobile_prob = 1.0 - (mob[:, 0] if mob.ndim == 2 and mob.shape[1] >= 3 else mob)
-    amr = np.asarray(amr_probs, dtype=float).ravel()
-    exp = np.asarray(expansion_probs, dtype=float).ravel()
-    risk = np.asarray(risk_scores, dtype=float).ravel()
-    return {
-        "false_mobile_rate": float((mobile_prob >= threshold).mean()) if mobile_prob.size else 0.0,
-        "false_amr_rate": float((amr >= threshold).mean()) if amr.size else 0.0,
-        "false_expansion_rate": float((exp >= threshold).mean()) if exp.size else 0.0,
-        "risk_q05": float(np.quantile(risk, 0.05)) if risk.size else 0.0,
-        "risk_q50": float(np.quantile(risk, 0.50)) if risk.size else 0.0,
-        "risk_q95": float(np.quantile(risk, 0.95)) if risk.size else 0.0,
-        "risk_mean": float(risk.mean()) if risk.size else 0.0,
-    }
-
-
-def compute_risk_score(mob_probs, amr_prob, exp_prob, weights=(0.4, 0.3, 0.3)):
-    mobile = 1.0 - mob_probs[0]
-    return weights[0] * mobile + weights[1] * amr_prob + weights[2] * exp_prob
-
-
-def bootstrap_ci(y_true, y_pred, metric_fn, n_resamples: int = 1000, ci: float = 0.95) -> tuple[float, float, float]:
+def bootstrap_ci(
+    y_true, y_pred, metric_fn, n_resamples: int = 1000,
+    ci: float = 0.95, seed: int = 42,
+) -> tuple[float, float, float]:
     n = len(y_true)
-    rng = np.random.default_rng(42)
+    rng = np.random.default_rng(seed)
     scores = []
     for _ in range(n_resamples):
         idx = rng.integers(0, n, size=n)
@@ -373,20 +296,20 @@ def _top_evidence(scores: torch.Tensor, mask: torch.Tensor, top_k: int) -> list[
     return [{"window": float(i), "weight": float(scores[i])} for i in top.tolist() if bool(mask[i])]
 
 
-_PREDICT_EXTRACTORS: dict[tuple[int, ...], Any] = {}
+@functools.lru_cache(maxsize=4)
+def _get_extractor(mw, ns):
+    from dna_sentinel.features import CanonicalKmerConfig, CanonicalKmerExtractor
+    return CanonicalKmerExtractor(CanonicalKmerConfig(max_windows=mw, n_structural_features=ns))
 
 
 @torch.inference_mode()
 def _predict_pass(model: Cassiopeia, sequences: list[tuple[str, str]], device: str = "cpu") -> dict[str, torch.Tensor]:
-    from dna_sentinel.features import CanonicalKmerConfig, CanonicalKmerExtractor, _resolve_max_windows
+    from dna_sentinel.features import _resolve_max_windows
 
     model.to(device).eval()
     mw = _resolve_max_windows(model.config.max_windows)
     ns = model.config.n_structural_features
-    cache_key = (mw, ns)
-    if cache_key not in _PREDICT_EXTRACTORS:
-        _PREDICT_EXTRACTORS[cache_key] = CanonicalKmerExtractor(CanonicalKmerConfig(max_windows=mw, n_structural_features=ns))
-    ex = _PREDICT_EXTRACTORS[cache_key]
+    ex = _get_extractor(mw, ns)
     feats, structs, masks, scales = [], [], [], []
     for _, dna in sequences:
         f, s, m, sc = ex.extract(canonical_dna(dna))
@@ -475,30 +398,72 @@ def predict_one(
     return predict_batch(model, [(sequence_id, dna)], device, top_k, rc_average=rc_average)[0]
 
 
+def write_fasta(records: list[tuple[str, str]], path: str | Path) -> None:
+    with Path(path).open("w", encoding="utf-8") as f:
+        for sid, seq in records:
+            if not seq:
+                continue
+            f.write(f">{sid}\n")
+            for i in range(0, len(seq), 80):
+                f.write(seq[i:i + 80] + "\n")
+
+
+def compute_risk_score(mobility_probs: list[float], amr_prob: float, expansion_prob: float,
+                       weights: tuple[float, float, float] = (0.4, 0.3, 0.3)) -> float:
+    mobile = 1.0 - mobility_probs[0] if mobility_probs else 0.0
+    return weights[0] * mobile + weights[1] * amr_prob + weights[2] * expansion_prob
+
+
 @torch.inference_mode()
-def evaluate_records(
-    model: Cassiopeia,
-    records: list[LabeledSequence],
-    device: str = "cpu",
-    batch_size: int = 32,
-    top_k: int = 5,
-    rc_average: bool = True,
-) -> dict[str, float]:
-    preds = []
-    for start in range(0, len(records), batch_size):
-        chunk = records[start : start + batch_size]
-        preds.extend(
-            predict_batch(
-                model, [(r.sequence_id, r.dna) for r in chunk], device=device, top_k=top_k, rc_average=rc_average
-            )
-        )
-    mob = np.array([p.mobility_probs for p in preds], dtype=float)
-    amr = np.array([p.amr_probability for p in preds], dtype=float)
-    exp = np.array([p.expansion_probability for p in preds], dtype=float)
-    out = multiclass_metrics(np.array([r.mobility for r in records], dtype=int), mob, "mobility")
-    out.update(binary_metrics(np.array([r.amr for r in records], dtype=float), amr, "amr"))
-    out.update(binary_metrics(np.array([r.expansion for r in records], dtype=float), exp, "expansion"))
-    return out
+def evaluate_records(model: Cassiopeia, records: list[LabeledSequence], device: str = "cpu") -> dict[str, float]:
+    preds = predict_batch(model, [(r.sequence_id, r.dna) for r in records], device=device)
+    mob_true = np.array([r.mobility for r in records])
+    amr_true = np.array([float(r.amr) for r in records])
+    exp_true = np.array([float(r.expansion) for r in records])
+    mob_probs = np.array([p.mobility_probs for p in preds])
+    amr_probs = np.array([p.amr_probability for p in preds])
+    exp_probs = np.array([p.expansion_probability for p in preds])
+    m = multiclass_metrics(mob_true, mob_probs, "mobility")
+    m.update(binary_metrics(amr_true, amr_probs, "amr"))
+    m.update(binary_metrics(exp_true, exp_probs, "expansion"))
+    return m
+
+
+def false_positive_summary(mob_probs: np.ndarray, amr_probs: np.ndarray,
+                           exp_probs: np.ndarray, risk_scores: np.ndarray) -> dict[str, float]:
+    if mob_probs.size == 0:
+        return {"false_mobile_rate": 0.0, "risk_q50": 0.0}
+    mobile_pred = mob_probs.argmax(axis=1) if mob_probs.ndim > 1 else (mob_probs > 0.5).astype(int)
+    true_immobile = np.zeros(len(mob_probs), dtype=int) == 0
+    false_mobile = (mobile_pred == 1) & true_immobile
+    return {
+        "false_mobile_rate": float(false_mobile.mean()) if len(false_mobile) else 0.0,
+        "risk_q50": float(np.median(risk_scores)) if risk_scores.size else 0.0,
+    }
+
+
+class DNASequenceAugmentation:
+    def __init__(self, mutation_rate: float = 0.0, truncation_rate: float = 0.0):
+        self.mutation_rate = mutation_rate
+        self.truncation_rate = truncation_rate
+
+    def __call__(self, records: list[LabeledSequence], training: bool = False) -> list[LabeledSequence]:
+        if not training:
+            return records
+        result = []
+        for r in records:
+            dna = r.dna
+            if self.mutation_rate > 0 and dna:
+                dna_list = list(dna)
+                for i in range(len(dna_list)):
+                    if random.random() < self.mutation_rate:
+                        dna_list[i] = random.choice("ACGT")
+                dna = "".join(dna_list)
+            if self.truncation_rate > 0 and dna and random.random() < self.truncation_rate:
+                cut = random.randint(1, len(dna))
+                dna = dna[:cut]
+            result.append(LabeledSequence(r.sequence_id, dna, r.mobility, r.amr, r.expansion))
+        return result
 
 
 class InferenceService:
