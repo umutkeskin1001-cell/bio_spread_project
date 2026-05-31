@@ -41,7 +41,7 @@ features:
   max_windows: [32, 16, 8]
 
 training:
-  epochs: 80
+  epochs: 120
   batch_size: 64
   lr: 0.0003
   backbone_lr: 0.00025
@@ -49,9 +49,9 @@ training:
   min_lr: 0.00001
   warmup_epochs: 5
   weight_decay: 0.1
-  patience: 30
+  patience: 25
   gradient_accumulation_steps: 1
-  eval_interval: 5
+  eval_interval: 3
   focal_loss_gamma: 2.0
   mixup_alpha: 0.0
   dropout: 0.12
