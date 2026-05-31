@@ -27,7 +27,7 @@ model:
   label_smoothing: 0.12
   use_cppe: true
   use_hierarchical: true
-  n_scale_layers: 1
+  n_scale_layers: 2
   ring_ssm_kernel: 7
   struct_proj_dim: 32
   consistency_alpha: 0.1
