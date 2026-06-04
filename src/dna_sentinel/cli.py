@@ -1,4 +1,4 @@
-"""Cassiopeia CLI."""
+"""Cassiopeia CLI — full command interface with short `dna` alias."""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from dna_sentinel.utils import (
     CassiopeiaExperiment,
     ConfigError,
     bootstrap_ci,
+    interpret_prediction,
     logger,
     predict_one,
     read_fasta,
@@ -86,30 +87,93 @@ def _make_model(cfg: dict):
     return Cassiopeia(CassiopeiaConfig.from_yaml(cfg))
 
 
+def _common_config_options(f):
+    f = click.option("--config", "-c", default="config/cassiopeia_prime.yaml", type=click.Path(exists=True),
+                     help="Path to YAML config file")(f)
+    return f
+
+
+# ── main group ─────────────────────────────────────────────────────────
+
 @click.group()
 def cli():
-    """Cassiopeia: DNA-only plasmid risk modeling."""
+    """Cassiopeia: DNA-only plasmid risk modeling.
 
+    Predicts mobility class, AMR probability, and geographic expansion
+    risk directly from raw FASTA sequence without BLAST or metadata.
+    """
+
+
+# ── dna shorthand group ────────────────────────────────────────────────
+
+@click.group()
+def dna():
+    """Cassiopeia short alias. Usage: dna <command> [options].
+
+    Commands: train, predict, bench, prep, features, cv, serve, list, interpret.
+    """
+
+
+# ── prepare ────────────────────────────────────────────────────────────
 
 @cli.command()
-@click.option("--config", default="config/cassiopeia_prime.yaml", type=click.Path(exists=True))
+@_common_config_options
 def prepare(config):
+    """Build dataset from FASTA + labels.
+
+    Filters PLSDB-derived sequences, applies train/val/test/holdout
+    split with 21-mer Jaccard-aware clustering (threshold >= 0.85).
+    """
     cfg = _load_config(config)
     click.echo(json.dumps(prepare_dataset(**cfg.get("data", cfg)), indent=2))
 
 
+@dna.command("prep")
+@_common_config_options
+def dna_prepare(config):
+    """Alias: build dataset from FASTA + labels."""
+    cfg = _load_config(config)
+    click.echo(json.dumps(prepare_dataset(**cfg.get("data", cfg)), indent=2))
+
+
+# ── prepare-features ───────────────────────────────────────────────────
+
 @cli.command("prepare-features")
-@click.option("--config", default="config/cassiopeia_prime.yaml", type=click.Path(exists=True))
+@click.option("--config", "-c", default="config/cassiopeia_prime.yaml", type=click.Path(exists=True),
+              help="Path to YAML config file")
 def prepare_features(config):
+    """Extract canonical k-mer + structural features.
+
+    Generates multi-scale window features (k-mer counts, GC content,
+    dinucleotide frequency, entropy) for all splits.
+    """
     cfg = _load_config(config)
     _validate_config(cfg)
     extract_features(cfg["data"]["out_dir"], {**cfg.get("features", {}), **cfg.get("model", {})})
 
 
+@dna.command("features")
+@click.option("--config", "-c", default="config/cassiopeia_prime.yaml", type=click.Path(exists=True),
+              help="Path to YAML config file")
+def dna_features(config):
+    """Alias: extract canonical k-mer + structural features."""
+    cfg = _load_config(config)
+    _validate_config(cfg)
+    extract_features(cfg["data"]["out_dir"], {**cfg.get("features", {}), **cfg.get("model", {})})
+
+
+# ── train ──────────────────────────────────────────────────────────────
+
 @cli.command("train")
-@click.option("--config", default="config/cassiopeia_prime.yaml", type=click.Path(exists=True))
-@click.option("--experiment", default=None, help="Experiment name for tracking")
+@click.option("--config", "-c", default="config/cassiopeia_prime.yaml", type=click.Path(exists=True),
+              help="Path to YAML config file")
+@click.option("--experiment", "-e", default=None, help="Experiment name for tracking")
 def train_cmd(config, experiment):
+    """Train the Cassiopeia model.
+
+    Runs the full training loop with balanced sampling, SWA, consistency
+    regularization, and L-BFGS calibration.
+    """
     cfg = _load_config(config)
     _validate_config(cfg)
     data_dir = Path(cfg["data"]["out_dir"])
@@ -131,10 +195,27 @@ def train_cmd(config, experiment):
     click.echo(json.dumps({"checkpoint": str(ckpt), "last": history[-1] if history else {}}, indent=2))
 
 
+@dna.command("train")
+@click.option("--config", "-c", default="config/cassiopeia_prime.yaml", type=click.Path(exists=True),
+              help="Path to YAML config file")
+@click.option("--experiment", "-e", default=None, help="Experiment name for tracking")
+def dna_train(config, experiment):
+    """Alias: train the Cassiopeia model."""
+    train_cmd.callback(config=config, experiment=experiment)
+
+
+# ── cross-validate ─────────────────────────────────────────────────────
+
 @cli.command("cross-validate")
-@click.option("--config", default="config/cassiopeia_prime.yaml", type=click.Path(exists=True))
-@click.option("--folds", default=5, type=int)
+@click.option("--config", "-c", default="config/cassiopeia_prime.yaml", type=click.Path(exists=True),
+              help="Path to YAML config file")
+@click.option("--folds", "-k", default=5, type=int, help="Number of CV folds")
 def cross_validate_cmd(config, folds):
+    """Run k-fold cross-validation.
+
+    Reports mean ± std for mobility BA, AMR AUROC, expansion AUROC,
+    and task score across folds. Optionally saves fold checkpoints.
+    """
     cfg = _load_config(config)
     _validate_config(cfg)
     data_dir = Path(cfg["data"]["out_dir"])
@@ -167,11 +248,31 @@ def cross_validate_cmd(config, folds):
     click.echo(json.dumps(result, indent=2, default=str))
 
 
-@cli.command("benchmark")
-@click.option("--checkpoint", required=True, type=click.Path(exists=True))
-@click.option("--data-dir", default="data/dna_sentinel")
-@click.option("--out", default="artifacts/cassiopeia_prime/report.json")
-def benchmark_cmd(checkpoint, data_dir, out):
+@dna.command("cv")
+@click.option("--config", "-c", default="config/cassiopeia_prime.yaml", type=click.Path(exists=True),
+              help="Path to YAML config file")
+@click.option("--folds", "-k", default=5, type=int, help="Number of CV folds")
+def dna_cross_validate(config, folds):
+    """Alias: run k-fold cross-validation."""
+    cross_validate_cmd.callback(config=config, folds=folds)
+
+
+# ── benchmark ──────────────────────────────────────────────────────────
+
+@cli.command()
+@click.option("--checkpoint", "-m", required=True, type=click.Path(exists=True),
+              help="Path to model checkpoint (.pt)")
+@click.option("--data-dir", "-d", default="data/dna_sentinel",
+              help="Data directory with feature/label files")
+@click.option("--out", "-o", default="artifacts/cassiopeia_prime_v14/report.json",
+              help="Output path for benchmark report JSON")
+def benchmark(checkpoint, data_dir, out):
+    """Benchmark model on all splits.
+
+    Evaluates mobility BA, AMR AUROC, expansion AUROC, and task score
+    on validation, test, and held-out sets with bootstrap confidence
+    intervals (95% CI, 500 resamples).
+    """
     model = Cassiopeia.load(checkpoint)
     root = Path(data_dir)
     SN = {"val": "validation", "heldout_test": "heldout"}
@@ -202,7 +303,9 @@ def benchmark_cmd(checkpoint, data_dir, out):
             return balanced_accuracy_score(t, p.argmax(-1))
 
         def _task_fn(t, p):
-            return (balanced_accuracy_score(t, p.argmax(-1)) + roc_auc_score(y_amr, amr) + roc_auc_score(y_exp, exp)) / 3
+            return (balanced_accuracy_score(t, p.argmax(-1))
+                    + roc_auc_score(y_amr, amr)
+                    + roc_auc_score(y_exp, exp)) / 3
 
         ci_specs = {
             "mobility_balanced_accuracy": (y_mob, mob, _mob_fn),
@@ -224,37 +327,109 @@ def benchmark_cmd(checkpoint, data_dir, out):
     click.echo(json.dumps(report, indent=2, default=str))
 
 
+@dna.command("bench")
+@click.option("--checkpoint", "-m", required=True, type=click.Path(exists=True),
+              help="Path to model checkpoint (.pt)")
+@click.option("--data-dir", "-d", default="data/dna_sentinel",
+              help="Data directory with feature/label files")
+@click.option("--out", "-o", default="artifacts/cassiopeia_prime_v14/report.json",
+              help="Output path for benchmark report JSON")
+def dna_benchmark(checkpoint, data_dir, out):
+    """Alias: benchmark model on all splits."""
+    benchmark.callback(checkpoint=checkpoint, data_dir=data_dir, out=out)
+
+
+# ── predict ────────────────────────────────────────────────────────────
+
 @cli.command("predict")
-@click.option("--checkpoint", required=True, type=click.Path(exists=True))
-@click.option("--fasta", "fasta_path", required=True, type=click.Path(exists=True))
-@click.option("--json", "as_json", is_flag=True)
-def predict_cmd(checkpoint, fasta_path, as_json):
+@click.option("--checkpoint", "-m", required=True, type=click.Path(exists=True),
+              help="Path to model checkpoint (.pt)")
+@click.option("--fasta", "-f", "fasta_path", required=True, type=click.Path(exists=True),
+              help="Input FASTA file path")
+@click.option("--json", "-j", "as_json", is_flag=True, help="Output as JSON")
+@click.option("--interpret", "-i", "with_interpret", is_flag=True,
+              help="Include biological interpretation with confidence labels")
+def predict_cmd(checkpoint, fasta_path, as_json, with_interpret):
+    """Predict on FASTA sequences.
+
+    Returns risk score, mobility class probabilities, AMR probability,
+    expansion probability, and top-5 evidence windows. Use --interpret
+    for biological context with confidence labels.
+    """
     from dataclasses import asdict
 
     model = Cassiopeia.load(checkpoint)
-    rows = [asdict(predict_one(model, sid, seq)) for sid, seq in read_fasta(fasta_path)]
+    rows = []
+    for sid, seq in read_fasta(fasta_path):
+        pred = asdict(predict_one(model, sid, seq))
+        if with_interpret:
+            pred["interpretation"] = interpret_prediction(pred, model.config.risk_weights)
+        rows.append(pred)
     if as_json:
         click.echo(json.dumps(rows, indent=2))
     else:
         for r in rows:
-            click.echo(f"{r['sequence_id']}\trisk={r['risk_score']:.4f}\tamr={r['amr_probability']:.4f}")
+            parts = [f"{r['sequence_id']}\trisk={r['risk_score']:.4f}",
+                     f"amr={r['amr_probability']:.4f}",
+                     f"exp={r['expansion_probability']:.4f}"]
+            if with_interpret and "interpretation" in r:
+                i = r["interpretation"]
+                parts.append(f"mob={i['mobility_label']}")
+            click.echo("\t".join(parts))
 
+
+@dna.command("predict")
+@click.option("--checkpoint", "-m", required=True, type=click.Path(exists=True),
+              help="Path to model checkpoint (.pt)")
+@click.option("--fasta", "-f", "fasta_path", required=True, type=click.Path(exists=True),
+              help="Input FASTA file path")
+@click.option("--json", "-j", "as_json", is_flag=True, help="Output as JSON")
+@click.option("--interpret", "-i", "with_interpret", is_flag=True,
+              help="Include biological interpretation with confidence labels")
+def dna_predict(checkpoint, fasta_path, as_json, with_interpret):
+    """Alias: predict on FASTA sequences."""
+    predict_cmd.callback(checkpoint=checkpoint, fasta_path=fasta_path,
+                         as_json=as_json, with_interpret=with_interpret)
+
+
+# ── serve ──────────────────────────────────────────────────────────────
 
 @cli.command("serve")
-@click.option("--checkpoint", required=True, type=click.Path(exists=True))
-@click.option("--port", default=8000, type=int)
-@click.option("--host", default="0.0.0.0")
-def serve(checkpoint, port, host):
+@click.option("--checkpoint", "-m", required=True, type=click.Path(exists=True),
+              help="Path to model checkpoint (.pt)")
+@click.option("--port", "-p", default=8000, type=int, help="HTTP port")
+@click.option("--host", default="0.0.0.0", help="Bind address")
+def serve_cmd(checkpoint, port, host):
+    """Start FastAPI inference server.
+
+    Exposes /predict, /predict-batch, and /health endpoints.
+    Model is loaded once at startup.
+    """
     import uvicorn
 
     from dna_sentinel.api import app
-
     os.environ["CASSIOPEIA_CHECKPOINT"] = checkpoint
     uvicorn.run(app, host=host, port=port, log_level="info")
 
 
+@dna.command("serve")
+@click.option("--checkpoint", "-m", required=True, type=click.Path(exists=True),
+              help="Path to model checkpoint (.pt)")
+@click.option("--port", "-p", default=8000, type=int, help="HTTP port")
+@click.option("--host", default="0.0.0.0", help="Bind address")
+def dna_serve(checkpoint, port, host):
+    """Alias: start FastAPI inference server."""
+    serve_cmd.callback(checkpoint=checkpoint, port=port, host=host)
+
+
+# ── experiment-list ────────────────────────────────────────────────────
+
 @cli.command("experiment-list")
 def experiment_list():
+    """List recent experiment runs.
+
+    Shows up to 20 most recent timestamped experiment directories.
+    """
     base = Path("experiments")
     if not base.exists():
         click.echo("No experiments directory found.")
@@ -263,6 +438,36 @@ def experiment_list():
     for d in dirs[:20]:
         click.echo(d)
 
+
+@dna.command("list")
+def dna_experiment_list():
+    """Alias: list recent experiment runs."""
+    experiment_list.callback()
+
+
+# ── interpret ──────────────────────────────────────────────────────────
+
+@dna.command("interpret")
+@click.option("--checkpoint", "-m", required=True, type=click.Path(exists=True),
+              help="Path to model checkpoint (.pt)")
+@click.option("--fasta", "-f", "fasta_path", required=True, type=click.Path(exists=True),
+              help="Input FASTA file path")
+def dna_interpret(checkpoint, fasta_path):
+    """Predict with biological interpretation.
+
+    Adds confidence labels (HIGH >= 0.80, MEDIUM 0.60-0.79, LOW < 0.60),
+    CARD family matching for AMR, and mobility + AMR co-occurrence
+    inference for expansion. Includes safety disclaimer.
+    """
+    from dataclasses import asdict
+    model = Cassiopeia.load(checkpoint)
+    for sid, seq in read_fasta(fasta_path):
+        pred = asdict(predict_one(model, sid, seq))
+        interp = interpret_prediction(pred, model.config.risk_weights)
+        click.echo(json.dumps({"sequence_id": sid, **pred, "interpretation": interp}, indent=2, default=str))
+
+
+# ── entrypoints ────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     cli()

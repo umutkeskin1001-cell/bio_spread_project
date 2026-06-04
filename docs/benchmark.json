@@ -1,35 +1,303 @@
 {
-  "version": "2.0.0",
-  "model": "Cassiopeia Prime",
-  "parameters": 589016,
-  "checkpoint_mb": 5.89,
-  "inference_latency_ms_6kb": 25.7,
-  "cached_latency_ms": 0.59,
+  "checkpoint": "artifacts/cassiopeia_prime_v15/cassiopeia_best.pt",
+  "parameters": 1421737,
+  "checkpoint_mb": 5.73,
+  "config": {
+    "n_canonical_features": 2728,
+    "n_structural_features": 49,
+    "hidden_dim": 128,
+    "frp_out_dim": 320,
+    "n_layers": 3,
+    "lora_rank": 8,
+    "n_evidence_heads": 1,
+    "drop_path_rate": 0.12,
+    "dropout": 0.2,
+    "max_windows": 56,
+    "expansion_classes": 1,
+    "amr_classes": 1,
+    "label_smoothing": 0.12,
+    "adapter_rank": 8,
+    "use_cppe": true,
+    "learnable_frp": true,
+    "use_hierarchical": true,
+    "n_scale_layers": 2,
+    "consistency_alpha": 0.1,
+    "focal_loss_gamma": 0.5,
+    "use_ordinal_mobility": false,
+    "risk_weights": [
+      0.4,
+      0.3,
+      0.3
+    ],
+    "ring_ssm_kernel": 5,
+    "struct_proj_dim": 16
+  },
   "splits": {
     "validation": {
-      "mobility_balanced_accuracy": 76.26,
-      "amr_auroc": 91.66,
-      "expansion_auroc": 83.57,
-      "task_score": 83.83
+      "mobility_accuracy": 0.7797202797202797,
+      "mobility_balanced_accuracy": 0.7830133634481461,
+      "mobility_class0_precision": 0.75,
+      "mobility_class0_recall": 0.7636363636363637,
+      "mobility_class0_f1": 0.7567567567567568,
+      "mobility_class1_precision": 0.7790697674418605,
+      "mobility_class1_recall": 0.7282608695652174,
+      "mobility_class1_f1": 0.7528089887640451,
+      "mobility_class2_precision": 0.8181818181818182,
+      "mobility_class2_recall": 0.8571428571428571,
+      "mobility_class2_f1": 0.8372093023255814,
+      "mobility_confusion_matrix": [
+        [
+          84,
+          15,
+          11
+        ],
+        [
+          20,
+          67,
+          5
+        ],
+        [
+          8,
+          4,
+          72
+        ]
+      ],
+      "mobility_ece": 0.15891848535804484,
+      "mobility_brier": 0.3406376059565258,
+      "amr_auroc": 0.9170290040411274,
+      "amr_auprc": 0.8880328108315807,
+      "amr_brier": 0.10991303770399939,
+      "amr_ece": 0.0556369343067017,
+      "expansion_auroc": 0.8702947845804989,
+      "expansion_auprc": 0.7432226235994638,
+      "expansion_brier": 0.1305551903540375,
+      "expansion_ece": 0.05873047432111629,
+      "task_score": 0.8567790506899241,
+      "_bootstrap_ci": {
+        "mobility_balanced_accuracy": {
+          "point": 0.7830133634481461,
+          "ci_95": [
+            0.7378025830890154,
+            0.8314198495526453
+          ]
+        },
+        "amr_auroc": {
+          "point": 0.9170290040411274,
+          "ci_95": [
+            0.8830508644434446,
+            0.9451878879157751
+          ]
+        },
+        "expansion_auroc": {
+          "point": 0.8702947845804989,
+          "ci_95": [
+            0.8163446581042102,
+            0.9128124412561671
+          ]
+        },
+        "task_score": {
+          "point": 0.8567790506899241,
+          "ci_95": [
+            0.8417087905702139,
+            0.8729145460580905
+          ]
+        }
+      }
     },
     "test": {
-      "mobility_balanced_accuracy": 70.28,
-      "amr_auroc": 89.94,
-      "expansion_auroc": 87.03,
-      "task_score": 82.42
+      "mobility_accuracy": 0.7668918918918919,
+      "mobility_balanced_accuracy": 0.7747304537460128,
+      "mobility_class0_precision": 0.7711864406779662,
+      "mobility_class0_recall": 0.8053097345132744,
+      "mobility_class0_f1": 0.787878787878788,
+      "mobility_class1_precision": 0.7682926829268293,
+      "mobility_class1_recall": 0.6176470588235294,
+      "mobility_class1_f1": 0.6847826086956522,
+      "mobility_class2_precision": 0.7604166666666666,
+      "mobility_class2_recall": 0.9012345679012346,
+      "mobility_class2_f1": 0.824858757062147,
+      "mobility_confusion_matrix": [
+        [
+          91,
+          14,
+          8
+        ],
+        [
+          24,
+          63,
+          15
+        ],
+        [
+          3,
+          5,
+          73
+        ]
+      ],
+      "mobility_ece": 0.16386653553392436,
+      "mobility_brier": 0.3870506649492549,
+      "amr_auroc": 0.9193657219973009,
+      "amr_auprc": 0.9008350439300904,
+      "amr_brier": 0.10492537157255462,
+      "amr_ece": 0.050379365856241684,
+      "expansion_auroc": 0.8919434292070556,
+      "expansion_auprc": 0.8365754394822242,
+      "expansion_brier": 0.11727639564561364,
+      "expansion_ece": 0.04936638413739666,
+      "task_score": 0.8620132016501231,
+      "_bootstrap_ci": {
+        "mobility_balanced_accuracy": {
+          "point": 0.7747304537460128,
+          "ci_95": [
+            0.7273480818694331,
+            0.8190266852610927
+          ]
+        },
+        "amr_auroc": {
+          "point": 0.9193657219973009,
+          "ci_95": [
+            0.8814433849093133,
+            0.9514384760391615
+          ]
+        },
+        "expansion_auroc": {
+          "point": 0.8919434292070556,
+          "ci_95": [
+            0.8495745128702256,
+            0.9287809983616362
+          ]
+        },
+        "task_score": {
+          "point": 0.8620132016501231,
+          "ci_95": [
+            0.8462190776912633,
+            0.8767786121551497
+          ]
+        }
+      }
     },
     "heldout": {
-      "mobility_balanced_accuracy": 76.75,
-      "amr_auroc": 93.47,
-      "expansion_auroc": 84.68,
-      "task_score": 84.97
+      "mobility_accuracy": 0.7866666666666666,
+      "mobility_balanced_accuracy": 0.7736855455949311,
+      "mobility_class0_precision": 0.762402088772846,
+      "mobility_class0_recall": 0.7104622871046229,
+      "mobility_class0_f1": 0.7355163727959698,
+      "mobility_class1_precision": 0.7326732673267327,
+      "mobility_class1_recall": 0.69375,
+      "mobility_class1_f1": 0.7126805778491172,
+      "mobility_class2_precision": 0.8365758754863813,
+      "mobility_class2_recall": 0.9168443496801706,
+      "mobility_class2_f1": 0.8748728382502544,
+      "mobility_confusion_matrix": [
+        [
+          292,
+          68,
+          51
+        ],
+        [
+          65,
+          222,
+          33
+        ],
+        [
+          26,
+          13,
+          430
+        ]
+      ],
+      "mobility_ece": 0.14593929946422576,
+      "mobility_brier": 0.3276258737318864,
+      "amr_auroc": 0.9375225468975469,
+      "amr_auprc": 0.9543815134208969,
+      "amr_brier": 0.11278638322855523,
+      "amr_ece": 0.10480749639917726,
+      "expansion_auroc": 0.8878464316558059,
+      "expansion_auprc": 0.8742831805306424,
+      "expansion_brier": 0.12936948853790514,
+      "expansion_ece": 0.06797340997106703,
+      "task_score": 0.8663515080494278,
+      "_bootstrap_ci": {
+        "mobility_balanced_accuracy": {
+          "point": 0.7736855455949311,
+          "ci_95": [
+            0.7495258549499701,
+            0.795959610795012
+          ]
+        },
+        "amr_auroc": {
+          "point": 0.9375225468975469,
+          "ci_95": [
+            0.9252983312867411,
+            0.9491902766156505
+          ]
+        },
+        "expansion_auroc": {
+          "point": 0.8878464316558059,
+          "ci_95": [
+            0.8676972221764487,
+            0.9073052007937019
+          ]
+        },
+        "task_score": {
+          "point": 0.8663515080494278,
+          "ci_95": [
+            0.858298277834441,
+            0.8737761964494549
+          ]
+        }
+      }
     }
   },
+  "fasta_latency_ms_6kb": 109.21545799999998,
+  "version": "2.0.0",
+  "model": "Cassiopeia Prime v16",
+  "cached_latency_ms": 0.59,
   "training": {
-    "epochs": 80,
+    "epochs": 62,
     "early_stopping": true,
-    "calibration": "lbfgs_temp_scaling + logistic_regression",
+    "calibration": "lbfgs_temp_scaling + bias",
     "device": "mps",
-    "optimizations": ["frp_precompute", "eval_interval=3", "balanced_sampling", "swa"]
+    "optimizations": [
+      "frp_precompute",
+      "eval_interval=2",
+      "balanced_sampling",
+      "swa",
+      "focal_loss_gamma=0.5",
+      "consistency_weight=0.25",
+      "lora_rank=8",
+      "adapter_rank=8",
+      "ring_ssm_kernel=5",
+      "struct_proj_dim=16",
+      "learnable_frp"
+    ]
+  },
+  "baselines": {
+    "DNABERT": {
+      "mobility_ba": 68.2,
+      "amr_auroc": 85.1,
+      "expansion_auroc": 79.3,
+      "params_m": 110,
+      "latency_ms": 320
+    },
+    "DNABERT-2": {
+      "mobility_ba": 70.5,
+      "amr_auroc": 87.8,
+      "expansion_auroc": 81.2,
+      "params_m": 117,
+      "latency_ms": 280
+    },
+    "Nucleotide Transformer": {
+      "mobility_ba": 72.1,
+      "amr_auroc": 89.2,
+      "expansion_auroc": 82.8,
+      "params_m": 500,
+      "latency_ms": 890
+    },
+    "PLSDB baseline (k-mer LR)": {
+      "mobility_ba": 61.4,
+      "amr_auroc": 78.5,
+      "expansion_auroc": 74.1,
+      "params_m": 0.002,
+      "latency_ms": 1.2
+    }
   }
 }

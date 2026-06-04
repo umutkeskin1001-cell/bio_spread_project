@@ -1,0 +1,251 @@
+{
+  "checkpoint": "artifacts/cassiopeia_prime_v15/cassiopeia_best.pt",
+  "parameters": 406185,
+  "checkpoint_mb": 4.453186,
+  "config": {
+    "n_canonical_features": 2728,
+    "n_structural_features": 49,
+    "hidden_dim": 128,
+    "frp_out_dim": 256,
+    "n_layers": 2,
+    "lora_rank": 8,
+    "n_evidence_heads": 1,
+    "drop_path_rate": 0.1,
+    "dropout": 0.2,
+    "max_windows": 56,
+    "expansion_classes": 1,
+    "amr_classes": 1,
+    "label_smoothing": 0.12,
+    "adapter_rank": 8,
+    "use_cppe": true,
+    "learnable_frp": false,
+    "use_hierarchical": true,
+    "n_scale_layers": 1,
+    "consistency_alpha": 0.1,
+    "focal_loss_gamma": 0.5,
+    "use_ordinal_mobility": false,
+    "risk_weights": [
+      0.4,
+      0.3,
+      0.3
+    ],
+    "ring_ssm_kernel": 5,
+    "struct_proj_dim": 16
+  },
+  "splits": {
+    "validation": {
+      "mobility_accuracy": 0.7167832167832168,
+      "mobility_balanced_accuracy": 0.7262469414643328,
+      "mobility_class0_precision": 0.7083333333333334,
+      "mobility_class0_recall": 0.6181818181818182,
+      "mobility_class0_f1": 0.6601941747572815,
+      "mobility_class1_precision": 0.6666666666666666,
+      "mobility_class1_recall": 0.7391304347826086,
+      "mobility_class1_f1": 0.7010309278350515,
+      "mobility_class2_precision": 0.7840909090909091,
+      "mobility_class2_recall": 0.8214285714285714,
+      "mobility_class2_f1": 0.8023255813953489,
+      "mobility_confusion_matrix": [
+        [
+          68,
+          28,
+          14
+        ],
+        [
+          19,
+          68,
+          5
+        ],
+        [
+          9,
+          6,
+          69
+        ]
+      ],
+      "mobility_ece": 0.14607308544479056,
+      "mobility_brier": 0.4379845770522177,
+      "amr_auroc": 0.8746738963629854,
+      "amr_auprc": 0.8330168160583856,
+      "amr_brier": 0.14006222979295083,
+      "amr_ece": 0.07940881700626204,
+      "expansion_auroc": 0.8393990929705215,
+      "expansion_auprc": 0.7397691384237822,
+      "expansion_brier": 0.19621036557070134,
+      "expansion_ece": 0.21590905730332527,
+      "task_score": 0.8134399769326132,
+      "_bootstrap_ci": {
+        "mobility_balanced_accuracy": {
+          "point": 0.7262469414643328,
+          "ci_95": [
+            0.6765508744354503,
+            0.7774997923523866
+          ]
+        },
+        "amr_auroc": {
+          "point": 0.8746738963629854,
+          "ci_95": [
+            0.8282465912183176,
+            0.9124525671314354
+          ]
+        },
+        "expansion_auroc": {
+          "point": 0.8393990929705215,
+          "ci_95": [
+            0.7789865462233326,
+            0.8867602238868606
+          ]
+        },
+        "task_score": {
+          "point": 0.8134399769326132,
+          "ci_95": [
+            0.7968746212563189,
+            0.8305242605619645
+          ]
+        }
+      }
+    },
+    "test": {
+      "mobility_accuracy": 0.6790540540540541,
+      "mobility_balanced_accuracy": 0.6919964096203324,
+      "mobility_class0_precision": 0.7157894736842105,
+      "mobility_class0_recall": 0.6017699115044248,
+      "mobility_class0_f1": 0.6538461538461539,
+      "mobility_class1_precision": 0.5945945945945946,
+      "mobility_class1_recall": 0.6470588235294118,
+      "mobility_class1_f1": 0.619718309859155,
+      "mobility_class2_precision": 0.7444444444444445,
+      "mobility_class2_recall": 0.8271604938271605,
+      "mobility_class2_f1": 0.783625730994152,
+      "mobility_confusion_matrix": [
+        [
+          68,
+          36,
+          9
+        ],
+        [
+          22,
+          66,
+          14
+        ],
+        [
+          5,
+          9,
+          67
+        ]
+      ],
+      "mobility_ece": 0.10538063460105172,
+      "mobility_brier": 0.4472504302927111,
+      "amr_auroc": 0.8863986890302679,
+      "amr_auprc": 0.8384059223427927,
+      "amr_brier": 0.13461112220300347,
+      "amr_ece": 0.07854076455554898,
+      "expansion_auroc": 0.8827798082525559,
+      "expansion_auprc": 0.8092680434633439,
+      "expansion_brier": 0.16935508947765912,
+      "expansion_ece": 0.20015016522862625,
+      "task_score": 0.8203916356343853,
+      "_bootstrap_ci": {
+        "mobility_balanced_accuracy": {
+          "point": 0.6919964096203324,
+          "ci_95": [
+            0.6432967799188641,
+            0.740333520842586
+          ]
+        },
+        "amr_auroc": {
+          "point": 0.8863986890302679,
+          "ci_95": [
+            0.8493477380784746,
+            0.9246176522084844
+          ]
+        },
+        "expansion_auroc": {
+          "point": 0.8827798082525559,
+          "ci_95": [
+            0.8374307331628305,
+            0.9210389624392988
+          ]
+        },
+        "task_score": {
+          "point": 0.8203916356343853,
+          "ci_95": [
+            0.804158425733896,
+            0.8365040060418032
+          ]
+        }
+      }
+    },
+    "heldout": {
+      "mobility_accuracy": 0.6808333333333333,
+      "mobility_balanced_accuracy": 0.6762209870875031,
+      "mobility_class0_precision": 0.6764705882352942,
+      "mobility_class0_recall": 0.5036496350364964,
+      "mobility_class0_f1": 0.5774058577405858,
+      "mobility_class1_precision": 0.551219512195122,
+      "mobility_class1_recall": 0.70625,
+      "mobility_class1_f1": 0.6191780821917808,
+      "mobility_class2_precision": 0.7933884297520661,
+      "mobility_class2_recall": 0.8187633262260128,
+      "mobility_class2_f1": 0.8058761804826863,
+      "mobility_confusion_matrix": [
+        [
+          207,
+          140,
+          64
+        ],
+        [
+          58,
+          226,
+          36
+        ],
+        [
+          41,
+          44,
+          384
+        ]
+      ],
+      "mobility_ece": 0.12100256420671936,
+      "mobility_brier": 0.4436731388565309,
+      "amr_auroc": 0.9103986291486292,
+      "amr_auprc": 0.933813865900745,
+      "amr_brier": 0.12021950506866683,
+      "amr_ece": 0.07601256816104678,
+      "expansion_auroc": 0.8521209300238899,
+      "expansion_auprc": 0.7977944803094855,
+      "expansion_brier": 0.18997106178015877,
+      "expansion_ece": 0.158372691894571,
+      "task_score": 0.8129135154200074,
+      "_bootstrap_ci": {
+        "mobility_balanced_accuracy": {
+          "point": 0.6762209870875031,
+          "ci_95": [
+            0.6536416281457783,
+            0.6999796473692083
+          ]
+        },
+        "amr_auroc": {
+          "point": 0.9103986291486292,
+          "ci_95": [
+            0.8930131006005273,
+            0.9256630257662557
+          ]
+        },
+        "expansion_auroc": {
+          "point": 0.8521209300238899,
+          "ci_95": [
+            0.829886642032339,
+            0.8731434133611589
+          ]
+        },
+        "task_score": {
+          "point": 0.8129135154200074,
+          "ci_95": [
+            0.8053870624394325,
+            0.8208330688472425
+          ]
+        }
+      }
+    }
+  },
+  "fasta_latency_ms_6kb": 80.50858299999986
+}

@@ -31,7 +31,7 @@ model:
   ring_ssm_kernel: 7
   struct_proj_dim: 32
   consistency_alpha: 0.1
-  focal_loss_gamma: 0.0
+  focal_loss_gamma: 0.5
   use_ordinal_mobility: false
   risk_weights: [0.4, 0.3, 0.3]
 
@@ -49,20 +49,20 @@ training:
   min_lr: 0.00001
   warmup_epochs: 5
   weight_decay: 0.1
-  patience: 25
+  patience: 15
   gradient_accumulation_steps: 1
-  eval_interval: 3
-  focal_loss_gamma: 2.0
+  eval_interval: 2
+  focal_loss_gamma: 0.5
   mixup_alpha: 0.0
   dropout: 0.12
   balanced_sampling: true
   score_mode: equal
-  artifact_dir: artifacts/cassiopeia_prime_v9
+  artifact_dir: artifacts/cassiopeia_prime_v15
   consistency_weight: 0.25
   consistency_temperature: 1.0
   consistency_interval: 2
   use_pcgrad: false
   use_swa: true
-  swa_start_epoch: 40
+  swa_start_epoch: 80
   use_amp: true
   use_compile: false

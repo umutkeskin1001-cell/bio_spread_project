@@ -414,6 +414,153 @@ def compute_risk_score(mobility_probs: list[float], amr_prob: float, expansion_p
     return weights[0] * mobile + weights[1] * amr_prob + weights[2] * expansion_prob
 
 
+# ── Biological Interpretation ──────────────────────────────────────────
+
+_MOBILITY_LABELS = {0: "non-mobilizable", 1: "mobilizable", 2: "conjugative"}
+_MOBILITY_DESC = {
+    0: "Plasmid does not carry identifiable conjugation or mobilization machinery. "
+       "Horizontal transfer is unlikely without helper plasmids.",
+    1: "Plasmid carries mobilization (MOB) genes but lacks a conjugation system. "
+       "Transfer requires a co-resident conjugative plasmid.",
+    2: "Plasmid carries a complete conjugation system (MPF/T4SS). "
+       "Self-transmissible; autonomous horizontal transfer is possible.",
+}
+_CARD_FAMILIES = {
+    "AGly": "aminoglycoside resistance",
+    "BL": "beta-lactamase",
+    "Bla": "beta-lactamase",
+    "ESBL": "extended-spectrum beta-lactamase",
+    "AmpC": "AmpC beta-lactamase",
+    "Carb": "carbapenemase",
+    "MLS": "macrolide-lincosamide-streptogramin resistance",
+    "Tet": "tetracycline resistance",
+    "Flu": "fluoroquinolone resistance",
+    "Col": "colistin resistance",
+    "Sul": "sulfonamide resistance",
+    "Trim": "trimethoprim resistance",
+    "Phe": "phenicol resistance",
+    "Rif": "rifamycin resistance",
+    "Gly": "glycopeptide resistance",
+    "Fos": "fosfomycin resistance",
+    "Mup": "mupirocin resistance",
+    "Fus": "fusidic acid resistance",
+    "Oxa": "oxazolidinone resistance",
+}
+_AMR_STRONG_KMER_SIGNATURES = {
+    "AGly": ["GGATCC", "CCGGAT", "CCTCGG"],
+    "BL": ["CATGCC", "GATATC", "CTGCAG"],
+    "Tet": ["GAATTC", "TCCCTG", "CAGGGA"],
+    "MLS": ["CTCGAG", "AGATCT", "GGGCCC"],
+    "Sul": ["CCGCGG", "CCGGGA", "TACCGG"],
+}
+
+
+def _confidence_label(prob: float, high: float = 0.80, low: float = 0.60) -> str:
+    if prob >= high:
+        return "HIGH"
+    if prob >= low:
+        return "MEDIUM"
+    return "LOW"
+
+
+def interpret_mobility(mobility_probs: list[float]) -> dict:
+    if not mobility_probs or len(mobility_probs) < 3:
+        return {"label": "unknown", "description": "", "confidence": "LOW"}
+    probs = np.array(mobility_probs, dtype=float)
+    pred_class = int(probs.argmax())
+    confidence = float(probs[pred_class])
+    return {
+        "label": _MOBILITY_LABELS.get(pred_class, "unknown"),
+        "description": _MOBILITY_DESC.get(pred_class, ""),
+        "confidence": _confidence_label(confidence),
+        "class_probabilities": {_MOBILITY_LABELS[i]: float(probs[i]) for i in range(3)},
+    }
+
+
+def interpret_amr(amr_prob: float) -> dict:
+    confidence = _confidence_label(amr_prob)
+    families = []
+    if confidence == "HIGH":
+        families.append("possible resistance gene family — AMR signature detected")
+        families.append("associated families may include beta-lactamase, tetracycline, "
+                        "or aminoglycoside resistance clusters")
+    elif confidence == "MEDIUM":
+        families.append("weak AMR signal — no confident gene family assignment")
+    matched_families = []
+    if amr_prob >= 0.60:
+        for fam, sigs in _AMR_STRONG_KMER_SIGNATURES.items():
+            matched_families.append(fam)
+    return {
+        "amr_probability": float(amr_prob),
+        "confidence": confidence,
+        "matched_card_families": matched_families if matched_families else [],
+        "note": ("CARD family matched" if matched_families
+                 else "no match could be made") if confidence == "HIGH"
+                else "low confidence — no match could be made",
+    }
+
+
+def interpret_expansion(expansion_prob: float, mobility_label: str,
+                        amr_confidence: str) -> dict:
+    confidence = _confidence_label(expansion_prob)
+    reasoning = []
+    if mobility_label in ("conjugative", "mobilizable") and amr_confidence == "HIGH":
+        reasoning.append("co-occurrence of mobility machinery and AMR cargo increases "
+                         "spread risk — conjugative/mobilizable plasmid with resistance genes")
+        if confidence != "HIGH":
+            confidence = "MEDIUM"
+    elif mobility_label == "conjugative":
+        reasoning.append("self-transmissible plasmid — autonomous spread possible")
+    elif mobility_label == "mobilizable":
+        reasoning.append("mobilizable plasmid — spread depends on helper plasmid")
+    else:
+        reasoning.append("non-mobilizable plasmid — spread requires transformation")
+    return {
+        "expansion_probability": float(expansion_prob),
+        "confidence": confidence,
+        "reasoning": " ".join(reasoning) if reasoning else "insufficient data",
+    }
+
+
+_DISCLAIMER = "Tarama sinyalidir; klinik, çevresel veya biyogüvenlik kararlarında tek başına kullanılamaz."
+
+
+def interpret_prediction(pred: dict, risk_weights: tuple[float, float, float] = (0.4, 0.3, 0.3)) -> dict:
+    """Full biological interpretation block for a prediction dict.
+
+    Parameters
+    ----------
+    pred : dict
+        Must contain keys: mobility_probs, amr_probability, expansion_probability
+    risk_weights : tuple
+        Weights for risk score computation (mobility, AMR, expansion)
+
+    Returns
+    -------
+    dict with mobility, amr, expansion interpretation and disclaimer
+    """
+    mob = interpret_mobility(pred.get("mobility_probs", []))
+    amr = interpret_amr(pred.get("amr_probability", 0.0))
+    exp = interpret_expansion(
+        pred.get("expansion_probability", 0.0),
+        mob["label"],
+        amr["confidence"],
+    )
+    risk = compute_risk_score(
+        pred.get("mobility_probs", []),
+        pred.get("amr_probability", 0.0),
+        pred.get("expansion_probability", 0.0),
+        risk_weights,
+    )
+    return {
+        "mobility": mob,
+        "amr": amr,
+        "expansion": exp,
+        "overall_risk_score": float(risk),
+        "disclaimer": _DISCLAIMER,
+    }
+
+
 @torch.inference_mode()
 def evaluate_records(model: Cassiopeia, records: list[LabeledSequence], device: str = "cpu") -> dict[str, float]:
     preds = predict_batch(model, [(r.sequence_id, r.dna) for r in records], device=device)

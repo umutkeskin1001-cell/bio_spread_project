@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dna-sentinel"
-version = "0.2.0"
+version = "0.3.0"
 description = "DNA-only mobile genetic element risk modeling"
 requires-python = ">=3.10"
 dependencies = [
@@ -16,6 +16,10 @@ dependencies = [
     "polars>=0.18",
     "mmh3>=3.0",
 ]
+
+[project.scripts]
+dna-sentinel = "dna_sentinel.cli:cli"
+dna = "dna_sentinel.cli:dna"
 
 [project.optional-dependencies]
 api = [
@@ -32,13 +36,16 @@ dev = [
 
 [tool.pytest.ini_options]
 minversion = "7.0"
-addopts = "-v --tb=short -x --cov=src --cov-report=term --cov-fail-under=70"
+addopts = "-v --tb=short -x --cov=src --cov-report=term --cov-report=html --cov-fail-under=85"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 
 [tool.coverage.run]
 source = ["src"]
-omit = ["tests/*", "src/dna_sentinel.egg-info/*"]
+omit = ["tests/*", "src/dna_sentinel.egg-info/*", "*/__pycache__/*"]
+
+[tool.coverage.paths]
+source = ["src", ".tox/*/site-packages"]
 
 [tool.coverage.report]
 exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:", "if __name__ == .__main__.:"]

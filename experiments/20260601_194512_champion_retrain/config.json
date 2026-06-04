@@ -1,0 +1,87 @@
+{
+  "data": {
+    "fasta_path": "data/project_inputs/raw/plsdb_sequences.fasta",
+    "backbones_tsv": "data/project_inputs/silver/plasmid_backbones.tsv",
+    "amr_tsv": "data/project_inputs/silver/plasmid_amr_consensus.tsv",
+    "out_dir": "data/dna_sentinel",
+    "limit": 2048,
+    "min_len": 1000,
+    "max_len": 300000,
+    "seed": 42,
+    "expansion_country_threshold": 15
+  },
+  "model": {
+    "n_canonical_features": 2728,
+    "n_structural_features": 49,
+    "hidden_dim": 128,
+    "frp_out_dim": 320,
+    "n_layers": 3,
+    "lora_rank": 12,
+    "adapter_rank": 12,
+    "n_evidence_heads": 1,
+    "drop_path_rate": 0.12,
+    "aux_loss_weight": 0.25,
+    "dropout": 0.2,
+    "max_windows": 56,
+    "expansion_classes": 1,
+    "amr_classes": 1,
+    "label_smoothing": 0.12,
+    "use_cppe": true,
+    "use_hierarchical": true,
+    "n_scale_layers": 2,
+    "ring_ssm_kernel": 7,
+    "struct_proj_dim": 32,
+    "consistency_alpha": 0.1,
+    "focal_loss_gamma": 0.0,
+    "use_ordinal_mobility": false,
+    "risk_weights": [
+      0.4,
+      0.3,
+      0.3
+    ]
+  },
+  "features": {
+    "window_sizes": [
+      512,
+      2048,
+      8192
+    ],
+    "strides": [
+      256,
+      1024,
+      4096
+    ],
+    "max_windows": [
+      32,
+      16,
+      8
+    ]
+  },
+  "training": {
+    "epochs": 120,
+    "batch_size": 64,
+    "lr": 0.0003,
+    "backbone_lr": 0.00025,
+    "head_lr": 0.00035,
+    "min_lr": 1e-05,
+    "warmup_epochs": 5,
+    "weight_decay": 0.1,
+    "patience": 15,
+    "gradient_accumulation_steps": 1,
+    "eval_interval": 2,
+    "focal_loss_gamma": 0.5,
+    "mixup_alpha": 0.0,
+    "dropout": 0.12,
+    "balanced_sampling": true,
+    "score_mode": "equal",
+    "artifact_dir": "artifacts/cassiopeia_prime_v14",
+    "consistency_weight": 0.25,
+    "consistency_temperature": 1.0,
+    "consistency_interval": 2,
+    "use_pcgrad": false,
+    "use_swa": true,
+    "swa_start_epoch": 80,
+    "use_amp": true,
+    "use_compile": false
+  }
+}

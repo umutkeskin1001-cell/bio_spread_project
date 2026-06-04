@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cassiopeia Prime — Benchmark</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header>
+  <div class="container">
+    <h1>Cassiopeia <span>Prime</span></h1>
+    <nav>
+      <a href="index.html">Predict</a>
+      <a href="benchmark.html" class="active">Benchmark</a>
+    </nav>
+  </div>
+</header>
+
+<main class="container">
+  <div class="tabs">
+    <div class="tab active" data-tab="tab-bench">Benchmark</div>
+    <div class="tab" data-tab="tab-methodology">Methodology</div>
+    <div class="tab" data-tab="tab-limitations">Limitations</div>
+  </div>
+
+  <!-- Benchmark Tab -->
+  <div class="tab-content active" id="tab-bench">
+    <div class="card">
+      <h2>Cassiopeia Prime vs Baselines</h2>
+      <p style="font-size:0.825rem;color:var(--text2);margin-bottom:16px">
+        Comparison with literature baselines on the held-out test set.
+        <strong>Bold</strong> values indicate best per metric. Cassiopeia row is highlighted.
+      </p>
+      <table class="bench-table">
+        <thead>
+          <tr>
+            <th>Model</th>
+            <th>Mobility BA</th>
+            <th>AMR AUROC</th>
+            <th>Expansion AUROC</th>
+            <th>Task Score</th>
+            <th>Parameters</th>
+            <th>Latency (ms)</th>
+          </tr>
+        </thead>
+        <tbody id="accuracy-body">
+        </tbody>
+      </table>
+      <div class="bench-meta">
+        Benchmark date: 2026-06-01 &middot; Device: Apple MPS &middot; 
+        Test set: held-out (n=1,200) &middot; Cassiopeia v0.3.0
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Split-wise Performance</h2>
+      <table class="bench-table">
+        <thead>
+          <tr>
+            <th>Split</th>
+            <th>Mobility BA</th>
+            <th>AMR AUROC</th>
+            <th>Expansion AUROC</th>
+            <th>Task Score</th>
+          </tr>
+        </thead>
+        <tbody id="split-body">
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Key Metrics</h2>
+      <table class="bench-table">
+        <thead>
+          <tr><th>Property</th><th>Value</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Trainable parameters</td><td>568,437</td></tr>
+          <tr><td>Checkpoint size</td><td>5.81 MB</td></tr>
+          <tr><td>FASTA latency (6 kb)</td><td>105.5 ms</td></tr>
+          <tr><td>Cached latency</td><td>0.59 ms/seq</td></tr>
+          <tr><td>Training budget</td><td>2,048 plasmids max</td></tr>
+          <tr><td>Calibration</td><td>L-BFGS temperature + bias scaling</td></tr>
+          <tr><td>Deployment</td><td>Reverse-complement averaged inference</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Methodology Tab -->
+  <div class="tab-content" id="tab-methodology">
+    <div class="card">
+      <h2>Benchmark Methodology</h2>
+
+      <div class="method-box">
+        <h3 style="margin-bottom:8px">Test Sets</h3>
+        <p>
+          The model is evaluated on <strong>three independent splits</strong> derived from
+          PLSDB v2025:
+        </p>
+        <ul style="padding-left:20px;margin-top:8px">
+          <li><strong>Validation</strong> (n=286): Used for early stopping and calibration.</li>
+          <li><strong>Test</strong> (n=296): Held during development; used for final metric reporting.</li>
+          <li><strong>Held-out</strong> (n=1,200): Sequestered from all training and validation;
+            reported <em>only</em> in the final benchmark.</li>
+        </ul>
+        <p style="margin-top:8px">
+          Splits use <strong>21-mer Jaccard-aware clustering</strong> (threshold &ge; 0.85) to
+          prevent near-duplicate leakage between splits. The held-out set is never used for
+          training, calibration, or early stopping decisions.
+        </p>
+      </div>
+
+      <div class="method-box">
+        <h3 style="margin-bottom:8px">Evaluation Protocol</h3>
+        <ul style="padding-left:20px">
+          <li><strong>Mobility</strong>: Balanced accuracy (macro-average of per-class recall).</li>
+          <li><strong>AMR / Expansion</strong>: Area Under the ROC Curve (AUROC).</li>
+          <li><strong>Task Score</strong>: Unweighted mean of the three metrics above.</li>
+          <li><strong>Confidence intervals</strong>: Bootstrap with 500 resamples, 95% CI.</li>
+          <li><strong>Calibration</strong>: L-BFGS temperature + bias scaling on validation logits.</li>
+          <li><strong>Inference</strong>: Reverse-complement averaged (original + revcomp, then averaged).</li>
+        </ul>
+      </div>
+
+      <div class="method-box">
+        <h3 style="margin-bottom:8px">Baseline Numbers</h3>
+        <p>
+          Baseline metrics for DNABERT, DNABERT-2, and Nucleotide Transformer are
+          <strong>estimated from published evaluations</strong> on comparable plasmid
+          classification tasks and are not exact reproductions. The PLSDB baseline uses
+          a logistic regression on 4-6 mer k-mer counts (same features as Cassiopeia).
+        </p>
+        <p style="margin-top:8px">
+          <strong>Key differences</strong>: Cassiopeia Prime is explicitly designed for a
+          2,048-plasmid training cap. DNABERT and Nucleotide Transformer were pretrained on
+          millions of sequences; their reported numbers reflect fine-tuning on the
+          same limited data and may be lower than their full-data potential.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Limitations Tab -->
+  <div class="tab-content" id="tab-limitations">
+    <div class="card">
+      <h2>Known Limitations</h2>
+      <div class="method-box">
+        <ul style="padding-left:20px">
+          <li><strong>Evidence windows</strong> are model attention scores, not experimentally validated breakpoints. They indicate which regions the model finds informative, not confirmed oriT or resistance genes.</li>
+          <li style="margin-top:8px">The model does <strong>not</strong> run BLAST, gene calling, host metadata lookup, or assembly quality checks. Predictions are purely sequence-based.</li>
+          <li style="margin-top:8px"><strong>Reverse-complement averaging</strong> reduces orientation instability but does not eliminate circular cut-point drift entirely.</li>
+          <li style="margin-top:8px">The <strong>2,048-plasmid training cap</strong> means the model is inherently data-constrained. Performance on rare or novel plasmid families may be lower.</li>
+          <li style="margin-top:8px"><strong>Mobility classification</strong> (especially the "mobilizable" class) remains the most challenging task, with class 1 recall around 65% on held-out data.</li>
+          <li style="margin-top:8px"><strong>Geographic expansion</strong> is a proxy based on observed spread to &ge;15 countries. It does not account for sampling bias, reporting lag, or plasmid extinction.</li>
+          <li style="margin-top:8px">AMR signatures are <strong>k-mer pattern based</strong>, not gene-level annotations. HIGH confidence does not guarantee the presence of specific resistance genes.</li>
+          <li style="margin-top:8px">The model should <strong>not</strong> be used as the sole basis for clinical, environmental, regulatory, or biosafety decisions. Outputs require orthogonal validation.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

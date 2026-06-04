@@ -376,7 +376,8 @@ def _focal_bce(logits, target, pw, gamma):
     if gamma <= 0:
         return F.binary_cross_entropy_with_logits(logits, target, pos_weight=pw)
     loss = F.binary_cross_entropy_with_logits(logits, target, pos_weight=pw, reduction="none")
-    return ((1 - (-loss).exp()) ** gamma * loss).mean()
+    modulating = (1 - (-loss).exp()).clamp(min=0) ** gamma
+    return (modulating * loss).mean()
 
 
 def _focal_ce(logits, target, gamma, ls=0.0):

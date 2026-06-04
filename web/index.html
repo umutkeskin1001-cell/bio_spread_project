@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cassiopeia Prime — Plasmid Risk Predictor</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header>
+  <div class="container">
+    <h1>Cassiopeia <span>Prime</span></h1>
+    <nav>
+      <a href="index.html" class="active">Predict</a>
+      <a href="benchmark.html">Benchmark</a>
+    </nav>
+  </div>
+</header>
+
+<main class="container">
+  <div class="card">
+    <h2>Plasmid Risk Prediction</h2>
+    <p style="font-size:0.85rem;color:var(--text2);margin-bottom:16px">
+      Paste a DNA sequence or upload a FASTA file. The model predicts mobility class,
+      antimicrobial resistance (AMR) probability, and geographic expansion risk
+      directly from sequence — no BLAST or metadata required.
+    </p>
+    <textarea id="sequence-input" placeholder="Paste DNA sequence here... (FASTA format supported)&#10;&#10;Example:&#10;>my_plasmid&#10;ATGCGTACGTAGCTAGCTAGCTAGCTG..." spellcheck="false"></textarea>
+    <div class="validation-error" id="validation-msg"></div>
+    <div class="btn-group">
+      <button class="btn" id="predict-btn">Predict</button>
+      <button class="btn btn-secondary" id="sample-btn">Load sample</button>
+      <button class="btn btn-secondary" id="clear-btn">Clear</button>
+    </div>
+    <div style="margin-top:12px">
+      <input type="file" id="file-input" accept=".fa,.fasta,.fna,.txt">
+      <span style="font-size:0.75rem;color:var(--text2)">Upload FASTA file</span>
+    </div>
+    <div class="progress-bar" id="progress-bar"><div class="fill" id="progress-fill"></div></div>
+  </div>
+
+  <div class="error-banner" id="error-banner"></div>
+
+  <div id="results" style="display:none">
+    <div class="results-grid">
+      <div class="metric-card mob">
+        <div class="label">Mobility</div>
+        <div class="value" id="mob-value">—</div>
+        <div class="confidence" id="mob-confidence"></div>
+      </div>
+      <div class="metric-card amr">
+        <div class="label">AMR Probability</div>
+        <div class="value" id="amr-value">—</div>
+        <div class="confidence" id="amr-confidence"></div>
+      </div>
+      <div class="metric-card exp">
+        <div class="label">Expansion Risk</div>
+        <div class="value" id="exp-value">—</div>
+        <div class="confidence" id="exp-confidence"></div>
+      </div>
+    </div>
+
+    <div class="results-grid" style="grid-template-columns:1fr">
+      <div class="metric-card" style="border-color:var(--accent)">
+        <div class="label">Overall Risk Score</div>
+        <div class="value" id="risk-value" style="color:var(--accent)">—</div>
+        <div class="confidence" id="risk-confidence">Aggregated (mobility + AMR + expansion)</div>
+      </div>
+    </div>
+
+    <div class="card" id="interpretation">
+      <h2>Biological Interpretation</h2>
+      <div style="color:var(--text2);font-size:0.85rem">Run a prediction to see interpretation.</div>
+    </div>
+
+    <div class="card">
+      <h2>Top Evidence Windows</h2>
+      <table class="evidence-table">
+        <thead><tr><th>Window</th><th>Weight</th><th>Region Type</th></tr></thead>
+        <tbody id="evidence-body"></tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>
