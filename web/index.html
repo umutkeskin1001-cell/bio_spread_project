@@ -3,85 +3,161 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="Cassiopeia Prime — DNA-only plasmid risk modeling. Predicts mobility, AMR and geographic expansion directly from sequence. TÜBİTAK 2204-A project demo.">
+<meta name="theme-color" content="#0d1117">
 <title>Cassiopeia Prime — Plasmid Risk Predictor</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%230d1117'/%3E%3Ccircle cx='32' cy='32' r='18' fill='none' stroke='%2358a6ff' stroke-width='4'/%3E%3Ccircle cx='32' cy='32' r='6' fill='%2358a6ff'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 <header>
   <div class="container">
-    <h1>Cassiopeia <span>Prime</span></h1>
+    <h1>
+      <span class="logo" aria-hidden="true"></span>
+      Cassiopeia <span>Prime</span>
+    </h1>
     <nav>
-      <a href="index.html" class="active">Predict</a>
+      <a href="index.html" class="active" aria-current="page">Predict</a>
       <a href="benchmark.html">Benchmark</a>
     </nav>
   </div>
 </header>
 
 <main class="container">
-  <div class="card">
-    <h2>Plasmid Risk Prediction</h2>
-    <p style="font-size:0.85rem;color:var(--text2);margin-bottom:16px">
-      Paste a DNA sequence or upload a FASTA file. The model predicts mobility class,
-      antimicrobial resistance (AMR) probability, and geographic expansion risk
-      directly from sequence — no BLAST or metadata required.
-    </p>
-    <textarea id="sequence-input" placeholder="Paste DNA sequence here... (FASTA format supported)&#10;&#10;Example:&#10;>my_plasmid&#10;ATGCGTACGTAGCTAGCTAGCTAGCTG..." spellcheck="false"></textarea>
-    <div class="validation-error" id="validation-msg"></div>
-    <div class="btn-group">
-      <button class="btn" id="predict-btn">Predict</button>
-      <button class="btn btn-secondary" id="sample-btn">Load sample</button>
-      <button class="btn btn-secondary" id="clear-btn">Clear</button>
-    </div>
-    <div style="margin-top:12px">
-      <input type="file" id="file-input" accept=".fa,.fasta,.fna,.txt">
-      <span style="font-size:0.75rem;color:var(--text2)">Upload FASTA file</span>
-    </div>
-    <div class="progress-bar" id="progress-bar"><div class="fill" id="progress-fill"></div></div>
+  <div class="mode-indicator offline" id="mode-indicator">
+    <span class="offline-dot"></span> Checking server...
   </div>
 
-  <div class="error-banner" id="error-banner"></div>
+  <div class="card">
+    <h2>Plasmid Sequence Input</h2>
+    <p class="card-subtitle">
+      Paste a DNA sequence or upload a FASTA file. The Cassiopeia Prime model
+      predicts mobility class, AMR probability and geographic expansion risk
+      directly from sequence &mdash; no BLAST or metadata required.
+    </p>
+
+    <label for="sequence-input" class="sr-only">DNA sequence</label>
+    <textarea id="sequence-input"
+      placeholder="Paste DNA sequence here... (FASTA format supported)&#10;&#10;Example:&#10;>my_plasmid&#10;ATGCGTACGTAGCTAGCTAGCTAGCTG..."
+      spellcheck="false"
+      aria-describedby="input-stats validation-msg"></textarea>
+
+    <div class="input-stats" id="input-stats" aria-live="polite">
+      <span class="stat"><span class="stat-label">Length</span><span class="stat-value" id="stat-length">0</span><span class="stat-unit">bp</span></span>
+      <span class="stat"><span class="stat-label">GC</span><span class="stat-value" id="stat-gc">&mdash;</span></span>
+      <span class="stat"><span class="stat-label">Records</span><span class="stat-value" id="stat-records">0</span></span>
+      <span class="stat stat-limit"><span class="stat-label">Limit</span><span class="stat-value">300,000</span><span class="stat-unit">bp</span></span>
+    </div>
+
+    <div class="validation-error" id="validation-msg" role="alert"></div>
+
+    <div class="btn-group">
+      <button class="btn" id="predict-btn" type="button">Predict</button>
+      <button class="btn btn-secondary" id="sample-btn" type="button">Sample: conjugative</button>
+      <button class="btn btn-secondary" id="sample-amr-btn" type="button">Sample: AMR+</button>
+      <button class="btn btn-secondary" id="sample-quiet-btn" type="button">Sample: quiet</button>
+      <button class="btn btn-secondary btn-dangerous" id="sample-oxa48-btn" type="button">pOXA-48 (KPC)</button>
+      <button class="btn btn-secondary btn-dangerous" id="sample-ndm1-btn" type="button">pNDM-1 (NDM-1)</button>
+
+      <button class="btn btn-secondary" id="clear-btn" type="button">Clear</button>
+    </div>
+
+    <div class="file-row">
+      <label for="file-input" class="file-label">
+        <span>Upload FASTA</span>
+        <input type="file" id="file-input" accept=".fa,.fasta,.fna,.txt,.ffn,.faa">
+      </label>
+      <span class="file-hint">.fa, .fasta, .fna, .txt (first record is used)</span>
+    </div>
+
+    <div class="progress-bar" id="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+      <div class="fill" id="progress-fill"></div>
+    </div>
+  </div>
+
+  <div class="error-banner" id="error-banner" role="alert"></div>
 
   <div id="results" style="display:none">
     <div class="results-grid">
-      <div class="metric-card mob">
+      <div class="metric-card mob" id="card-mob">
         <div class="label">Mobility</div>
-        <div class="value" id="mob-value">—</div>
+        <div class="value" id="mob-value">&mdash;</div>
         <div class="confidence" id="mob-confidence"></div>
       </div>
-      <div class="metric-card amr">
+      <div class="metric-card amr" id="card-amr">
         <div class="label">AMR Probability</div>
-        <div class="value" id="amr-value">—</div>
+        <div class="value" id="amr-value">&mdash;</div>
         <div class="confidence" id="amr-confidence"></div>
       </div>
-      <div class="metric-card exp">
+      <div class="metric-card exp" id="card-exp">
         <div class="label">Expansion Risk</div>
-        <div class="value" id="exp-value">—</div>
+        <div class="value" id="exp-value">&mdash;</div>
         <div class="confidence" id="exp-confidence"></div>
       </div>
     </div>
 
-    <div class="results-grid" style="grid-template-columns:1fr">
-      <div class="metric-card" style="border-color:var(--accent)">
+    <div class="results-grid single">
+      <div class="metric-card risk">
         <div class="label">Overall Risk Score</div>
-        <div class="value" id="risk-value" style="color:var(--accent)">—</div>
-        <div class="confidence" id="risk-confidence">Aggregated (mobility + AMR + expansion)</div>
+        <div class="value" id="risk-value">&mdash;</div>
+        <div class="confidence" id="risk-confidence">Aggregated: mobility + AMR + expansion</div>
       </div>
     </div>
 
-    <div class="card" id="interpretation">
+    <div class="card" id="mob-prob-card">
+      <h2>Mobility Class Probabilities</h2>
+      <div class="prob-bars" id="prob-bars"></div>
+    </div>
+
+    <div class="card" id="interp-card">
       <h2>Biological Interpretation</h2>
-      <div style="color:var(--text2);font-size:0.85rem">Run a prediction to see interpretation.</div>
+      <div id="interpretation" class="interpret-block">
+        <p class="placeholder">Run a prediction to see interpretation.</p>
+      </div>
     </div>
 
     <div class="card">
       <h2>Top Evidence Windows</h2>
+      <p class="card-subtitle">Model attention weights identifying the most informative regions of the sequence for the prediction.</p>
       <table class="evidence-table">
-        <thead><tr><th>Window</th><th>Weight</th><th>Region Type</th></tr></thead>
+        <thead>
+          <tr>
+            <th>Window</th>
+            <th>Weight</th>
+            <th>Region Type</th>
+            <th>Signal</th>
+          </tr>
+        </thead>
         <tbody id="evidence-body"></tbody>
       </table>
     </div>
+
+    <div class="card">
+      <h2>Reproduce With the Trained Model</h2>
+      <p class="card-subtitle">
+        The Cassiopeia Prime ensemble (v14+v15) achieves 87.00% task score on
+        the held-out test set. Run inference locally with:
+      </p>
+      <div class="code-block">
+        <pre id="repro-cmd">dna predict \
+  -m artifacts/cassiopeia_prime_v15/cassiopeia_best.pt \
+  -f query.fa \
+  --interpret</pre>
+        <button class="btn btn-secondary copy-btn" id="copy-cmd-btn" type="button" aria-label="Copy command">Copy</button>
+        <span class="copy-feedback" id="copy-feedback" aria-live="polite"></span>
+      </div>
+    </div>
   </div>
 </main>
+
+<footer>
+  <div class="container">
+    <div class="footer-row">
+      <span><strong>Cassiopeia Prime</strong> &middot; v0.3.0 &middot; TÜBİTAK 2204-A</span>
+      <span class="footer-meta">568,437 parameters &middot; 5.81 MB &middot; 87.00% held-out task score &middot; ensemble</span>
+    </div>
+  </div>
+</footer>
 
 <script src="app.js"></script>
 </body>

@@ -1,11 +1,11 @@
 """Tests for dataset preparation module."""
 
 from dna_sentinel.prepare import (
-    _sampled_kmers,
-    _jaccard,
     _DSU,
-    _report_similarity,
     SequenceRecord,
+    _jaccard,
+    _report_similarity,
+    _sampled_kmers,
     cluster_split,
 )
 

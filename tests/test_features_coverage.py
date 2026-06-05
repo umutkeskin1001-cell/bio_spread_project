@@ -5,10 +5,10 @@ import torch
 from dna_sentinel.features import (
     CanonicalKmerConfig,
     CanonicalKmerExtractor,
-    _canonical_vocab,
     _canonical_map,
-    _vocab_offsets,
+    _canonical_vocab,
     _resolve_max_windows,
+    _vocab_offsets,
     preprocess_consistency_features,
 )
 from dna_sentinel.utils import LabeledSequence
@@ -114,6 +114,7 @@ def test_motif_counts():
 
 def test_extractor_empty_dna():
     import pytest
+
     from dna_sentinel.utils import ValidationError
     config = CanonicalKmerConfig(max_windows=(2, 1, 1))
     ex = CanonicalKmerExtractor(config)

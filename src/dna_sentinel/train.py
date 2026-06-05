@@ -26,10 +26,10 @@ def _inverse_label_frequency(labels: torch.Tensor, eps: float = 1e-6) -> torch.T
 
 def _balanced_sample_weights(data: dict) -> torch.Tensor:
     return (
-        _inverse_label_frequency(data["mobility"])
+        _inverse_label_frequency(data["mobility"]) * 2.0
         + _inverse_label_frequency(data["amr"].long())
         + _inverse_label_frequency(data["expansion"].long())
-    ) / 3.0
+    ) / 4.0
 
 
 def _epoch_indices(
@@ -159,10 +159,10 @@ def evaluate(model, data, device="cpu", batch_size=128, return_probs=False):
     return (m, mob_np, amr_np, exp_np) if return_probs else m
 
 
-def _compute_batch_loss(model, out, mob_t, amr_t, exp_t, amr_pw, exp_pw, exp_pw_mc, gamma):
+def _compute_batch_loss(model, out, mob_t, amr_t, exp_t, amr_pw, exp_pw, exp_pw_mc, gamma, mob_gamma=None):
     return model.compute_loss(
         out["mobility_logits"], out["amr_logits"], out["expansion_logits"],
-        mob_t.long(), amr_t, exp_t, amr_pw, exp_pw, exp_pw_mc, gamma,
+        mob_t.long(), amr_t, exp_t, amr_pw, exp_pw, exp_pw_mc, gamma, mob_gamma,
         exp_proxy_logits=out.get("exp_proxy_logits"),
     )
 
@@ -206,7 +206,7 @@ def _pcgrad_step(model, task_losses, optimizer, scaler=None):  # pragma: no cove
 
 def _train_epoch(  # pragma: no cover — requires GPU training
     model, dt, config, device, optimizer, window_drop, gen,
-    amr_pw, exp_pw, exp_pw_mc, gamma, mixup_a,
+    amr_pw, exp_pw, exp_pw_mc, gamma, mob_gamma, mixup_a,
     has_cons, cons_w, cons_t, exp_cls, accum,
     cached_weights=None, frp_pre=None, use_pcgrad=False,
     cons_interval=1,
@@ -277,7 +277,7 @@ def _train_epoch(  # pragma: no cover — requires GPU training
                 else:
                     cons_loss = 0.0
                 try:
-                    losses = _compute_batch_loss(model, out, mob_t, amr_t, exp_t, amr_pw, exp_pw, exp_pw_mc, gamma)
+                    losses = _compute_batch_loss(model, out, mob_t, amr_t, exp_t, amr_pw, exp_pw, exp_pw_mc, gamma, mob_gamma)
                     loss = losses["total"] + cons_loss
                 except RuntimeError as e:
                     if "NaN/Inf" in str(e):
@@ -421,7 +421,8 @@ def _do_train(model, train_data, val_data, config, experiment=None):  # pragma: 
     artifact_dir.mkdir(parents=True, exist_ok=True)
     _bs, accum = config.get("batch_size", 32), config.get("gradient_accumulation_steps", 1)
     ev_int = max(1, config.get("eval_interval", 5))
-    gamma = config.get("focal_loss_gamma", 2.0)
+    gamma = config.get("focal_loss_gamma", model.config.focal_loss_gamma)
+    mob_gamma = config.get("mobility_focal_loss_gamma", gamma)
     mixup_a = config.get("mixup_alpha", 0.0)
     exp_cls = model.config.expansion_classes
     amr_pos = float(dt["amr"].sum().item() / max(1, n_train))
@@ -473,7 +474,7 @@ def _do_train(model, train_data, val_data, config, experiment=None):  # pragma: 
     for epoch in range(1, config["epochs"] + 1):
         avg_loss = _train_epoch(
             model, dt, config, device, opt, wd, gen,
-            amr_pw, exp_pw, exp_pw_mc, gamma, mixup_a,
+            amr_pw, exp_pw, exp_pw_mc, gamma, mob_gamma, mixup_a,
             has_cons, cons_w, cons_t, exp_cls, accum,
             cached_weights, frp_pre, use_pcgrad, cons_interval,
         )

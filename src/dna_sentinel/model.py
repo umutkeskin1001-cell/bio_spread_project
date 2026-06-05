@@ -99,11 +99,14 @@ class CircularPositionEncoding(nn.Module):
         if scale_ids is not None:
             sid = scale_ids.to(dev)
             ns = int(sid.max().item()) + 1 if sid.numel() else 1
+            pos_out = pos.clone()
             for s in range(ns):
                 m = (sid == s).float()
                 cnt = m.sum(1, keepdim=True).clamp_min(1)
-                pos = torch.where(m > 0, ((m * pos).cumsum(1) * m - m).clamp_min(0), pos)
+                ordinal = (m.cumsum(1) * m - m).clamp_min(0)
+                pos_out = torch.where(m > 0, ordinal, pos_out)
                 denom = torch.where(m > 0, cnt.expand_as(denom), denom)
+            pos = pos_out
             sn = sid.to(dtype=dt) / max(1, ns - 1)
         phase = 2 * math.pi * pos / denom.clamp_min(1)
         return self.proj(torch.stack([phase.sin(), phase.cos(), sn], -1)) * mask.unsqueeze(-1).to(dtype=dt)
@@ -332,14 +335,20 @@ class Cassiopeia(nn.Module):
         return self.forward_from_encoder(x, mask)
 
     def compute_loss(self, mob_l, amr_l, exp_l, mob_t, amr_t, exp_t,
-                     amr_pw=None, exp_pw=None, exp_pw_mc=None, gamma=0.0, **kw):
+                     amr_pw=None, exp_pw=None, exp_pw_mc=None, gamma=0.0,
+                     mob_gamma=None, mob_weight=None, **kw):
         cfg = self.config
+        if mob_gamma is None:
+            mob_gamma = cfg.focal_loss_gamma
+        if mob_weight is None:
+            mc = mob_t.bincount(minlength=mob_l.shape[-1]).float().clamp_min(1.0)
+            mob_weight = (mc.sum() / (mc * mc.numel())).to(mob_l.device)
         if cfg.use_ordinal_mobility:
-            lm = _ordinal_ce(mob_l, mob_t, cfg.label_smoothing)
-        elif cfg.focal_loss_gamma > 0:
-            lm = _focal_ce(mob_l, mob_t, cfg.focal_loss_gamma, cfg.label_smoothing)
+            lm = _ordinal_ce(mob_l, mob_t, cfg.label_smoothing, weight=mob_weight)
+        elif mob_gamma > 0:
+            lm = _focal_ce(mob_l, mob_t, mob_gamma, cfg.label_smoothing, weight=mob_weight)
         else:
-            lm = F.cross_entropy(mob_l, mob_t, label_smoothing=cfg.label_smoothing)
+            lm = F.cross_entropy(mob_l, mob_t, weight=mob_weight, label_smoothing=cfg.label_smoothing)
         la = _focal_bce(amr_l, amr_t, amr_pw, gamma)
         le = (
             _focal_bce(exp_l, exp_t, exp_pw, gamma)
@@ -362,13 +371,19 @@ class Cassiopeia(nn.Module):
 
     @classmethod
     @torch.no_grad()
-    def load(cls, path, device="cpu"):
+    def load(cls, path, device="cpu", strict: bool = True):
         state = torch.load(path, map_location=device, weights_only=True)
         cfg = CassiopeiaConfig(**{k: v for k, v in state["config"].items() if k in {f.name for f in fields(CassiopeiaConfig)}})
         m = cls(cfg)
-        r = m.load_state_dict(state["state_dict"], strict=False)
+        try:
+            r = m.load_state_dict(state["state_dict"], strict=strict)
+        except RuntimeError as e:
+            raise RuntimeError(f"Checkpoint mismatch for {path}: {e}") from e
         if r.missing_keys or r.unexpected_keys:
-            logger.warning("Load mismatch — missing: %s, unexpected: %s", r.missing_keys, r.unexpected_keys)
+            msg = f"missing={r.missing_keys}, unexpected={r.unexpected_keys}"
+            if strict:
+                raise RuntimeError(f"Checkpoint mismatch for {path}: {msg}")
+            logger.warning("Load mismatch for %s: %s", path, msg)
         return m.to(device).eval()
 
 
@@ -380,7 +395,7 @@ def _focal_bce(logits, target, pw, gamma):
     return (modulating * loss).mean()
 
 
-def _focal_ce(logits, target, gamma, ls=0.0):
+def _focal_ce(logits, target, gamma, ls=0.0, weight=None):
     n = logits.shape[-1]
     lp = F.log_softmax(logits, -1)
     if ls > 0 and n > 1:
@@ -390,13 +405,16 @@ def _focal_ce(logits, target, gamma, ls=0.0):
         ce = -(smooth * lp).sum(-1)
     else:
         ce = F.nll_loss(lp, target, reduction="none")
+    if weight is not None:
+        w = weight.gather(0, target)
+        ce = ce * w
     return ((1 - (-ce).exp()) ** gamma * ce).mean()
 
 
 _ORDINAL_COST = torch.tensor([[0, 1, 2], [1, 0, 1], [2, 1, 0]], dtype=torch.float32)
 
 
-def _ordinal_ce(logits, target, ls=0.0):
+def _ordinal_ce(logits, target, ls=0.0, weight=None):
     p = F.softmax(logits, -1)
     c = _ORDINAL_COST.to(device=logits.device, dtype=logits.dtype)
     cost_row = c[target]
@@ -404,6 +422,9 @@ def _ordinal_ce(logits, target, ls=0.0):
     if ls > 0:
         n = p.shape[-1]
         pc = (1 - ls) * pc + (ls / (n - 1)) * cost_row.sum(-1)
+    if weight is not None:
+        w = weight.gather(0, target)
+        pc = pc * w
     return pc.mean()
 
 

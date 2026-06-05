@@ -342,7 +342,8 @@ def _predict_pass(model: Cassiopeia, sequences: list[tuple[str, str]], device: s
 @torch.inference_mode()
 def predict_batch(
     model: Cassiopeia, sequences: list[tuple[str, str]], device: str = "cpu",
-    top_k: int = 5, rc_average: bool = True, n_circular_shifts: int = 0
+    top_k: int = 5, rc_average: bool = True, n_circular_shifts: int = 0,
+    ensemble: list[tuple[Cassiopeia, float]] | None = None,
 ) -> list[Prediction]:
     if not sequences:
         return []
@@ -362,13 +363,25 @@ def predict_batch(
                 passes.append(
                     _predict_pass(model, [(sid, revcomp(d)) for sid, d in shifted], device)
                 )
-    mob = sum(p["mobility_probs"] for p in passes) / len(passes)
-    amr = sum(p["amr_probs"] for p in passes) / len(passes)
-    exp_prob = sum(p["expansion_probs"] for p in passes) / len(passes)
+    ensemble_passes = []
+    if ensemble:
+        for em, ew in ensemble:
+            ep = _predict_pass(em, sequences, device)
+            for k in ep:
+                ep[k] = ep[k] * ew
+            ensemble_passes.append(ep)
+    passes = passes + ensemble_passes
+    weights = [1.0] * (len(passes) - len(ensemble_passes))
+    if ensemble:
+        weights = weights + [w for _, w in ensemble]
+    total_w = sum(weights) or 1.0
+    mob = sum(p["mobility_probs"] * w for p, w in zip(passes, weights)) / total_w
+    amr = sum(p["amr_probs"] * w for p, w in zip(passes, weights)) / total_w
+    exp_prob = sum(p["expansion_probs"] * w for p, w in zip(passes, weights)) / total_w
     am = passes[0]["masks"]
-    mob_ev = passes[0]["mobility_evidence"]
-    amr_ev = passes[0]["amr_evidence"]
-    exp_ev = passes[0]["expansion_evidence"]
+    mob_ev = sum(p["mobility_evidence"] * w for p, w in zip(passes, weights)) / total_w
+    amr_ev = sum(p["amr_evidence"] * w for p, w in zip(passes, weights)) / total_w
+    exp_ev = sum(p["expansion_evidence"] * w for p, w in zip(passes, weights)) / total_w
     preds = []
     for idx, (seq_id, _) in enumerate(sequences):
         mobile = 1.0 - mob[idx, 0].item()
@@ -393,9 +406,10 @@ def predict_batch(
 
 
 def predict_one(
-    model: Cassiopeia, sequence_id: str, dna: str, device: str = "cpu", top_k: int = 5, rc_average: bool = True
+    model: Cassiopeia, sequence_id: str, dna: str, device: str = "cpu", top_k: int = 5,
+    rc_average: bool = True, ensemble: list[tuple[Cassiopeia, float]] | None = None,
 ) -> Prediction:
-    return predict_batch(model, [(sequence_id, dna)], device, top_k, rc_average=rc_average)[0]
+    return predict_batch(model, [(sequence_id, dna)], device, top_k, rc_average=rc_average, ensemble=ensemble)[0]
 
 
 def write_fasta(records: list[tuple[str, str]], path: str | Path) -> None:
@@ -618,14 +632,21 @@ class DNASequenceAugmentation:
 
 
 class InferenceService:
-    def __init__(self, checkpoint: str, device: str = "cpu") -> None:
+    def __init__(self, checkpoint: str, device: str = "cpu",
+                 ensemble_checkpoint: str | None = None,
+                 ensemble_weight: float = 0.53) -> None:
         from dna_sentinel.model import Cassiopeia
 
         self.device = device
         self.model = Cassiopeia.load(checkpoint, device=device)
+        self.ensemble = None
+        if ensemble_checkpoint and Path(ensemble_checkpoint).exists():
+            em = Cassiopeia.load(ensemble_checkpoint, device=device)
+            self.ensemble = [(em, ensemble_weight)]
 
     def predict(self, sequence_id: str, dna: str) -> dict:
-        return asdict(predict_one(self.model, sequence_id, dna, device=self.device))
+        return asdict(predict_one(self.model, sequence_id, dna, device=self.device,
+                                  ensemble=self.ensemble))
 
     def predict_batch(self, sequences: list[Any]) -> list[dict]:
         parsed = []
@@ -636,4 +657,5 @@ class InferenceService:
                 parsed.append(s)
             else:
                 parsed.append((s.sequence_id, s.dna))
-        return [asdict(p) for p in predict_batch(self.model, parsed, device=self.device)]
+        return [asdict(p) for p in predict_batch(self.model, parsed, device=self.device,
+                                                  ensemble=self.ensemble)]

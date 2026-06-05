@@ -1,10 +1,8 @@
 """Additional CLI tests to boost coverage."""
 
-import json
-from pathlib import Path
 from click.testing import CliRunner
 
-from dna_sentinel.cli import cli, dna, _load_config, _validate_config, ConfigError
+from dna_sentinel.cli import ConfigError, _load_config, _validate_config, cli, dna
 
 
 def test_cli_main_help():

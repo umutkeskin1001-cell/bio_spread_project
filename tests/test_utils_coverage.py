@@ -4,19 +4,18 @@ import numpy as np
 import torch
 
 from dna_sentinel.utils import (
-    canonical_dna,
-    revcomp,
-    circular_shift,
-    read_fasta,
-    write_fasta,
-    save_jsonl,
-    load_jsonl,
     LabeledSequence,
+    WindowDropout,
+    canonical_dna,
+    circular_shift,
     expected_calibration_error,
     false_positive_summary,
-    WindowDropout,
+    load_jsonl,
+    read_fasta,
+    revcomp,
+    save_jsonl,
+    write_fasta,
 )
-from dna_sentinel.model import Cassiopeia, CassiopeiaConfig
 
 
 def test_canonical_dna():
@@ -82,7 +81,8 @@ def test_write_fasta(tmp_path):
 
 
 def test_write_fasta_empty():
-    import tempfile, os
+    import os
+    import tempfile
     with tempfile.NamedTemporaryFile(suffix=".fa", delete=False, mode="w") as f:
         path = f.name
     try:

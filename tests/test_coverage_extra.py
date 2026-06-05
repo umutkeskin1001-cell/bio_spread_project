@@ -1,8 +1,5 @@
 """Additional coverage for hard-to-reach paths."""
 
-import json
-import tempfile
-from pathlib import Path
 import torch
 
 # ── test _load_data with dummy feature files ──────────────────────
@@ -83,9 +80,10 @@ def test_load_data_consistency(tmp_path):
 
 
 def test_load_data_consistency_ns_mismatch(tmp_path):
+    import logging
+
     from dna_sentinel.cli import _load_data
     from dna_sentinel.utils import logger
-    import logging
     logger.setLevel(logging.DEBUG)
     feat = {
         "features": torch.randn(2, 56, 2728),
@@ -245,11 +243,10 @@ def test_compute_loss_exp_multiclass():
 # ── InferenceService ──────────────────────────────────────────────
 
 def test_inference_service_no_checkpoint():
+
     from dna_sentinel.utils import InferenceService
-    import tempfile, os
-    # Should raise or handle missing checkpoint gracefully
     try:
-        svc = InferenceService("/nonexistent/path.pt")
+        InferenceService("/nonexistent/path.pt")
     except (FileNotFoundError, RuntimeError, OSError):
         pass
 
@@ -298,8 +295,8 @@ def test_droppath_eval():
 # ── export tests ───────────────────────────────────────────────────
 
 def test_predict_batch_empty():
-    from dna_sentinel.utils import predict_batch
     from dna_sentinel.model import Cassiopeia, CassiopeiaConfig
+    from dna_sentinel.utils import predict_batch
     model = Cassiopeia(CassiopeiaConfig(hidden_dim=16, frp_out_dim=16, max_windows=56))
     model.eval()
     result = predict_batch(model, [], device="cpu")
@@ -307,8 +304,8 @@ def test_predict_batch_empty():
 
 
 def test_predict_batch_rc_average():
-    from dna_sentinel.utils import predict_batch
     from dna_sentinel.model import Cassiopeia, CassiopeiaConfig
+    from dna_sentinel.utils import predict_batch
     model = Cassiopeia(CassiopeiaConfig(hidden_dim=16, frp_out_dim=16, max_windows=56))
     model.eval()
     result = predict_batch(model, [("test", "ATGCGT" * 50)], device="cpu", rc_average=True)
@@ -317,8 +314,8 @@ def test_predict_batch_rc_average():
 
 
 def test_predict_with_rc_and_shifts():
-    from dna_sentinel.utils import predict_batch
     from dna_sentinel.model import Cassiopeia, CassiopeiaConfig
+    from dna_sentinel.utils import predict_batch
     model = Cassiopeia(CassiopeiaConfig(hidden_dim=16, frp_out_dim=16, max_windows=56))
     model.eval()
     result = predict_batch(model, [("test", "ATGCGT" * 50)], device="cpu",

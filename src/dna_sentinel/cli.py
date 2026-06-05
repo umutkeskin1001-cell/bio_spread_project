@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 import click
+import numpy as np
 import torch
 import yaml
 from sklearn.metrics import balanced_accuracy_score, roc_auc_score
@@ -19,9 +20,13 @@ from dna_sentinel.train import cross_validate, evaluate, train_cassiopeia
 from dna_sentinel.utils import (
     CassiopeiaExperiment,
     ConfigError,
+    binary_metrics,
     bootstrap_ci,
     interpret_prediction,
+    load_jsonl,
     logger,
+    multiclass_metrics,
+    predict_batch,
     predict_one,
     read_fasta,
     task_score,
@@ -266,14 +271,30 @@ def dna_cross_validate(config, folds):
               help="Data directory with feature/label files")
 @click.option("--out", "-o", default="artifacts/cassiopeia_prime_v14/report.json",
               help="Output path for benchmark report JSON")
-def benchmark(checkpoint, data_dir, out):
+@click.option("--rc-average/--no-rc-average", default=False,
+              help="Use reverse-complement-averaged inference (matches "
+                   "production dna predict). Slower (re-extracts features) "
+                   "and requires .jsonl split files. Default uses cached "
+                   "features and skips RC averaging for fast reproducible "
+                   "benchmarks.")
+@click.option("--ensemble-checkpoint", "-e", default=None, type=click.Path(exists=True),
+              help="Optional second checkpoint for model ensemble")
+@click.option("--ensemble-weight", type=float, default=0.5,
+              help="Weight for the ensemble model (default: 0.5)")
+def benchmark(checkpoint, data_dir, out, rc_average, ensemble_checkpoint=None, ensemble_weight=0.5):
     """Benchmark model on all splits.
 
     Evaluates mobility BA, AMR AUROC, expansion AUROC, and task score
     on validation, test, and held-out sets with bootstrap confidence
     intervals (95% CI, 500 resamples).
     """
+    from dna_sentinel.utils import evaluate_records
+
     model = Cassiopeia.load(checkpoint)
+    ensemble = None
+    if ensemble_checkpoint:
+        em = Cassiopeia.load(ensemble_checkpoint)
+        ensemble = [(em, ensemble_weight)]
     root = Path(data_dir)
     SN = {"val": "validation", "heldout_test": "heldout"}
     report = {
@@ -281,23 +302,59 @@ def benchmark(checkpoint, data_dir, out):
         "parameters": sum(p.numel() for p in model.parameters() if p.requires_grad),
         "checkpoint_mb": Path(checkpoint).stat().st_size / 1_000_000,
         "config": model.config.to_dict(),
+        "inference_mode": "rc_averaged" if rc_average else "cached_features",
         "splits": {},
     }
+    if ensemble:
+        report["ensemble"] = {
+            "checkpoint": ensemble_checkpoint,
+            "weight": ensemble_weight,
+        }
     fasta_query = "ATGCGT" * 1000
     start = time.perf_counter()
-    predict_one(model, "bench_6kb", fasta_query)
+    predict_one(model, "bench_6kb", fasta_query, rc_average=False)
     report["fasta_latency_ms_6kb"] = 1000.0 * (time.perf_counter() - start)
 
     for split in ("val", "test", "heldout_test"):
-        p = root / f"{split}_features.pt"
-        if not p.exists():
-            continue
-        data = _load_data(root, split, model.config.n_structural_features)
-        metrics, mob, amr, exp = evaluate(model, data, return_probs=True)
+        if rc_average:
+            jsonl_path = root / f"{split}.jsonl"
+            if not jsonl_path.exists():
+                continue
+            records = load_jsonl(jsonl_path)
+            preds = predict_batch(
+                model, [(r.sequence_id, r.dna) for r in records], device="cpu",
+                rc_average=True, ensemble=ensemble,
+            )
+            mob = np.array([p.mobility_probs for p in preds])
+            amr = np.array([p.amr_probability for p in preds])
+            exp = np.array([p.expansion_probability for p in preds])
+            y_mob = np.array([r.mobility for r in records])
+            y_amr = np.array([float(r.amr) for r in records])
+            y_exp = np.array([float(r.expansion) for r in records])
+            metrics = evaluate_records(model, records, device="cpu")
+        else:
+            p = root / f"{split}_features.pt"
+            if not p.exists():
+                continue
+            data = _load_data(root, split, model.config.n_structural_features)
+            w1 = 1.0
+            w2 = ensemble_weight if ensemble else 0.0
+            total_w = w1 + w2
+            _, mob, amr, exp = evaluate(model, data, return_probs=True)
+            if ensemble:
+                em = ensemble[0][0]
+                _, mob2, amr2, exp2 = evaluate(em, data, return_probs=True)
+                mob = (mob * w1 + mob2 * w2) / total_w
+                amr = (amr * w1 + amr2 * w2) / total_w
+                exp = (exp * w1 + exp2 * w2) / total_w
+            y_mob = data["mobility"].cpu().numpy()
+            y_amr = data["amr"].cpu().numpy().ravel()
+            y_exp = data["expansion"].cpu().numpy().ravel()
+            metrics = {}
+            metrics.update(multiclass_metrics(y_mob, mob, "mobility"))
+            metrics.update(binary_metrics(y_amr, amr, "amr"))
+            metrics.update(binary_metrics(y_exp, exp, "expansion"))
         metrics["task_score"] = task_score(metrics)
-        y_mob = data["mobility"].cpu().numpy()
-        y_amr = data["amr"].cpu().numpy().ravel()
-        y_exp = data["expansion"].cpu().numpy().ravel()
 
         def _mob_fn(t, p):
             return balanced_accuracy_score(t, p.argmax(-1))
@@ -334,34 +391,78 @@ def benchmark(checkpoint, data_dir, out):
               help="Data directory with feature/label files")
 @click.option("--out", "-o", default="artifacts/cassiopeia_prime_v14/report.json",
               help="Output path for benchmark report JSON")
-def dna_benchmark(checkpoint, data_dir, out):
+@click.option("--rc-average/--no-rc-average", default=False,
+              help="Use reverse-complement-averaged inference (matches "
+                   "production dna predict). Default uses cached features.")
+@click.option("--ensemble-checkpoint", "-e", default=None, type=click.Path(exists=True),
+              help="Optional second checkpoint for model ensemble")
+@click.option("--ensemble-weight", type=float, default=0.5,
+              help="Weight for the ensemble model (default: 0.5)")
+def dna_benchmark(checkpoint, data_dir, out, rc_average, ensemble_checkpoint, ensemble_weight):
     """Alias: benchmark model on all splits."""
-    benchmark.callback(checkpoint=checkpoint, data_dir=data_dir, out=out)
+    benchmark.callback(checkpoint=checkpoint, data_dir=data_dir, out=out, rc_average=rc_average,
+                       ensemble_checkpoint=ensemble_checkpoint, ensemble_weight=ensemble_weight)
+
+
+# ── champion paths ──────────────────────────────────────────────────────
+
+_CHAMPION = "artifacts/cassiopeia_prime_v15/cassiopeia_best.pt"
+_ENSEMBLE_PARTNER = "artifacts/cassiopeia_prime_v14/cassiopeia_best.pt"
+_ENSEMBLE_WEIGHT = 0.53
+
+
+def _load_model(checkpoint: str) -> Cassiopeia:
+    return Cassiopeia.load(checkpoint)
+
+
+def _load_ensemble(ensemble_ckpt: str | None) -> list[tuple[Cassiopeia, float]] | None:
+    if ensemble_ckpt and Path(ensemble_ckpt).exists():
+        try:
+            em = _load_model(ensemble_ckpt)
+            return [(em, _ENSEMBLE_WEIGHT)]
+        except Exception:
+            return None
+    return None
+
+
+def _auto_ensemble(checkpoint: str) -> str | None:
+    """Auto-detect ensemble partner when primary model is the champion."""
+    ckpt = str(Path(checkpoint).resolve())
+    if ckpt.endswith("cassiopeia_prime_v15/cassiopeia_best.pt") and Path(_ENSEMBLE_PARTNER).exists():
+        return _ENSEMBLE_PARTNER
+    if ckpt.endswith("cassiopeia_prime_v14/cassiopeia_best.pt") and Path(_CHAMPION).exists():
+        return _CHAMPION
+    return None
 
 
 # ── predict ────────────────────────────────────────────────────────────
 
 @cli.command("predict")
-@click.option("--checkpoint", "-m", required=True, type=click.Path(exists=True),
-              help="Path to model checkpoint (.pt)")
+@click.option("--checkpoint", "-m", default=_CHAMPION, type=click.Path(exists=True),
+              show_default=True, help="Path to model checkpoint (.pt)")
+@click.option("--ensemble-checkpoint", "-e", default=None,
+              type=click.Path(), help="Ensemble partner checkpoint (auto-detected for champion)")
 @click.option("--fasta", "-f", "fasta_path", required=True, type=click.Path(exists=True),
               help="Input FASTA file path")
 @click.option("--json", "-j", "as_json", is_flag=True, help="Output as JSON")
 @click.option("--interpret", "-i", "with_interpret", is_flag=True,
               help="Include biological interpretation with confidence labels")
-def predict_cmd(checkpoint, fasta_path, as_json, with_interpret):
+def predict_cmd(checkpoint, ensemble_checkpoint, fasta_path, as_json, with_interpret):
     """Predict on FASTA sequences.
 
-    Returns risk score, mobility class probabilities, AMR probability,
-    expansion probability, and top-5 evidence windows. Use --interpret
-    for biological context with confidence labels.
+    By default auto-detects the champion ensemble (v15+v14) when the primary
+    checkpoint matches the champion path. Use --ensemble-checkpoint to specify
+    a custom ensemble partner, or --no-ensemble-checkpoint to disable.
     """
     from dataclasses import asdict
 
-    model = Cassiopeia.load(checkpoint)
+    model = _load_model(checkpoint)
+    if ensemble_checkpoint is None:
+        ensemble_checkpoint = _auto_ensemble(checkpoint)
+    ensemble = _load_ensemble(ensemble_checkpoint)
     rows = []
     for sid, seq in read_fasta(fasta_path):
-        pred = asdict(predict_one(model, sid, seq))
+        pred = asdict(predict_one(model, sid, seq, ensemble=ensemble))
         if with_interpret:
             pred["interpretation"] = interpret_prediction(pred, model.config.risk_weights)
         rows.append(pred)
@@ -374,52 +475,69 @@ def predict_cmd(checkpoint, fasta_path, as_json, with_interpret):
                      f"exp={r['expansion_probability']:.4f}"]
             if with_interpret and "interpretation" in r:
                 i = r["interpretation"]
-                parts.append(f"mob={i['mobility_label']}")
+                parts.append(f"mob={i['mobility']['label']}")
+                parts.append(f"amr={i['amr']['confidence']}")
+                parts.append(f"exp={i['expansion']['confidence']}")
             click.echo("\t".join(parts))
 
 
 @dna.command("predict")
-@click.option("--checkpoint", "-m", required=True, type=click.Path(exists=True),
-              help="Path to model checkpoint (.pt)")
+@click.option("--checkpoint", "-m", default=_CHAMPION, type=click.Path(exists=True),
+              show_default=True, help="Path to model checkpoint (.pt)")
+@click.option("--ensemble-checkpoint", "-e", default=None,
+              type=click.Path(), help="Ensemble partner checkpoint (auto-detected for champion)")
 @click.option("--fasta", "-f", "fasta_path", required=True, type=click.Path(exists=True),
               help="Input FASTA file path")
 @click.option("--json", "-j", "as_json", is_flag=True, help="Output as JSON")
 @click.option("--interpret", "-i", "with_interpret", is_flag=True,
               help="Include biological interpretation with confidence labels")
-def dna_predict(checkpoint, fasta_path, as_json, with_interpret):
+def dna_predict(checkpoint, ensemble_checkpoint, fasta_path, as_json, with_interpret):
     """Alias: predict on FASTA sequences."""
-    predict_cmd.callback(checkpoint=checkpoint, fasta_path=fasta_path,
-                         as_json=as_json, with_interpret=with_interpret)
+    predict_cmd.callback(checkpoint=checkpoint, ensemble_checkpoint=ensemble_checkpoint,
+                         fasta_path=fasta_path, as_json=as_json, with_interpret=with_interpret)
 
 
 # ── serve ──────────────────────────────────────────────────────────────
 
 @cli.command("serve")
-@click.option("--checkpoint", "-m", required=True, type=click.Path(exists=True),
-              help="Path to model checkpoint (.pt)")
-@click.option("--port", "-p", default=8000, type=int, help="HTTP port")
+@click.option("--checkpoint", "-m", default=_CHAMPION, type=click.Path(exists=True),
+              show_default=True, help="Path to model checkpoint (.pt)")
+@click.option("--ensemble-checkpoint", "-e", default=None,
+              type=click.Path(), help="Ensemble partner checkpoint (auto-detected for champion)")
+@click.option("--ensemble-weight", type=float, default=_ENSEMBLE_WEIGHT,
+              help="Weight for ensemble model (default: 0.53)")
+@click.option("--port", "-p", default=8080, type=int, help="HTTP port")
 @click.option("--host", default="0.0.0.0", help="Bind address")
-def serve_cmd(checkpoint, port, host):
-    """Start FastAPI inference server.
+def serve_cmd(checkpoint, ensemble_checkpoint, ensemble_weight, port, host):
+    """Start FastAPI inference server + web UI.
 
-    Exposes /predict, /predict-batch, and /health endpoints.
-    Model is loaded once at startup.
+    Serves the static web interface at / and exposes /predict, /predict-batch,
+    and /health endpoints. Ensemble auto-detected for champion checkpoint.
     """
     import uvicorn
 
     from dna_sentinel.api import app
+    if ensemble_checkpoint is None:
+        ensemble_checkpoint = _auto_ensemble(checkpoint)
     os.environ["CASSIOPEIA_CHECKPOINT"] = checkpoint
+    os.environ["CASSIOPEIA_ENSEMBLE_CHECKPOINT"] = ensemble_checkpoint or ""
+    os.environ["CASSIOPEIA_ENSEMBLE_WEIGHT"] = str(ensemble_weight)
     uvicorn.run(app, host=host, port=port, log_level="info")
 
 
 @dna.command("serve")
-@click.option("--checkpoint", "-m", required=True, type=click.Path(exists=True),
-              help="Path to model checkpoint (.pt)")
-@click.option("--port", "-p", default=8000, type=int, help="HTTP port")
+@click.option("--checkpoint", "-m", default=_CHAMPION, type=click.Path(exists=True),
+              show_default=True, help="Path to model checkpoint (.pt)")
+@click.option("--ensemble-checkpoint", "-e", default=None,
+              type=click.Path(), help="Ensemble partner checkpoint (auto-detected for champion)")
+@click.option("--ensemble-weight", type=float, default=_ENSEMBLE_WEIGHT,
+              help="Weight for ensemble model (default: 0.53)")
+@click.option("--port", "-p", default=8080, type=int, help="HTTP port")
 @click.option("--host", default="0.0.0.0", help="Bind address")
-def dna_serve(checkpoint, port, host):
-    """Alias: start FastAPI inference server."""
-    serve_cmd.callback(checkpoint=checkpoint, port=port, host=host)
+def dna_serve(checkpoint, ensemble_checkpoint, ensemble_weight, port, host):
+    """Alias: start FastAPI inference server + web UI."""
+    serve_cmd.callback(checkpoint=checkpoint, ensemble_checkpoint=ensemble_checkpoint,
+                       ensemble_weight=ensemble_weight, port=port, host=host)
 
 
 # ── experiment-list ────────────────────────────────────────────────────
@@ -447,24 +565,43 @@ def dna_experiment_list():
 
 # ── interpret ──────────────────────────────────────────────────────────
 
-@dna.command("interpret")
-@click.option("--checkpoint", "-m", required=True, type=click.Path(exists=True),
-              help="Path to model checkpoint (.pt)")
+@cli.command("interpret")
+@click.option("--checkpoint", "-m", default=_CHAMPION, type=click.Path(exists=True),
+              show_default=True, help="Path to model checkpoint (.pt)")
+@click.option("--ensemble-checkpoint", "-e", default=None,
+              type=click.Path(), help="Ensemble partner checkpoint (auto-detected for champion)")
 @click.option("--fasta", "-f", "fasta_path", required=True, type=click.Path(exists=True),
               help="Input FASTA file path")
-def dna_interpret(checkpoint, fasta_path):
+def interpret_cmd(checkpoint, ensemble_checkpoint, fasta_path):
     """Predict with biological interpretation.
 
     Adds confidence labels (HIGH >= 0.80, MEDIUM 0.60-0.79, LOW < 0.60),
     CARD family matching for AMR, and mobility + AMR co-occurrence
     inference for expansion. Includes safety disclaimer.
+    Auto-detects champion ensemble for maximum accuracy.
     """
     from dataclasses import asdict
-    model = Cassiopeia.load(checkpoint)
+    model = _load_model(checkpoint)
+    if ensemble_checkpoint is None:
+        ensemble_checkpoint = _auto_ensemble(checkpoint)
+    ensemble = _load_ensemble(ensemble_checkpoint)
     for sid, seq in read_fasta(fasta_path):
-        pred = asdict(predict_one(model, sid, seq))
+        pred = asdict(predict_one(model, sid, seq, ensemble=ensemble))
         interp = interpret_prediction(pred, model.config.risk_weights)
         click.echo(json.dumps({"sequence_id": sid, **pred, "interpretation": interp}, indent=2, default=str))
+
+
+@dna.command("interpret")
+@click.option("--checkpoint", "-m", default=_CHAMPION, type=click.Path(exists=True),
+              show_default=True, help="Path to model checkpoint (.pt)")
+@click.option("--ensemble-checkpoint", "-e", default=None,
+              type=click.Path(), help="Ensemble partner checkpoint (auto-detected for champion)")
+@click.option("--fasta", "-f", "fasta_path", required=True, type=click.Path(exists=True),
+              help="Input FASTA file path")
+def dna_interpret(checkpoint, ensemble_checkpoint, fasta_path):
+    """Alias: predict with biological interpretation."""
+    interpret_cmd.callback(checkpoint=checkpoint, ensemble_checkpoint=ensemble_checkpoint,
+                           fasta_path=fasta_path)
 
 
 # ── entrypoints ────────────────────────────────────────────────────────

@@ -1,8 +1,7 @@
 """CLI-focused coverage tests using synthetic checkpoints."""
 
 import json
-import tempfile
-from pathlib import Path
+
 import torch
 
 # ── Test benchmark with dummy checkpoint ──────────────────────────
@@ -19,6 +18,7 @@ def _make_dummy_checkpoint(tmp_path):
 def test_benchmark_with_dummy_model(tmp_path):
     """Test benchmark runs with a real (dummy) model and synthetic data."""
     from click.testing import CliRunner
+
     from dna_sentinel.cli import cli
     from dna_sentinel.model import Cassiopeia, CassiopeiaConfig
     # Match model's n_structural_features to cache
@@ -54,6 +54,7 @@ def test_benchmark_with_dummy_model(tmp_path):
 def test_benchmark_with_missing_split(tmp_path):
     """Test benchmark with only one split available."""
     from click.testing import CliRunner
+
     from dna_sentinel.cli import cli
     from dna_sentinel.model import Cassiopeia, CassiopeiaConfig
     model = Cassiopeia(CassiopeiaConfig(hidden_dim=16, frp_out_dim=16, max_windows=56,
@@ -80,6 +81,7 @@ def test_benchmark_with_missing_split(tmp_path):
 def test_predict_with_dummy_model(tmp_path):
     """Test predict with a real dummy model."""
     from click.testing import CliRunner
+
     from dna_sentinel.cli import cli
     ckpt = _make_dummy_checkpoint(tmp_path)
     fa = tmp_path / "test.fa"
@@ -96,6 +98,7 @@ def test_predict_with_dummy_model(tmp_path):
 def test_predict_with_interpret(tmp_path):
     """Test predict with --interpret flag."""
     from click.testing import CliRunner
+
     from dna_sentinel.cli import cli
     ckpt = _make_dummy_checkpoint(tmp_path)
     fa = tmp_path / "test.fa"
@@ -112,6 +115,7 @@ def test_predict_with_interpret(tmp_path):
 def test_dna_predict_with_dummy(tmp_path):
     """Test dna predict alias works."""
     from click.testing import CliRunner
+
     from dna_sentinel.cli import dna
     ckpt = _make_dummy_checkpoint(tmp_path)
     fa = tmp_path / "test.fa"
@@ -124,6 +128,7 @@ def test_dna_predict_with_dummy(tmp_path):
 def test_dna_interpret_with_dummy(tmp_path):
     """Test dna interpret command."""
     from click.testing import CliRunner
+
     from dna_sentinel.cli import dna
     ckpt = _make_dummy_checkpoint(tmp_path)
     fa = tmp_path / "test.fa"
@@ -138,6 +143,7 @@ def test_dna_interpret_with_dummy(tmp_path):
 def test_dna_bench_with_dummy(tmp_path):
     """Test dna bench alias works."""
     from click.testing import CliRunner
+
     from dna_sentinel.cli import dna
     from dna_sentinel.model import Cassiopeia, CassiopeiaConfig
     model = Cassiopeia(CassiopeiaConfig(hidden_dim=16, frp_out_dim=16, max_windows=56,
@@ -181,8 +187,8 @@ def test_epoch_indices_balanced_cached():
 
 
 def test_build_optimizer_no_group():
-    from dna_sentinel.train import _build_optimizer
     from dna_sentinel.model import Cassiopeia, CassiopeiaConfig
+    from dna_sentinel.train import _build_optimizer
     model = Cassiopeia(CassiopeiaConfig(hidden_dim=16, frp_out_dim=16, max_windows=56))
     opt = _build_optimizer(model, {"lr": 1e-3, "weight_decay": 0.05})
     assert len(opt.param_groups) >= 1
@@ -219,7 +225,7 @@ def test_build_labels_multiple_countries(tmp_path):
 
 
 def test_cluster_split_three_groups():
-    from dna_sentinel.prepare import cluster_split, SequenceRecord
+    from dna_sentinel.prepare import SequenceRecord, cluster_split
     records = [
         SequenceRecord(f"s{i}", "ATCG" * 100, {"mobility": 0, "amr": 0, "expansion": 0})
         for i in range(5)
@@ -230,7 +236,7 @@ def test_cluster_split_three_groups():
 
 
 def test_cluster_split_with_group():
-    from dna_sentinel.prepare import cluster_split, SequenceRecord
+    from dna_sentinel.prepare import SequenceRecord, cluster_split
     records = [
         SequenceRecord("s1", "ATCG" * 100, {"group": "g1"}),
         SequenceRecord("s2", "ATCG" * 100, {"group": "g1"}),

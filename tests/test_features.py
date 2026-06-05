@@ -48,12 +48,14 @@ def test_extract_shapes():
 
 
 def test_extractor_uses_configured_stride():
-    _, _, mask, _ = CanonicalKmerExtractor(CanonicalKmerConfig(window_sizes=(8,), strides=(4,), max_windows=(10,), rc_consensus=False)).extract("ACGT" * 5)
+    config = CanonicalKmerConfig(window_sizes=(8,), strides=(4,), max_windows=(10,), rc_consensus=False)
+    _, _, mask, _ = CanonicalKmerExtractor(config).extract("ACGT" * 5)
     assert int(mask.sum().item()) == 4
 
 
 def test_includes_unaligned_tail_window():
-    _, _, mask, _ = CanonicalKmerExtractor(CanonicalKmerConfig(window_sizes=(8,), strides=(5,), max_windows=(10,), rc_consensus=False)).extract("ACGT" * 5 + "AC")
+    config = CanonicalKmerConfig(window_sizes=(8,), strides=(5,), max_windows=(10,), rc_consensus=False)
+    _, _, mask, _ = CanonicalKmerExtractor(config).extract("ACGT" * 5 + "AC")
     assert int(mask.sum().item()) == 4
 
 
@@ -67,7 +69,8 @@ def test_kmer_counts_ignore_padding():
 def test_preprocess_consistency_features_saves_expected_keys(tmp_path):
     records = [LabeledSequence("a", "ATGCGT" * 200, 1, 0, 1), LabeledSequence("b", "CGTATG" * 180, 0, 1, 0)]
     out = tmp_path / "consistency.pt"
-    preprocess_consistency_features(records, CanonicalKmerConfig(window_sizes=(32,), strides=(16,), max_windows=(4,)), out, num_workers=1)
+    cfg = CanonicalKmerConfig(window_sizes=(32,), strides=(16,), max_windows=(4,))
+    preprocess_consistency_features(records, cfg, out, num_workers=1)
     saved = torch.load(out, weights_only=True)
     core_keys = {"features", "struct_features", "masks", "scale_ids"}
     assert core_keys.issubset(set(saved))
@@ -76,13 +79,15 @@ def test_preprocess_consistency_features_saves_expected_keys(tmp_path):
 
 
 def test_extract_single_nucleotide():
-    feat, _, mask, _ = CanonicalKmerExtractor(CanonicalKmerConfig(window_sizes=(8,), strides=(8,), max_windows=(1,), rc_consensus=False)).extract("A")
+    config = CanonicalKmerConfig(window_sizes=(8,), strides=(8,), max_windows=(1,), rc_consensus=False)
+    feat, _, mask, _ = CanonicalKmerExtractor(config).extract("A")
     assert mask.tolist() == [True]
     assert torch.isfinite(feat).all()
 
 
 def test_extract_all_n():
-    feat, _, mask, _ = CanonicalKmerExtractor(CanonicalKmerConfig(window_sizes=(8,), strides=(8,), max_windows=(1,), rc_consensus=False)).extract("NNNNNNNN")
+    config = CanonicalKmerConfig(window_sizes=(8,), strides=(8,), max_windows=(1,), rc_consensus=False)
+    feat, _, mask, _ = CanonicalKmerExtractor(config).extract("NNNNNNNN")
     assert mask.tolist() == [True]
     assert torch.isfinite(feat).all()
 

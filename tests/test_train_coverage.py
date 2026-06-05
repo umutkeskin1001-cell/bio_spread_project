@@ -1,18 +1,18 @@
 """Additional training tests for coverage."""
 
-import torch
 import pytest
+import torch
 
 from dna_sentinel.model import Cassiopeia, CassiopeiaConfig
 from dna_sentinel.train import (
-    _inverse_label_frequency,
     _balanced_sample_weights,
     _build_optimizer,
     _build_scheduler,
-    _selection_score,
     _device,
     _fit_temperature,
     _fit_temperature_class,
+    _inverse_label_frequency,
+    _selection_score,
 )
 
 
@@ -90,7 +90,6 @@ def test_selection_score_legacy():
 
 
 def test_selection_score_unknown_mode():
-    import pytest
     with pytest.raises(ValueError):
         _selection_score({}, {"score_mode": "invalid"})
 

@@ -177,7 +177,7 @@ def build_labels(
     ).with_columns((pl.col("n_countries") >= expansion_country_threshold).cast(pl.Int64).alias("expansion"))
     joined = (
         bb.join(amr, on="sequence_accession", how="left", coalesce=True)
-        .join(agg.select(["backbone_id", "expansion", "min_year"]), on="backbone_id", how="left")
+        .join(agg.select(["backbone_id", "expansion", "min_year"]), on="backbone_id", how="left", coalesce=True)
         .with_columns(
             pl.col("amr_any").fill_null(False).cast(pl.Int64),
             pl.col("expansion").fill_null(0).cast(pl.Int64),
@@ -244,9 +244,9 @@ def prepare_dataset(
     for name, ids in split.items():
         save_jsonl([id_to_record[i] for i in ids], out / f"{name}.jsonl")
     total_split = sum(len(ids) for ids in split.values())
-    if total_split > 2048:
+    if total_split > limit:
         raise ValueError(
-            f"Data boundary violation: split total {total_split} > 2048. "
+            f"Data boundary violation: split total {total_split} > {limit}. "
             f"Train={len(split.get('train', []))}, Val={len(split.get('val', []))}, Test={len(split.get('test', []))}"
         )
     cluster_map = {}

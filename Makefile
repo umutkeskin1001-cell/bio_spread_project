@@ -25,10 +25,10 @@ train:
 	dna train -c config/cassiopeia_prime.yaml
 
 evaluate:
-	dna bench -m artifacts/cassiopeia_prime_v14/cassiopeia_best.pt -d data/dna_sentinel
+	dna bench -m artifacts/cassiopeia_prime_v14/cassiopeia_best.pt -d data/dna_sentinel -o artifacts/cassiopeia_prime_v14/report.json
 
 predict:
-	dna predict -m artifacts/cassiopeia_prime_v14/cassiopeia_best.pt -f data/dna_sentinel/query.fa -j
+	dna predict -m artifacts/cassiopeia_prime_v14/cassiopeia_best.pt -f data/dna_sentinel/query.fa --interpret
 
 interpret:
 	dna interpret -m artifacts/cassiopeia_prime_v14/cassiopeia_best.pt -f data/dna_sentinel/query.fa

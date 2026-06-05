@@ -1,23 +1,24 @@
 """Final push to reach 85% coverage."""
 
-import json
-import tempfile
-from pathlib import Path
-import torch
 import numpy as np
+import torch
 
-from dna_sentinel.train import (
-    _consistency_loss,
-    _run_model,
-    _compute_batch_loss,
-    _focal_bce,
+from dna_sentinel.features import (
+    CanonicalKmerConfig,
+    CanonicalKmerExtractor,
+    _canonical_vocab,
+    _resolve_max_windows,
+    _vocab_offsets,
+    preprocess_all_features,
 )
 from dna_sentinel.model import Cassiopeia, CassiopeiaConfig
+from dna_sentinel.prepare import _DSU, SequenceRecord, _jaccard, _sampled_kmers, cluster_split
+from dna_sentinel.train import (
+    _compute_batch_loss,
+    _consistency_loss,
+    _run_model,
+)
 from dna_sentinel.utils import configure_logging, task_score
-from dna_sentinel.features import _canonical_vocab, _vocab_offsets, _resolve_max_windows, CanonicalKmerConfig, CanonicalKmerExtractor, preprocess_all_features
-from dna_sentinel.prepare import _sampled_kmers, _jaccard, cluster_split, _DSU, SequenceRecord
-from dna_sentinel.cli import _load_config, _validate_config
-
 
 # ── train.py ────────────────────────────────────────────────────────
 

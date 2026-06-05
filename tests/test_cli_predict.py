@@ -41,10 +41,14 @@ print('ok')
 
 
 def test_load_data_includes_consistency_cache_when_present(tmp_path: Path):
-    base = {"features": torch.randn(2, 3, 4), "masks": torch.ones(2, 3, dtype=torch.bool), "scale_ids": torch.zeros(2, 3, dtype=torch.long)}
-    labels = {"mobility": torch.tensor([0, 1], dtype=torch.long), "amr": torch.tensor([0.0, 1.0]), "expansion": torch.tensor([0.0, 1.0])}
-    cons = {"features": torch.randn(2, 3, 4), "masks": torch.ones(2, 3, dtype=torch.bool), "struct_features": torch.randn(2, 3, 19), "scale_ids": torch.zeros(2, 3, dtype=torch.long)}
-    for name, d in [("train_features.pt", base), ("train_labels.pt", labels), ("train_consistency_features.pt", cons)]:
+    base = {"features": torch.randn(2, 3, 4), "masks": torch.ones(2, 3, dtype=torch.bool),
+             "scale_ids": torch.zeros(2, 3, dtype=torch.long)}
+    labels = {"mobility": torch.tensor([0, 1], dtype=torch.long),
+              "amr": torch.tensor([0.0, 1.0]), "expansion": torch.tensor([0.0, 1.0])}
+    cons = {"features": torch.randn(2, 3, 4), "masks": torch.ones(2, 3, dtype=torch.bool),
+            "struct_features": torch.randn(2, 3, 19), "scale_ids": torch.zeros(2, 3, dtype=torch.long)}
+    for name, d in [("train_features.pt", base), ("train_labels.pt", labels),
+                    ("train_consistency_features.pt", cons)]:
         torch.save(d, tmp_path / name)
     data = _load_data(tmp_path, "train", 19)
     assert "consistency_features" in data and data["consistency_features"].shape == cons["features"].shape

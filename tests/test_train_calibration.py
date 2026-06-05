@@ -1,16 +1,16 @@
 """Tests for training calibration and edge functions."""
 
-import torch
 import numpy as np
+import torch
 
+from dna_sentinel.model import Cassiopeia, CassiopeiaConfig
 from dna_sentinel.train import (
-    fit_calibration,
     _device,
     _focal_bce,
     _selection_score,
+    fit_calibration,
 )
-from dna_sentinel.model import Cassiopeia, CassiopeiaConfig
-from dna_sentinel.utils import set_seed, WindowDropout
+from dna_sentinel.utils import WindowDropout, set_seed
 
 
 def test_fit_calibration():

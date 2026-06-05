@@ -31,7 +31,7 @@ model:
   ring_ssm_kernel: 7
   struct_proj_dim: 32
   consistency_alpha: 0.1
-  focal_loss_gamma: 0.5
+  focal_loss_gamma: 0.0
   use_ordinal_mobility: false
   risk_weights: [0.4, 0.3, 0.3]
 
@@ -52,7 +52,8 @@ training:
   patience: 15
   gradient_accumulation_steps: 1
   eval_interval: 2
-  focal_loss_gamma: 0.5
+  focal_loss_gamma: 0.0
+  mobility_focal_loss_gamma: 0.5
   mixup_alpha: 0.0
   dropout: 0.12
   balanced_sampling: true

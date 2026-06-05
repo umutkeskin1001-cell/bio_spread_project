@@ -1,6 +1,5 @@
 """Tests for biological interpretation module."""
 
-import numpy as np
 
 from dna_sentinel.utils import (
     _confidence_label,

@@ -112,7 +112,9 @@ class TestBlocks:
 class TestCassiopeiaSmall:
     @pytest.fixture
     def model(self):
-        return Cassiopeia(CassiopeiaConfig(hidden_dim=64, n_canonical_features=100, frp_out_dim=64, n_layers=1, max_windows=12, expansion_classes=1, amr_classes=1))
+        cfg = CassiopeiaConfig(hidden_dim=64, n_canonical_features=100, frp_out_dim=64,
+                               n_layers=1, max_windows=12, expansion_classes=1, amr_classes=1)
+        return Cassiopeia(cfg)
 
     @pytest.fixture
     def batch(self):
@@ -177,7 +179,9 @@ class TestCassiopeiaSmall:
         Path(path).unlink()
 
     def test_backward(self, batch):
-        model = Cassiopeia(CassiopeiaConfig(hidden_dim=64, n_canonical_features=100, frp_out_dim=64, n_layers=1, max_windows=12))
+        cfg = CassiopeiaConfig(hidden_dim=64, n_canonical_features=100, frp_out_dim=64,
+                               n_layers=1, max_windows=12)
+        model = Cassiopeia(cfg)
         out = model(batch["features"], batch["masks"])
         loss = model.compute_loss(out["mobility_logits"], out["amr_logits"], out["expansion_logits"],
                                    batch["mobility"], batch["amr"], batch["expansion"])
@@ -189,8 +193,10 @@ class TestCassiopeiaSmall:
         assert out["mobility_evidence"].shape == batch["masks"].shape
 
     def test_forward_with_struct_and_scale(self):
-        model = Cassiopeia(CassiopeiaConfig(n_structural_features=49, hidden_dim=64, n_canonical_features=100, frp_out_dim=80, n_layers=2, max_windows=12,
-                                             lora_rank=4, adapter_rank=8, use_cppe=True))
+        cfg = CassiopeiaConfig(n_structural_features=49, hidden_dim=64, n_canonical_features=100,
+                               frp_out_dim=80, n_layers=2, max_windows=12,
+                               lora_rank=4, adapter_rank=8, use_cppe=True)
+        model = Cassiopeia(cfg)
         out = model(torch.randn(3, 12, 100), torch.ones(3, 12, dtype=torch.bool),
                      struct_features=torch.randn(3, 12, 49),
                      scale_ids=torch.tensor([[0]*4 + [1]*4 + [2]*4]*3))
@@ -202,7 +208,9 @@ class TestCassiopeiaSmall:
         assert torch.isfinite(out["mobility_logits"]).all()
 
     def test_learnable_frp_forward(self):
-        model = Cassiopeia(CassiopeiaConfig(hidden_dim=32, n_canonical_features=100, frp_out_dim=32, n_layers=1, max_windows=8, learnable_frp=True))
+        cfg = CassiopeiaConfig(hidden_dim=32, n_canonical_features=100, frp_out_dim=32,
+                               n_layers=1, max_windows=8, learnable_frp=True)
+        model = Cassiopeia(cfg)
         out = model(torch.randn(2, 8, 100), torch.ones(2, 8, dtype=torch.bool))
         assert out["mobility_logits"].shape == (2, 3)
 
@@ -210,7 +218,9 @@ class TestCassiopeiaSmall:
 class TestCassiopeiaLarge:
     @pytest.fixture
     def model(self):
-        return Cassiopeia(CassiopeiaConfig(hidden_dim=128, n_canonical_features=100, frp_out_dim=64, n_layers=2, max_windows=12, expansion_classes=10, amr_classes=4))
+        cfg = CassiopeiaConfig(hidden_dim=128, n_canonical_features=100, frp_out_dim=64,
+                               n_layers=2, max_windows=12, expansion_classes=10, amr_classes=4)
+        return Cassiopeia(cfg)
 
     @pytest.fixture
     def batch(self):
@@ -235,7 +245,9 @@ class TestCassiopeiaLarge:
 class TestCalibration:
     def test_fit_calibration(self):
         from dna_sentinel.train import fit_calibration
-        model = Cassiopeia(CassiopeiaConfig(hidden_dim=64, n_canonical_features=100, frp_out_dim=64, max_windows=12, n_structural_features=49))
+        cfg = CassiopeiaConfig(hidden_dim=64, n_canonical_features=100, frp_out_dim=64,
+                               max_windows=12, n_structural_features=49)
+        model = Cassiopeia(cfg)
         B, W = 8, 12
         val_data = {"features": torch.randn(B, W, 100), "masks": torch.ones(B, W, dtype=torch.bool),
                     "mobility": torch.randint(0, 3, (B,)), "amr": torch.randint(0, 2, (B,), dtype=torch.float),
@@ -246,7 +258,9 @@ class TestCalibration:
 
     def test_fit_calibration_single_class(self):
         from dna_sentinel.train import fit_calibration
-        model = Cassiopeia(CassiopeiaConfig(hidden_dim=32, n_canonical_features=100, frp_out_dim=32, max_windows=8, n_structural_features=49))
+        cfg = CassiopeiaConfig(hidden_dim=32, n_canonical_features=100, frp_out_dim=32,
+                               max_windows=8, n_structural_features=49)
+        model = Cassiopeia(cfg)
         B = 8
         val_data = {"features": torch.randn(B, 8, 100), "masks": torch.ones(B, 8, dtype=torch.bool),
                     "mobility": torch.zeros(B, dtype=torch.long), "amr": torch.zeros(B, dtype=torch.float),
@@ -259,7 +273,8 @@ class TestCalibration:
 class TestEvaluate:
     def test_evaluate_small(self):
         from dna_sentinel.train import evaluate
-        model = Cassiopeia(CassiopeiaConfig(hidden_dim=64, n_canonical_features=100, frp_out_dim=64, max_windows=12))
+        cfg = CassiopeiaConfig(hidden_dim=64, n_canonical_features=100, frp_out_dim=64, max_windows=12)
+        model = Cassiopeia(cfg)
         m = evaluate(model, {"features": torch.randn(8, 12, 100), "masks": torch.ones(8, 12, dtype=torch.bool),
                              "mobility": torch.randint(0, 3, (8,)), "amr": torch.randint(0, 2, (8,), dtype=torch.float),
                              "expansion": torch.randint(0, 2, (8,), dtype=torch.float)})
@@ -267,7 +282,9 @@ class TestEvaluate:
 
     def test_evaluate_large(self):
         from dna_sentinel.train import evaluate
-        model = Cassiopeia(CassiopeiaConfig(hidden_dim=64, n_canonical_features=100, frp_out_dim=64, max_windows=12, expansion_classes=10, amr_classes=4))
+        cfg = CassiopeiaConfig(hidden_dim=64, n_canonical_features=100, frp_out_dim=64,
+                               max_windows=12, expansion_classes=10, amr_classes=4)
+        model = Cassiopeia(cfg)
         m = evaluate(model, {"features": torch.randn(8, 12, 100), "masks": torch.ones(8, 12, dtype=torch.bool),
                              "mobility": torch.randint(0, 3, (8,)), "amr": torch.randint(0, 2, (8, 4), dtype=torch.float),
                              "expansion": torch.randint(0, 10, (8,))})
@@ -276,18 +293,20 @@ class TestEvaluate:
 class TestInference:
     def test_predict_one(self):
         from dna_sentinel.utils import predict_one
-        pred = predict_one(Cassiopeia(CassiopeiaConfig(hidden_dim=64, n_canonical_features=2728, frp_out_dim=256, max_windows=28)), "test", "ACGT" * 50)
+        cfg = CassiopeiaConfig(hidden_dim=64, n_canonical_features=2728, frp_out_dim=256, max_windows=28)
+        pred = predict_one(Cassiopeia(cfg), "test", "ACGT" * 50)
         assert pred.sequence_id == "test" and len(pred.mobility_probs) == 3 and 0 <= pred.amr_probability <= 1
 
     def test_predict_one_has_task_specific_windows(self):
         from dna_sentinel.utils import predict_one
-        pred = predict_one(Cassiopeia(CassiopeiaConfig(hidden_dim=64, n_canonical_features=2728, frp_out_dim=256, max_windows=28)), "test", "ACGT" * 50)
+        cfg = CassiopeiaConfig(hidden_dim=64, n_canonical_features=2728, frp_out_dim=256, max_windows=28)
+        pred = predict_one(Cassiopeia(cfg), "test", "ACGT" * 50)
         assert isinstance(pred.top_windows, list) and isinstance(pred.top_mobility_windows, list)
 
     def test_predict_batch(self):
         from dna_sentinel.utils import predict_batch
-        preds = predict_batch(Cassiopeia(CassiopeiaConfig(hidden_dim=64, n_canonical_features=2728, frp_out_dim=256, max_windows=28)),
-                               [("s1", "ACGT" * 50), ("s2", "TGCA" * 50)])
+        cfg = CassiopeiaConfig(hidden_dim=64, n_canonical_features=2728, frp_out_dim=256, max_windows=28)
+        preds = predict_batch(Cassiopeia(cfg), [("s1", "ACGT" * 50), ("s2", "TGCA" * 50)])
         assert len(preds) == 2 and preds[0].sequence_id == "s1"
 
     def test_predict_batch_empty(self):
@@ -351,7 +370,8 @@ class TestArchitecture:
         x = torch.randn(2, 8, 2728)
         m = torch.ones(2, 8, dtype=torch.bool)
         s = torch.randn(2, 8, 49)
-        flat.eval(); hier.eval()
+        flat.eval()
+        hier.eval()
         of = flat(x, m, struct_features=s)["mobility_logits"]
         oh = hier(x, m, struct_features=s)["mobility_logits"]
         assert of.shape == oh.shape == (2, 3)
@@ -421,3 +441,33 @@ class TestFeatureSchema:
         assert saved["_n_structural_features"] == cfg.n_structural_features
         assert "_manifest_hash" in saved
         out.unlink()
+
+
+class TestLoadStrict:
+    def test_load_strict_default_raises_on_mismatch(self):
+        cfg = CassiopeiaConfig(n_structural_features=10, hidden_dim=64)
+        m = Cassiopeia(cfg)
+        with tempfile.NamedTemporaryFile(suffix=".pt", delete=False) as f:
+            path = f.name
+        m.save(path)
+        # Corrupt the checkpoint by adding an extra key
+        state = torch.load(path, map_location="cpu", weights_only=True)
+        state["state_dict"]["nonexistent_key.weight"] = torch.zeros(4)
+        torch.save(state, path)
+        with pytest.raises(RuntimeError, match="[Cc]heckpoint mismatch"):
+            Cassiopeia.load(path)
+        Path(path).unlink()
+
+    def test_load_non_strict_warns_and_succeeds(self, caplog):
+        cfg = CassiopeiaConfig(n_structural_features=10, hidden_dim=64)
+        m = Cassiopeia(cfg)
+        with tempfile.NamedTemporaryFile(suffix=".pt", delete=False) as f:
+            path = f.name
+        m.save(path)
+        state = torch.load(path, map_location="cpu", weights_only=True)
+        state["state_dict"]["nonexistent_key.weight"] = torch.zeros(4)
+        torch.save(state, path)
+        with caplog.at_level("WARNING"):
+            loaded = Cassiopeia.load(path, strict=False)
+        assert loaded is not None
+        Path(path).unlink()

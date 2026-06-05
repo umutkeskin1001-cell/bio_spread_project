@@ -3,17 +3,27 @@
 **Cassiopeia Prime** is a compact, DNA-only plasmid risk model. It predicts mobility class, antimicrobial resistance (AMR) probability, and geographic expansion risk directly from FASTA sequence — without BLAST, metadata, or annotation pipelines.
 
 **Training cap:** 2,048 plasmids maximum (1,466 train / 286 val / 296 test / 1,200 held-out).
+**Champion:** v14+v15 ensemble (`artifacts/cassiopeia_prime_v15/cassiopeia_best.pt` + `artifacts/cassiopeia_prime_v14/cassiopeia_best.pt`), weights 0.47/0.53.
 
 ## Benchmark (Held-out)
 
 | Metric | Value | 95% CI |
 |---:|---:|---:|
-| Task Score | **85.95%** | 85.18–86.75% |
-| Mobility BA | 76.92% | 74.63–79.31% |
-| AMR AUROC | 93.91% | 92.54–95.15% |
-| Expansion AUROC | 87.01% | 85.02–88.93% |
+| Task Score | **87.00%** | 86.20–87.78% |
+| Mobility BA | 78.33% | 75.92–80.67% |
+| AMR AUROC | 93.89% | 92.58–95.04% |
+| Expansion AUROC | 88.78% | 87.00–90.55% |
+| **Class 1 (mobilizable) F1** | **0.725** | — |
 
-Parameters: 568,437 | Checkpoint: 5.81 MB | 371 tests, 89.47% coverage
+Parameters: 568,437 | Checkpoint: 5.81 MB × 2 | 375 tests, ~89% coverage
+
+> **Inference mode:** Numbers above are produced by `dna-sentinel benchmark --ensemble-checkpoint`
+> (default), which evaluates pre-cached features without reverse-complement averaging. This matches
+> the protocol used during model selection and is fully reproducible from the committed
+> feature cache. Production-style reverse-complement-averaged numbers (matching the
+> inference path used by `dna predict` / `dna interpret`) are ~1–2 points higher on the
+> held-out split. Regenerate with `dna-sentinel benchmark --rc-average --ensemble-checkpoint ...`.
+> Reports include an `inference_mode` field (`cached_features` or `rc_averaged`).
 
 ## Quick Start
 
@@ -24,7 +34,7 @@ pip install -e ".[dev]"
 dna prep -c config/cassiopeia_prime.yaml      # build dataset
 dna features -c config/cassiopeia_prime.yaml   # extract features
 dna train -c config/cassiopeia_prime.yaml      # train model
-dna bench -m artifacts/.../cassiopeia_best.pt  # benchmark
+dna bench -m artifacts/.../cassiopeia_best.pt -e artifacts/.../cassiopeia_best.pt --ensemble-weight 0.53  # benchmark ensemble
 dna predict -m artifacts/.../cassiopeia_best.pt -f query.fa --interpret  # predict
 dna serve -m artifacts/.../cassiopeia_best.pt  # start API
 ```
@@ -35,7 +45,7 @@ dna serve -m artifacts/.../cassiopeia_best.pt  # start API
 |---|---|---|---|
 | `dna-sentinel train` | `dna train` | `-c` | Train model |
 | `dna-sentinel predict` | `dna predict` | `-m`, `-f`, `-j`, `-i` | Predict on FASTA |
-| `dna-sentinel benchmark` | `dna bench` | `-m`, `-d`, `-o` | Benchmark all splits |
+| `dna-sentinel benchmark` | `dna bench` | `-m`, `-d`, `-o`, `-e` | Benchmark all splits (supports ensemble) |
 | `dna-sentinel prepare` | `dna prep` | `-c` | Build dataset from FASTA+labels |
 | `dna-sentinel prepare-features` | `dna features` | `-c` | Extract k-mer+structural features |
 | `dna-sentinel cross-validate` | `dna cv` | `-c`, `-k` | k-fold cross-validation |
@@ -53,14 +63,23 @@ Predictions include **confidence labels** (HIGH ≥ 0.80, MEDIUM 0.60–0.79, LO
 
 ## Web Interface
 
-Static pages served from `web/` — fully offline:
+Static pages served from `web/` — fully offline, no backend required:
 
 ```bash
 python3 -m http.server 4173 --directory web
+# then open http://localhost:4173/index.html
 ```
 
-- **Predict** (`index.html`): FASTA/text input → scores, confidence, evidence windows, interpretation
-- **Benchmark** (`benchmark.html`): Cassiopeia vs DNABERT, DNABERT-2, Nucleotide Transformer, PLSDB baseline
+The browser demo runs a lightweight k-mer + motif heuristic and is **not** the
+trained model. Numbers on the **Benchmark** page come from a frozen snapshot
+of the champion ensemble (`cassiopeia_prime_v15` + `cassiopeia_prime_v14`).
+
+- **Predict** (`index.html`): FASTA/text input → mobility class + probabilities,
+  AMR/expansion percentages, evidence windows, biological interpretation,
+  class-probability bars, and a copyable reproduction command for the CLI.
+- **Benchmark** (`benchmark.html`): Cassiopeia vs DNABERT, DNABERT-2, Nucleotide
+  Transformer and a k-mer logistic-regression baseline, with split-wise
+  performance, key metrics, methodology and limitations tabs.
 
 ## Project Structure
 
@@ -75,7 +94,7 @@ src/dna_sentinel/
   api.py                       # FastAPI server
   prepare.py                   # dataset preparation, split generation
 web/                           # static HTML/CSS/JS demo
-tests/                         # 371 tests, 89.47% coverage
+tests/                         # 375 tests, ~89% coverage
 docs/                          # benchmark.json, model card, TÜBİTAK report
 experiments/                   # timestamped experiment logs
 ```
@@ -91,23 +110,24 @@ make lint        # ruff check
 ## Calibration (ECE)
 
 | Split | Mobility ECE | AMR ECE | Expansion ECE |
-|---|---:|---:|---:|
-| Validation | 0.085 | 0.040 | 0.084 |
-| Test | 0.112 | 0.036 | 0.069 |
-| Held-out | 0.116 | 0.064 | 0.044 |
+|---:|---:|---:|---:|
+| Validation | 0.148 | 0.061 | 0.055 |
+| Test | 0.135 | 0.055 | 0.052 |
+| Held-out | 0.164 | 0.051 | 0.038 |
 
-L-BFGS temperature + bias scaling on validation logits. All tasks ECE < 0.12.
+L-BFGS temperature + bias scaling on validation logits (per model before ensemble averaging).
 
 ## Ablation (before → after)
 
-| Metric | Before | After | Δ |
-|---|---:|---:|---:|
-| Held-out Task Score | 84.97% | **85.95%** | +0.98 |
-| Mobility BA | 76.75% | 76.92% | +0.17 |
-| AMR AUROC | 93.47% | 93.91% | +0.44 |
-| Expansion AUROC | 84.68% | 87.01% | +2.33 |
+| Metric | Before | After (ensemble) | Δ |
+|---|---|---:|---:|---:|
+| Held-out Task Score | 84.97% | **87.00%** | +2.03 |
+| Mobility BA | 76.75% | 78.33% | +1.58 |
+| AMR AUROC | 93.47% | 93.89% | +0.42 |
+| Expansion AUROC | 84.68% | 88.78% | +4.10 |
+| **Class 1 F1** | — | **0.725** | — |
 
-No task dropped >2 points. Improvements: focal loss γ=0.5, consistency weight tuning, L-BFGS calibration.
+Improvements: L-BFGS calibration, consistency weight tuning, per-class mobility weighting + focal γ=0.5 (v15), v14+v15 ensemble.
 
 ## Limitations
 
@@ -115,7 +135,7 @@ No task dropped >2 points. Improvements: focal loss γ=0.5, consistency weight t
 - No BLAST, gene calling, host metadata, or assembly quality checks
 - RC averaging reduces but does not eliminate circular cut-point drift
 - 2,048-plasmid cap → data constrained
-- Mobility class 1 (mobilizable) remains challenging (F1 ≈ 0.68)
+- Mobility class 1 (mobilizable) remains challenging (F1 ≈ 0.72)
 - Expansion is a proxy based on ≥15 observed countries
 
 ## License

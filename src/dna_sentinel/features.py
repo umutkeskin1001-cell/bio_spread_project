@@ -108,9 +108,9 @@ class CanonicalKmerExtractor:
     def _struct(self, w: torch.Tensor, lengths: torch.Tensor, ws: int) -> torch.Tensor:
         dev = w.device
         v = (torch.arange(ws, device=dev).unsqueeze(0) < lengths.unsqueeze(1)) & (w >= 0)
+        n_base = (w < 0).float()
         wc = w.clamp_min(0)
         g, c, a, t = (wc == 2).float(), (wc == 1).float(), (wc == 0).float(), (wc == 3).float()
-        n_base = (wc == 4).float() if (wc == 4).any() else torch.zeros_like(g)
         vf = v.float()
         lf = lengths.float().clamp_min(1)
 

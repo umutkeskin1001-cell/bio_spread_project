@@ -1,15 +1,11 @@
 """Final coverage push - target remaining gaps."""
 
-import json
-import tempfile
-import os
-from pathlib import Path
 import torch
-import numpy as np
+
+from dna_sentinel.cli import _validate_config
 
 # ── train.py direct function coverage ─────────────────────────────
-
-from dna_sentinel.train import _epoch_indices, _build_optimizer, _focal_bce, evaluate
+from dna_sentinel.train import _epoch_indices, _focal_bce, evaluate
 
 
 def test_epoch_indices_random():
@@ -65,9 +61,6 @@ def test_evaluate_empty_split():
 
 # ── CLI config validation ─────────────────────────────────────────
 
-from dna_sentinel.cli import _load_config, _validate_config
-
-
 def test_config_no_data_section():
     cfg = {"training": {"epochs": 1}, "model": {"max_windows": 56},
            "features": {"max_windows": [32, 16, 8], "window_sizes": [512, 2048, 8192], "strides": [256, 1024, 4096]}}
@@ -79,6 +72,7 @@ def test_config_no_data_section():
 def test_benchmark_latency_no_model(tmp_path):
     """Test that benchmark fails gracefully with bad checkpoint."""
     from click.testing import CliRunner
+
     from dna_sentinel.cli import cli
     runner = CliRunner()
     r = runner.invoke(cli, ["benchmark", "--checkpoint", "/nonexistent.pt",
@@ -90,6 +84,7 @@ def test_benchmark_latency_no_model(tmp_path):
 
 def test_predict_fails_gracefully(tmp_path):
     from click.testing import CliRunner
+
     from dna_sentinel.cli import cli
     fa = tmp_path / "test.fa"
     fa.write_text(">test\nATGCGT" * 100)
@@ -103,6 +98,7 @@ def test_predict_fails_gracefully(tmp_path):
 
 def test_prepare_missing_files(tmp_path):
     from click.testing import CliRunner
+
     from dna_sentinel.cli import cli
     cfg = tmp_path / "cfg.yaml"
     cfg.write_text("data:\n  fasta_path: /nonexistent\n  out_dir: /tmp\n  limit: 100\n")
@@ -115,10 +111,15 @@ def test_prepare_missing_files(tmp_path):
 
 def test_prepare_features_bad_config(tmp_path):
     from click.testing import CliRunner
+
     from dna_sentinel.cli import cli
     cfg = tmp_path / "cfg.yaml"
     # make invalid config (max_windows mismatch)
-    cfg.write_text("model:\n  max_windows: 50\nfeatures:\n  max_windows: [32, 16, 8]\n  window_sizes: [512, 2048, 8192]\n  strides: [256, 1024, 4096]\ndata:\n  out_dir: /tmp\n")
+    cfg.write_text(
+        "model:\n  max_windows: 50\nfeatures:\n  max_windows: [32, 16, 8]\n"
+        "  window_sizes: [512, 2048, 8192]\n  strides: [256, 1024, 4096]\n"
+        "data:\n  out_dir: /tmp\n"
+    )
     runner = CliRunner()
     r = runner.invoke(cli, ["prepare-features", "--config", str(cfg)])
     assert r.exit_code != 0
@@ -191,6 +192,7 @@ def test_evaluate_records_with_model():
 def test_api_import():
     """Just importing the API module exercises module-level code."""
     import importlib
+
     import dna_sentinel.api
     importlib.reload(dna_sentinel.api)
     # Check that version is set

@@ -24,11 +24,14 @@ def test_optimizer_uses_backbone_and_head_lr():
 
 
 def test_selection_score_equal_weights_by_default():
-    assert _selection_score({"mobility_balanced_accuracy": 0.6, "amr_auroc": 0.9, "expansion_auroc": 0.75}, {"score_mode": "equal"}) == (0.6 + 0.9 + 0.75) / 3
+    s = _selection_score({"mobility_balanced_accuracy": 0.6, "amr_auroc": 0.9, "expansion_auroc": 0.75},
+                         {"score_mode": "equal"})
+    assert s == (0.6 + 0.9 + 0.75) / 3
 
 
 def test_selection_score_legacy_mode():
-    s = _selection_score({"mobility_balanced_accuracy": 0.6, "amr_auroc": 0.9, "expansion_auroc": 0.75}, {"score_mode": "legacy"})
+    metrics = {"mobility_balanced_accuracy": 0.6, "amr_auroc": 0.9, "expansion_auroc": 0.75}
+    s = _selection_score(metrics, {"score_mode": "legacy"})
     assert abs(s - (0.9 + 0.75 + 2.0 * 0.6)) < 1e-6
 
 
@@ -53,13 +56,19 @@ def test_epoch_indices_respects_balanced_sampling():
 
 
 def test_consistency_loss_is_small_for_identical_outputs():
-    o = {"mobility_logits": torch.tensor([[2.0, 0.0, -1.0]]), "amr_logits": torch.tensor([0.5]), "expansion_logits": torch.tensor([-0.25])}
+    o = {"mobility_logits": torch.tensor([[2.0, 0.0, -1.0]]),
+         "amr_logits": torch.tensor([0.5]),
+         "expansion_logits": torch.tensor([-0.25])}
     assert _consistency_loss(o, o, temperature=1.0).item() < 1e-6
 
 
 def test_consistency_loss_positive_for_different_outputs():
-    a = {"mobility_logits": torch.tensor([[2.0, 0.0, -1.0]]), "amr_logits": torch.tensor([0.5]), "expansion_logits": torch.tensor([-0.25])}
-    b = {"mobility_logits": torch.tensor([[-1.0, 0.0, 2.0]]), "amr_logits": torch.tensor([-0.5]), "expansion_logits": torch.tensor([0.25])}
+    a = {"mobility_logits": torch.tensor([[2.0, 0.0, -1.0]]),
+         "amr_logits": torch.tensor([0.5]),
+         "expansion_logits": torch.tensor([-0.25])}
+    b = {"mobility_logits": torch.tensor([[-1.0, 0.0, 2.0]]),
+         "amr_logits": torch.tensor([-0.5]),
+         "expansion_logits": torch.tensor([0.25])}
     assert _consistency_loss(a, b, temperature=1.0).item() > 0
 
 
@@ -72,8 +81,10 @@ def test_cross_validate_returns_summary():
             "mobility": torch.randint(0, 3, (10,)), "amr": torch.randint(0, 2, (10,), dtype=torch.float),
             "expansion": torch.randint(0, 2, (10,), dtype=torch.float),
             "struct_features": torch.randn(10, 8, 49), "scale_ids": torch.zeros(10, 8, dtype=torch.long)}
-    result, _ = cross_validate({"hidden_dim": 32, "n_canonical_features": 100, "frp_out_dim": 32, "n_layers": 1, "max_windows": 8, "n_structural_features": 49},
-                            data, {"epochs": 1, "batch_size": 4, "artifact_dir": "/tmp/cv_test", "patience": 50, "lr": 1e-3}, n_folds=2)
+    model_cfg = {"hidden_dim": 32, "n_canonical_features": 100, "frp_out_dim": 32,
+                 "n_layers": 1, "max_windows": 8, "n_structural_features": 49}
+    train_cfg = {"epochs": 1, "batch_size": 4, "artifact_dir": "/tmp/cv_test", "patience": 50, "lr": 1e-3}
+    result, _ = cross_validate(model_cfg, data, train_cfg, n_folds=2)
     assert "n_folds" in result and "task_score" in result
     assert result["n_folds"] == 2
 
@@ -122,9 +133,10 @@ def test_cross_validate_group_aware():
             "expansion": torch.randint(0, 2, (10,), dtype=torch.float),
             "struct_features": torch.randn(10, 8, 49), "scale_ids": torch.zeros(10, 8, dtype=torch.long)}
     groups = [0, 0, 0, 0, 1, 1, 1, 1, 2, 2]
-    result, _ = cross_validate({"hidden_dim": 32, "n_canonical_features": 100, "frp_out_dim": 32, "n_layers": 1, "max_windows": 8, "n_structural_features": 49},
-                            data, {"epochs": 1, "batch_size": 4, "artifact_dir": "/tmp/cv_test", "patience": 50, "lr": 1e-3},
-                            n_folds=3, group_ids=groups)
+    model_cfg = {"hidden_dim": 32, "n_canonical_features": 100, "frp_out_dim": 32,
+                 "n_layers": 1, "max_windows": 8, "n_structural_features": 49}
+    train_cfg = {"epochs": 1, "batch_size": 4, "artifact_dir": "/tmp/cv_test", "patience": 50, "lr": 1e-3}
+    result, _ = cross_validate(model_cfg, data, train_cfg, n_folds=3, group_ids=groups)
     assert result["n_folds"] == 3
     assert "task_score" in result
 
